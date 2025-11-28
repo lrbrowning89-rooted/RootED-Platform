@@ -1,0 +1,21 @@
+question_id,objective_id,stem,choice_a,choice_b,choice_c,choice_d,answer_key
+Q_MSLS1_1A_1,MS-LS1-1A,What is the basic unit of structure and function in all living things?,Cells,Organs,Organ systems,Tissues,A
+Q_MSLS1_1A_2,MS-LS1-1A,Which statement best describes a cell?,A tiny organism that always lives alone,A basic unit that makes up all living things,A structure made of tissues and organs,A nonliving particle that causes disease,B
+Q_MSLS1_1B_1,MS-LS1-1B,What do groups of similar cells working together form?,Atoms,Tissues,Organs,Organ systems,B
+Q_MSLS1_1B_2,MS-LS1-1B,Muscle cells working together to contract and relax form which structure?,A tissue,An atom,A population,A community,A
+Q_MSLS1_2A_1,MS-LS1-2A,Which two body systems work together to move oxygen to your muscles?,Digestive and excretory,Respiratory and circulatory,Nervous and skeletal,Muscular and integumentary,B
+Q_MSLS1_2A_2,MS-LS1-2A,"In a diagram, arrows show food moving from the mouth to the stomach and then to the intestines. Which system is modeled?",Respiratory system,Digestive system,Circulatory system,Nervous system,B
+Q_MSLS1_2B_1,MS-LS1-2B,Which organ is part of the respiratory system?,Heart,Lungs,Stomach,Kidneys,B
+Q_MSLS1_2B_2,MS-LS1-2B,The small intestine belongs to which system?,Digestive system,Excretory system,Respiratory system,Skeletal system,A
+Q_MSLS1_3A_1,MS-LS1-3A,Which structure is an adaptation that helps a cactus survive in a dry environment?,Large flat leaves,Thick stems that store water,Bright flowers in cool forests,Roots that float on water,B
+Q_MSLS1_3A_2,MS-LS1-3A,Polar bears have thick fur and a layer of fat. How do these structures help them survive?,They help them breathe underwater.,They help them stay warm in cold climates.,They help them make their own food.,They help them climb trees easily.,B
+Q_MSLS1_3B_1,MS-LS1-3B,Which is an example of a behavior that helps an animal survive?,A rabbit growing thicker fur,A bird migrating to warmer areas in winter,A plant producing seeds,A fish having gills,B
+Q_MSLS1_3B_2,MS-LS1-3B,A lizard basks in the sun on a rock. How does this behavior help it?,It helps the lizard grow new scales.,It helps the lizard warm its body so it can move and hunt.,It helps the lizard breathe underwater.,It helps the lizard live in the ocean.,B
+Q_MSLS1_4A_1,MS-LS1-4A,What is the main function of sensory receptors?,To break down food,"To detect stimuli such as light, sound, or touch",To pump blood through the body,To store fat,B
+Q_MSLS1_4A_2,MS-LS1-4A,Where are light-sensitive receptors located in the human body?,Skin,Tongue,Eyes,Lungs,C
+Q_MSLS1_4B_1,MS-LS1-4B,Which system receives signals from sensory receptors and decides how to respond?,Digestive system,Respiratory system,Nervous system,Circulatory system,C
+Q_MSLS1_4B_2,MS-LS1-4B,Touching a hot stove causes you to pull your hand away quickly. Which statement best explains this response?,"Receptors in the skin send signals to the brain, which sends a message to the muscles.",Receptors in the brain send signals directly to the skin.,The circulatory system cools your hand immediately.,The digestive system releases energy.,A
+Q_MSLS1_5A_1,MS-LS1-5A,Which environmental factor usually has the greatest effect on the timing of flowering in many plants?,Wind,Light,Sound,Soil color,B
+Q_MSLS1_5A_2,MS-LS1-5A,A plant grown in low light is tall and pale. A plant grown in bright light is shorter and darker green. What is the best explanation?,Light affects plant growth and the amount of chlorophyll produced.,Plants in low light do not need chlorophyll.,Plants in bright light do not photosynthesize.,Light has no effect on plant growth.,A
+Q_MSLS1_5B_1,MS-LS1-5B,Students grow plants with different amounts of water each day. Which data would best support a claim that water affects plant growth?,The color of the pots,The height of each plant after two weeks,The number of students in the class,The day of the week the seeds were planted,B
+Q_MSLS1_5B_2,MS-LS1-5B,"In an investigation, plants grown in 8 hours of light per day produced more flowers than plants grown in 4 hours of light per day. What conclusion can be made?",Light has no effect on flowering.,More light can increase flower production in some plants.,Plants in 4 hours of light never flower.,Only water affects flowering in plants.,B
