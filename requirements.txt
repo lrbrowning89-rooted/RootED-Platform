@@ -1,0 +1,4 @@
+Flask
+Authlib
+alembic
+gunicorn
