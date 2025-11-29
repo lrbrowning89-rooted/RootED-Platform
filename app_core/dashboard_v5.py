@@ -3203,10 +3203,11 @@ def clear_errors():
     return redirect(url_for("error_list"))
 
 from flask import send_from_directory
+import os
 
 @app.route('/favicon.ico')
 def favicon():
-    return send_from_directory(
+    return app.send_static_file('favicon.ico')
         os.path.join(app.root_path, 'static'),
         'favicon.ico',
         mimetype='image/vnd.microsoft.icon'
