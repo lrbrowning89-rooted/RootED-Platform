@@ -3202,9 +3202,9 @@ def clear_errors():
     flash("All logged errors have been cleared.")
     return redirect(url_for("error_list"))
 
-@app.route("/favicon.ico")
+@app.route('/favicon.ico')
 def favicon():
-    return app.send_static_file("favicon.ico")
+    return app.send_static_file('favicon.ico')
 
 print(app.url_map)
 
