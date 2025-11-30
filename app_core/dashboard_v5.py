@@ -35,7 +35,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB = os.environ.get("NGSS_DB", os.path.join(BASE_DIR, "data", "ngss.db"))
 
 # ---------- Flask app setup ----------
-app = Flask(__name__)
+app = Flask(__name__, static_folder='static', static_url_path='/static')
 app.secret_key = SECRET_KEY
 
 # ---------- Logging setup ----------
@@ -3204,7 +3204,7 @@ def clear_errors():
 
 @app.route('/favicon.ico')
 def favicon():
-    return app.send_static_file('favicon.ico')
+    return redirect(url_for('static', filename='favicon.ico'))
 
 print(app.url_map)
 
