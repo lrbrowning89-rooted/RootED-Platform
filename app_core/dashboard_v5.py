@@ -381,6 +381,44 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
           FOREIGN KEY(linked_student_id) REFERENCES students(student_id) ON DELETE SET NULL
         )
         """
+    # ---------- Diagnostic Arena Basic Tables ----------
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS diagnostic_items (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          question_id TEXT NOT NULL,
+          domain TEXT NOT NULL,
+          FOREIGN KEY(question_id) REFERENCES questions(question_id)
+        )
+        """
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS diagnostic_sessions (
+          id TEXT PRIMARY KEY,          -- UUID
+          student_id TEXT NOT NULL,
+          started_at INTEGER NOT NULL,  -- store as UNIX timestamp
+          completed_at INTEGER,         -- NULL until finished
+          status TEXT NOT NULL,         -- 'in_progress' or 'completed'
+          FOREIGN KEY(student_id) REFERENCES students(student_id)
+        )
+        """
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS diagnostic_responses (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          session_id TEXT NOT NULL,
+          diagnostic_item_id INTEGER NOT NULL,
+          is_correct INTEGER,           -- 1 = correct, 0 = incorrect
+          FOREIGN KEY(session_id) REFERENCES diagnostic_sessions(id),
+          FOREIGN KEY(diagnostic_item_id) REFERENCES diagnostic_items(id)
+        )
+        """
+    )
+
     )
 
     conn.commit()
