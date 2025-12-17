@@ -381,6 +381,8 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
           FOREIGN KEY(linked_student_id) REFERENCES students(student_id) ON DELETE SET NULL
         )
         """
+    )
+
     # ---------- Diagnostic Arena Basic Tables ----------
     conn.execute(
         """
@@ -417,8 +419,6 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
           FOREIGN KEY(diagnostic_item_id) REFERENCES diagnostic_items(id)
         )
         """
-    )
-
     )
 
     conn.commit()
@@ -469,6 +469,88 @@ def get_conn() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     return conn
 
+def locked_student_id_for_session(conn):
+    """
+    Returns the student_id this session is allowed to act as.
+    Teachers can impersonate via request args/forms.
+    Students are hard-locked to linked_student_id (or username fallback).
+    """
+    role = session.get("role")
+    user_id = session.get("user_id")
+
+    if role == "teacher":
+        # teacher can pick who they are viewing
+        return request.values.get("student_id")
+
+    if role == "student":
+        user = get_user_by_id(conn, user_id)
+        if not user:
+            return None
+        return user["linked_student_id"] or user["username"]
+
+    return None
+
+import uuid
+
+def create_diagnostic_session(conn: sqlite3.Connection, student_id: str) -> str:
+    """
+    Creates a new diagnostic session row and returns the session_id.
+    """
+    session_id = str(uuid.uuid4())
+    started_at = int(time.time())
+
+    conn.execute(
+        """
+        INSERT INTO diagnostic_sessions (id, student_id, started_at, completed_at, status)
+        VALUES (?, ?, ?, NULL, 'in_progress')
+        """,
+        (session_id, student_id, started_at),
+    )
+    conn.commit()
+    return session_id
+
+def get_diagnostic_items(conn: sqlite3.Connection, domain: str, limit: int = 10):
+    """
+    Returns a list of diagnostic_items joined with question text for a given domain.
+    """
+    return conn.execute(
+        """
+        SELECT di.id AS diagnostic_item_id,
+               q.question_id,
+               q.stem, q.choice_a, q.choice_b, q.choice_c, q.choice_d,
+               q.answer_key
+        FROM diagnostic_items di
+        JOIN questions q ON q.question_id = di.question_id
+        WHERE LOWER(di.domain) = LOWER(?)
+        ORDER BY di.id ASC
+        LIMIT ?
+        """,
+        (domain, limit),
+    ).fetchall()
+
+
+def get_next_unanswered_diagnostic_item(conn: sqlite3.Connection, session_id: str):
+    """
+    Returns the next diagnostic item that has not been answered yet for this session.
+    """
+    return conn.execute(
+        """
+        SELECT di.id AS diagnostic_item_id,
+               q.question_id,
+               q.stem, q.choice_a, q.choice_b, q.choice_c, q.choice_d,
+               q.answer_key
+        FROM diagnostic_items di
+        JOIN questions q ON q.question_id = di.question_id
+        WHERE di.id NOT IN (
+            SELECT diagnostic_item_id
+            FROM diagnostic_responses
+            WHERE session_id = ?
+        )
+        ORDER BY di.id ASC
+        LIMIT 1
+        """,
+        (session_id,),
+    ).fetchone()
 
 def get_config(conn):
     try:
@@ -1697,6 +1779,13 @@ def index():
        style="text-decoration:none;background:#4b5563;">
       View Error Log
     </a>
+
+    <a href="{{ url_for('diagnostic_home') }}"
+       class="btn"
+       style="text-decoration:none;background:#7c3aed;">
+      Diagnostic Arena
+    </a>
+
     <form action="{{ url_for('logout') }}" method="get" style="margin:0;">
       <button type="submit" class="btn" style="background:#dc2626;">Logout</button>
     </form>
@@ -2246,35 +2335,10 @@ def student_view():
     all_students = get_students(conn)
     objs = get_objectives(conn)
 
-    # Figure out which student this session can act as
-    locked_student_id = None
+    # Figure out which student this session is allowed to act as
+    locked_student_id = locked_student_id_for_session(conn)
 
     if role == "student":
-        # Look up this user's linked student id
-        user = get_user_by_id(conn, user_id)
-        if user:
-            linked = user["linked_student_id"]
-            if linked:
-                locked_student_id = linked
-            else:
-                # Fallback: username as student_id
-                locked_student_id = user["username"]
-
-                # Optionally ensure a students row exists
-                row = conn.execute(
-                    "SELECT 1 FROM students WHERE student_id=?",
-                    (locked_student_id,),
-                ).fetchone()
-                if not row:
-                    conn.execute(
-                        """
-                        INSERT INTO students (student_id, first_name, last_name, grade, class_period)
-                        VALUES (?, ?, ?, ?, ?)
-                        """,
-                        (locked_student_id, "", "", None, None),
-                    )
-                    conn.commit()
-
         if not locked_student_id:
             flash("Your account is not linked to a student record yet. Please tell your teacher.")
             return redirect(url_for("logout"))
@@ -2290,10 +2354,26 @@ def student_view():
         ).fetchone()
 
         if not row:
-            flash("Your student record could not be found. Please tell your teacher.")
-            return redirect(url_for("logout"))
+            # Optionally auto-create the student row if missing
+            conn.execute(
+                """
+                INSERT INTO students (student_id, first_name, last_name, grade, class_period)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (locked_student_id, "", "", None, None),
+            )
+            conn.commit()
 
-        students = [row]          # dropdown will have only this one
+            row = conn.execute(
+                """
+                SELECT student_id, first_name, last_name, grade, class_period
+                FROM students
+                WHERE student_id = ?
+                """,
+                (locked_student_id,),
+            ).fetchone()
+
+        students = [row]
         student_id = locked_student_id
 
     else:
@@ -2508,6 +2588,368 @@ def student_view():
         objective_id=objective_id,
         current_question=current_question,
         feedback=feedback,
+    )
+
+# ---------- Diagnostic Arena ----------
+@app.post("/diagnostic/start")
+@require_teacher
+def diagnostic_start():
+    """
+    Teacher starts a diagnostic session for a given student_id.
+    Redirects to the diagnostic session page.
+    """
+    conn = get_conn()
+
+    student_id = (request.form.get("student_id") or "").strip()
+    if not student_id:
+        flash("Missing student_id for diagnostic start.")
+        return redirect(url_for("index"))
+
+    # Ensure student exists (optional, but prevents FK issues later)
+    row = conn.execute("SELECT 1 FROM students WHERE student_id=?", (student_id,)).fetchone()
+    if not row:
+        conn.execute(
+            "INSERT INTO students (student_id, first_name, last_name, grade, class_period) VALUES (?, ?, ?, ?, ?)",
+            (student_id, "", "", None, None),
+        )
+        conn.commit()
+
+    session_id = create_diagnostic_session(conn, student_id)
+
+    flash(f"Diagnostic session started for {student_id}. Session: {session_id[:8]}...")
+    return redirect(url_for("diagnostic_session_v2", session_id=session_id))
+
+@app.route("/diagnostic/<session_id>", methods=["GET", "POST"])
+@require_teacher
+def diagnostic_session(session_id):
+    """
+    Simple diagnostic loop:
+    - GET: show next unanswered diagnostic item
+    - POST: record response, then reload to next item
+    """
+    conn = get_conn()
+
+    # Confirm session exists
+    sess = conn.execute(
+        "SELECT * FROM diagnostic_sessions WHERE id=?",
+        (session_id,),
+    ).fetchone()
+    if not sess:
+        flash("Diagnostic session not found.")
+        return redirect(url_for("index"))
+
+    student_id = sess["student_id"]
+
+    # On submit, record response
+    if request.method == "POST":
+        diagnostic_item_id = request.form.get("diagnostic_item_id")
+        is_correct = request.form.get("is_correct")  # "1" or "0"
+
+        if diagnostic_item_id is not None and is_correct in ("0", "1"):
+            conn.execute(
+                """
+                INSERT INTO diagnostic_responses (session_id, diagnostic_item_id, is_correct)
+                VALUES (?, ?, ?)
+                """,
+                (session_id, int(diagnostic_item_id), int(is_correct)),
+            )
+            conn.commit()
+
+        return redirect(url_for("diagnostic_session_v2", session_id=session_id))
+
+    # Find the next diagnostic_item not yet answered in this session
+    next_item = conn.execute(
+        """
+        SELECT di.id, di.question_id, di.domain, q.stem, q.choice_a, q.choice_b, q.choice_c, q.choice_d
+        FROM diagnostic_items di
+        JOIN questions q ON q.question_id = di.question_id
+        LEFT JOIN diagnostic_responses dr
+          ON dr.diagnostic_item_id = di.id AND dr.session_id = ?
+        WHERE dr.id IS NULL
+        ORDER BY di.id
+        LIMIT 1
+        """,
+        (session_id,),
+    ).fetchone()
+
+    # If none left, mark session complete
+    if not next_item:
+        conn.execute(
+            """
+            UPDATE diagnostic_sessions
+            SET status='completed', completed_at=?
+            WHERE id=?
+            """,
+            (int(time.time()), session_id),
+        )
+        conn.commit()
+
+        summary = conn.execute(
+            """
+            SELECT
+              COUNT(*) AS total,
+              SUM(CASE WHEN is_correct=1 THEN 1 ELSE 0 END) AS correct
+            FROM diagnostic_responses
+            WHERE session_id=?
+            """,
+            (session_id,),
+        ).fetchone()
+
+        total = int(summary["total"] or 0)
+        correct = int(summary["correct"] or 0)
+
+        done_html = """
+        <!doctype html>
+        <title>Diagnostic Complete</title>
+        <div style="font-family:Arial;margin:24px;">
+          <h2>✅ Diagnostic Complete</h2>
+          <p><strong>Student:</strong> {{ student_id }}</p>
+          <p><strong>Score:</strong> {{ correct }} / {{ total }}</p>
+          <p><a href="{{ url_for('index') }}">⬅ Back to dashboard</a></p>
+        </div>
+        """
+        return render_template_string(done_html, student_id=student_id, total=total, correct=correct)
+
+    # Render the question
+    html = """
+    <!doctype html>
+    <title>Diagnostic Session</title>
+    <div style="font-family:Arial;margin:24px;max-width:760px;">
+      <h2>🧪 Diagnostic Session</h2>
+      <p><strong>Student:</strong> {{ student_id }} | <strong>Domain:</strong> {{ item['domain'] }}</p>
+      <hr>
+      <h3>{{ item['stem'] }}</h3>
+
+      <ol type="A">
+        <li>{{ item['choice_a'] }}</li>
+        <li>{{ item['choice_b'] }}</li>
+        <li>{{ item['choice_c'] }}</li>
+        <li>{{ item['choice_d'] }}</li>
+      </ol>
+
+      <form method="post" style="margin-top:16px;">
+        <input type="hidden" name="diagnostic_item_id" value="{{ item['id'] }}">
+        <button type="submit" name="is_correct" value="1" style="padding:8px 12px;border-radius:8px;border:none;background:#16a34a;color:#fff;cursor:pointer;">
+          ✅ Correct
+        </button>
+        <button type="submit" name="is_correct" value="0" style="padding:8px 12px;border-radius:8px;border:none;background:#dc2626;color:#fff;cursor:pointer;margin-left:8px;">
+          ❌ Incorrect
+        </button>
+      </form>
+
+      <p style="margin-top:18px;font-size:12px;color:#666;">
+        Session: {{ session_id }}
+      </p>
+      <p><a href="{{ url_for('index') }}">⬅ Back to dashboard</a></p>
+    </div>
+    """
+    return render_template_string(html, session_id=session_id, student_id=student_id, item=next_item)
+
+# ---------- Diagnostic Arena (MVP) ----------
+@app.route("/diagnostic", methods=["GET", "POST"])
+@require_teacher
+def diagnostic_home():
+    conn = get_conn()
+
+    # simple domain list (later we can make this dynamic)
+    domains = ["LS", "PS", "ESS"]
+
+    students = get_students(conn)
+    selected_student = request.values.get("student_id") or (students[0]["student_id"] if students else "")
+    selected_domain = request.values.get("domain") or "LS"
+
+    if request.method == "POST":
+        # start a session
+        if not selected_student:
+            flash("No student found to start a diagnostic.")
+            return redirect(url_for("diagnostic_home"))
+
+        session_id = create_diagnostic_session(conn, selected_student)
+        # (Optional) We could filter by domain here, but MVP just starts session and serves items table order.
+        flash(f"Diagnostic started for {selected_student}. Session: {session_id[:8]}")
+        return redirect(url_for("diagnostic_session_v2", session_id=session_id))
+
+    html = """
+    <!doctype html>
+    <title>Diagnostic Arena</title>
+    <style>
+      body{font-family:Arial, Helvetica, sans-serif;margin:24px;background:#f3f4f6;}
+      .card{max-width:700px;margin:0 auto;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:16px;}
+      .btn{background:#2563eb;color:#fff;border:none;padding:8px 12px;border-radius:8px;cursor:pointer}
+      input,select{padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px}
+      .row{display:flex;gap:10px;flex-wrap:wrap;align-items:end}
+      a{color:#2563eb;text-decoration:none}
+    </style>
+
+    <div class="card">
+      <h2 style="margin-top:0;">🧪 Diagnostic Arena (MVP)</h2>
+      <p style="color:#555;font-size:13px;margin-top:0;">
+        Start a diagnostic session and record results.
+      </p>
+
+      {% with msgs = get_flashed_messages() %}
+        {% if msgs %}
+          <div style="background:#e7f7ee;border:1px solid #a8e0bf;color:#0f6b3a;padding:10px 12px;border-radius:8px;margin:10px 0;font-size:14px;">
+            {% for m in msgs %}<div>✅ {{ m }}</div>{% endfor %}
+          </div>
+        {% endif %}
+      {% endwith %}
+
+      <form method="post" class="row">
+        <label>Student<br>
+          <select name="student_id" required>
+            {% for s in students %}
+              <option value="{{s['student_id']}}" {% if s['student_id']==selected_student %}selected{% endif %}>
+                {{s['student_id']}} — {{ display_name(s) }}
+              </option>
+            {% endfor %}
+          </select>
+        </label>
+
+        <label>Domain<br>
+          <select name="domain">
+            {% for d in domains %}
+              <option value="{{d}}" {% if d==selected_domain %}selected{% endif %}>{{d}}</option>
+            {% endfor %}
+          </select>
+        </label>
+
+        <button class="btn" type="submit">Start Diagnostic</button>
+      </form>
+
+      <p style="margin-top:14px;">
+        <a href="{{ url_for('index') }}">⬅ Back to dashboard</a>
+      </p>
+    </div>
+    """
+    return render_template_string(
+        html,
+        students=students,
+        domains=domains,
+        selected_student=selected_student,
+        selected_domain=selected_domain,
+        display_name=display_name,
+    )
+
+
+@app.route("/diagnostic/session/<session_id>", methods=["GET", "POST"], endpoint="diagnostic_session_v2")
+@require_teacher
+def diagnostic_session_v2(session_id):
+    conn = get_conn()
+
+    # confirm session exists
+    sess = conn.execute(
+        "SELECT * FROM diagnostic_sessions WHERE id = ?",
+        (session_id,),
+    ).fetchone()
+    if not sess:
+        flash("Diagnostic session not found.")
+        return redirect(url_for("diagnostic_home"))
+
+    if request.method == "POST":
+        diagnostic_item_id = request.form.get("diagnostic_item_id")
+        answer = request.form.get("response")
+
+        if diagnostic_item_id and answer:
+            row = conn.execute(
+                """
+                SELECT di.id AS diagnostic_item_id, q.answer_key
+                FROM diagnostic_items di
+                JOIN questions q ON q.question_id = di.question_id
+                WHERE di.id = ?
+                """,
+                (diagnostic_item_id,),
+            ).fetchone()
+
+            if row:
+                is_correct = 1 if str(answer).strip().upper() == str(row["answer_key"]).strip().upper() else 0
+                conn.execute(
+                    """
+                    INSERT INTO diagnostic_responses (session_id, diagnostic_item_id, is_correct)
+                    VALUES (?, ?, ?)
+                    """,
+                    (session_id, int(diagnostic_item_id), is_correct),
+                )
+                conn.commit()
+
+    # get next question
+    next_item = get_next_unanswered_diagnostic_item(conn, session_id)
+
+    # progress count
+    answered = conn.execute(
+        "SELECT COUNT(*) AS c FROM diagnostic_responses WHERE session_id = ?",
+        (session_id,),
+    ).fetchone()
+    answered_count = int(answered["c"]) if answered else 0
+
+    if not next_item:
+        # complete session
+        conn.execute(
+            """
+            UPDATE diagnostic_sessions
+            SET status='completed', completed_at=?
+            WHERE id=?
+            """,
+            (int(time.time()), session_id),
+        )
+        conn.commit()
+
+        html_done = """
+        <!doctype html>
+        <title>Diagnostic Complete</title>
+        <style>
+          body{font-family:Arial, Helvetica, sans-serif;margin:24px;background:#f3f4f6;}
+          .card{max-width:700px;margin:0 auto;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:16px;}
+          a{color:#2563eb;text-decoration:none}
+        </style>
+        <div class="card">
+          <h2 style="margin-top:0;">✅ Diagnostic Complete</h2>
+          <p>Session: <strong>{{ session_id }}</strong></p>
+          <p>Answered: <strong>{{ answered_count }}</strong></p>
+          <p><a href="{{ url_for('diagnostic_home') }}">Start another diagnostic</a></p>
+          <p><a href="{{ url_for('index') }}">⬅ Back to dashboard</a></p>
+        </div>
+        """
+        return render_template_string(html_done, session_id=session_id, answered_count=answered_count)
+
+    html = """
+    <!doctype html>
+    <title>Diagnostic Session</title>
+    <style>
+      body{font-family:Arial, Helvetica, sans-serif;margin:24px;background:#f3f4f6;}
+      .card{max-width:800px;margin:0 auto;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:16px;}
+      .btn{background:#2563eb;color:#fff;border:none;padding:8px 12px;border-radius:8px;cursor:pointer}
+      .choice{margin:6px 0;}
+      .muted{color:#6b7280;font-size:12px}
+      a{color:#2563eb;text-decoration:none}
+    </style>
+
+    <div class="card">
+      <h2 style="margin-top:0;">🧪 Diagnostic Session</h2>
+      <p class="muted">Session: {{ session_id }} | Answered: {{ answered_count }}</p>
+
+      <h3 style="margin-bottom:6px;">{{ next_item['question_id'] }}</h3>
+      <p style="margin-top:0;">{{ next_item['stem'] }}</p>
+
+      <form method="post">
+        <input type="hidden" name="diagnostic_item_id" value="{{ next_item['diagnostic_item_id'] }}">
+
+        <div class="choice"><label><input type="radio" name="response" value="A" required> A. {{ next_item['choice_a'] }}</label></div>
+        <div class="choice"><label><input type="radio" name="response" value="B"> B. {{ next_item['choice_b'] }}</label></div>
+        <div class="choice"><label><input type="radio" name="response" value="C"> C. {{ next_item['choice_c'] }}</label></div>
+        <div class="choice"><label><input type="radio" name="response" value="D"> D. {{ next_item['choice_d'] }}</label></div>
+
+        <p><button class="btn" type="submit">Submit</button></p>
+      </form>
+
+      <p><a href="{{ url_for('diagnostic_home') }}">⬅ Back to Diagnostic Home</a></p>
+    </div>
+    """
+    return render_template_string(
+        html,
+        session_id=session_id,
+        answered_count=answered_count,
+        next_item=next_item,
     )
 
 # ---------- User admin ----------
