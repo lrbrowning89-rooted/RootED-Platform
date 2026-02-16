@@ -1,0 +1,7 @@
+question_id,objective_id,stem,choice_a,choice_b,choice_c,choice_d,answer_key
+DIAG_LS_01,DIAG_LS,Plants grow taller when they receive more sunlight. What does this show?,Plants need light for energy,Plants need soil for space,Plants grow randomly,Plants grow faster in shade,A
+DIAG_LS_02,DIAG_LS,A population of rabbits decreases after wolves move into the area. Why?,More rabbits are being eaten,The rabbits stop reproducing,The plants disappear,The weather changes,A
+DIAG_PS_01,DIAG_PS,A ball rolling on the ground slowly stops. What causes this?,Friction slows the ball,The ball runs out of energy,Gravity pulls it backward,Air pushes it down,A
+DIAG_PS_02,DIAG_PS,A light bulb is on and becomes warm. What does this show about energy?,Electrical energy changed into light and heat,Energy disappeared,Energy turned into matter,Gravity created heat,A
+DIAG_ESS_01,DIAG_ESS,A graph shows warmer average temperatures over many years. What does this most likely represent?,Climate change,Daily weather,Rainfall amounts,Wind speed,A
+DIAG_ESS_02,DIAG_ESS,Why do different areas of Earth experience different seasons?,Earth’s tilt changes sunlight angle,The Sun moves closer,The Moon blocks sunlight,Clouds trap heat,A

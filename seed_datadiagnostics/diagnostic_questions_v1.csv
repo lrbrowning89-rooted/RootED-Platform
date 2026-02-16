@@ -1,0 +1,4 @@
+question_id,objective_id,domain,stem,choice_a,choice_b,choice_c,choice_d,answer_key
+D-LS-1,LS1.A,LS,Plants need sunlight to make food. What process is this?,Respiration,Photosynthesis,Digestion,Evaporation,B
+D-PS-1,PS2.A,PS,What happens when a force is applied to an object?,It always stops,It always breaks,It can change motion,Nothing,C
+D-ESS-1,ESS2.D,ESS,Which process shapes Earth’s surface over time?,Photosynthesis,Erosion,Evaporation,Condensation,B

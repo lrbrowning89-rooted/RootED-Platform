@@ -7,7 +7,8 @@ This adds the Flask teacher dashboard.
 
 ## Run
 1) In Command Prompt, go to your project folder (the one with ngss.db):
-   cd "C:\Users\lbrowning\OneDrive - Wichita Public Schools\Desktop\NGSS_Project"
+   cd RootED
+
 
 2) Install Flask (if needed):
    python -m pip install flask
