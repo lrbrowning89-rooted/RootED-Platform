@@ -1,0 +1,37 @@
+{
+  "standard": {
+    "standard_id": "MS-LS1-1",
+    "core_idea": "LS1",
+    "grade_band": "MS"
+  },
+  "objectives": [
+    {
+      "objective_id": "MS-LS1-1A",
+      "objective_text": "REPLACE ME: Objective A text",
+      "order_in_band": 1,
+      "questions": [
+        {
+          "stem": "REPLACE ME: Question stem",
+          "choice_a": "REPLACE ME: A",
+          "choice_b": "REPLACE ME: B",
+          "choice_c": "REPLACE ME: C",
+          "choice_d": "REPLACE ME: D",
+          "answer_key": "B",
+          "reading_level": 6
+        }
+      ]
+    },
+    {
+      "objective_id": "MS-LS1-1B",
+      "objective_text": "REPLACE ME: Objective B text",
+      "order_in_band": 2,
+      "questions": []
+    },
+    {
+      "objective_id": "OBJ-LS1-MS-1",
+      "objective_text": "REPLACE ME: Objective C text",
+      "order_in_band": 3,
+      "questions": []
+    }
+  ]
+}

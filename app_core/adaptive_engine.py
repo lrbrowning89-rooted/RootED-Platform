@@ -3,8 +3,10 @@ import sqlite3
 import time
 
 # Match the same DB as dashboard_v5.py
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.environ.get("NGSS_DB", os.path.join(BASE_DIR, "ngss.db"))
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]  # RootED/
+DB_PATH = os.environ.get("NGSS_DB", str(PROJECT_ROOT / "data" / "ngss.db"))
 
 MASTERY = 0.90        # ≥90% to advance
 SUPER_MASTERY = 0.95  # ≥95% on remediation to return to same level

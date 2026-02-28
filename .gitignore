@@ -1,2 +1,15 @@
 __pycache__/
 *.pyc
+# Local DB + logs
+data/*.db
+app_core/*.db
+data/ngss_errors.log
+
+# Local venvs
+venv/
+app_core/venv/
+__pycache__/
+*.pyc
+
+# Local backups
+data/backups/*.db
