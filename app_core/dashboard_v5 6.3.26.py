@@ -2327,18 +2327,24 @@ def student_view():
     feedback = None
 
     role = session.get("role")
+    user_id = session.get("user_id")
     if "current_mode" not in session:
         session["current_mode"] = "question"
+
     if "locked_payload" not in session:
         session["locked_payload"] = None
 
+    # Safety check: only allow teacher or student roles
     if role not in ("teacher", "student"):
         session.clear()
         flash("Session error. Please log in again.")
         return redirect(url_for("login"))
 
+    # Base data
     all_students = get_students(conn)
     objs = get_objectives(conn)
+
+    # Figure out which student this session is allowed to act as
     locked_student_id = locked_student_id_for_session(conn)
 
     if role == "student":
@@ -2346,6 +2352,7 @@ def student_view():
             flash("Your account is not linked to a student record yet. Please tell your teacher.")
             return redirect(url_for("logout"))
 
+        # Hard-lock: students can ONLY see themselves
         row = conn.execute(
             """
             SELECT student_id, first_name, last_name, grade, class_period
@@ -2356,6 +2363,7 @@ def student_view():
         ).fetchone()
 
         if not row:
+            # Optionally auto-create the student row if missing
             conn.execute(
                 """
                 INSERT INTO students (student_id, first_name, last_name, grade, class_period)
@@ -2364,6 +2372,7 @@ def student_view():
                 (locked_student_id, "", "", None, None),
             )
             conn.commit()
+
             row = conn.execute(
                 """
                 SELECT student_id, first_name, last_name, grade, class_period
@@ -2375,24 +2384,22 @@ def student_view():
 
         students = [row]
         student_id = locked_student_id
+
     else:
+        # Teacher view – keep full list and dropdown
         students = all_students
         student_id = request.values.get("student_id")
         if not student_id and students:
             student_id = students[0]["student_id"]
 
-    def ms_ls1_1_objective_for_level(level: int) -> str:
-        if level == 1:
-            return "MS-LS1-1A"
-        if level == 2:
-            return "MS-LS1-1B"
-        return "MS-LS1-1C"
+    # Objective selection
+    if role == "student":
+        # Student mode must be engine-driven, not manually selected from request
+        objective_id = None
 
-    def get_engine_target():
-        """Temporary narrow MS-LS1-1 walkthrough mapper: Level 1=A, 2=B, 3=C."""
         ps = conn.execute(
             """
-            SELECT standard_id, current_level, status, locked, locked_reason
+            SELECT standard_id, current_level
             FROM progress_state
             WHERE student_id = ?
             ORDER BY last_update DESC
@@ -2401,47 +2408,33 @@ def student_view():
             (student_id,),
         ).fetchone()
 
-        if ps and ps["standard_id"] == "MS-LS1-1" and ps["status"] == "completed":
-            return "MS-LS1-1", int(ps["current_level"] or 3), None, ps
+        current_std = ps["standard_id"] if ps else None
+        current_lvl = ps["current_level"] if ps else None
 
-        if ps and ps["standard_id"] == "MS-LS1-1":
-            level = int(ps["current_level"] or 1)
-            return "MS-LS1-1", level, ms_ls1_1_objective_for_level(level), ps
-
-        # Default the student walkthrough to MS-LS1-1 if no engine state exists yet.
-        return "MS-LS1-1", 1, "MS-LS1-1A", ps
-
-    current_std, current_level, objective_id, progress_row = get_engine_target()
-
-    if role == "teacher":
-        requested_objective = request.values.get("objective_id")
-        if requested_objective:
-            objective_id = requested_objective
-            std_row = conn.execute(
-                "SELECT standard_id FROM objectives WHERE objective_id=?",
-                (objective_id,),
+        if current_std and current_lvl:
+            q = conn.execute(
+                """
+                SELECT objective_id
+                FROM objectives
+                WHERE standard_id = ?
+                ORDER BY objective_id
+                LIMIT 1
+                """,
+                (current_std,),
             ).fetchone()
-            current_std = std_row["standard_id"] if std_row else current_std
-            current_level = get_level_for_objective(conn, objective_id)
 
-    # Completion page for the temporary MS-LS1-1 walkthrough.
-    if progress_row and progress_row["standard_id"] == "MS-LS1-1" and progress_row["status"] == "completed":
-        html_done = """
-<!doctype html>
-<title>MS-LS1-1 Complete</title>
-<style>
-  body{font-family:Arial, Helvetica, sans-serif;margin:24px;background:#f3f4f6}
-  .card{max-width:700px;margin:0 auto 16px auto;background:#fff;border-radius:10px;padding:16px 20px;border:1px solid #e5e7eb}
-  .btn{background:#2563eb;color:#fff;border:none;padding:8px 12px;border-radius:8px;cursor:pointer;text-decoration:none;display:inline-block}
-</style>
-<div class="card">
-  <h2>✅ MS-LS1-1 Complete</h2>
-  <p>You completed the MS-LS1-1 walkthrough.</p>
-  <p style="font-size:13px;color:#555;">Logged in as <strong>{{ session.get('username', 'student') }}</strong></p>
-  <p><a class="btn" href="{{ url_for('logout') }}" style="background:#dc2626;">Logout</a></p>
-</div>
-        """
-        return render_template_string(html_done)
+            if q:
+                objective_id = q["objective_id"]
+
+        # Fallback only if engine has no current target yet
+        if not objective_id and objs:
+            objective_id = objs[0]["objective_id"]
+
+    else:
+        # Teacher mode can still manually choose an objective
+        objective_id = request.values.get("objective_id")
+        if not objective_id and objs:
+            objective_id = objs[0]["objective_id"]
 
     # ---------- Handle continue after review ----------
     if request.method == "POST" and request.form.get("action") == "continue_after_review":
@@ -2451,9 +2444,11 @@ def student_view():
 
     # ---------- Handle answer submission ----------
     if request.method == "POST" and request.form.get("action") == "answer":
+        # Student_id/objective_id can be re-read from form, but we still respect locking above
         if role == "teacher":
             student_id = request.form.get("student_id") or student_id
             objective_id = request.form.get("objective_id") or objective_id
+        # If role == "student", keep student_id locked and keep objective engine-driven
 
         qid = request.form.get("question_id")
         resp = request.form.get("response")
@@ -2468,13 +2463,41 @@ def student_view():
             ).fetchone()
             correct = 1 if row and row["answer_key"] == resp else 0
 
+            # Use the shared helper so IDs are UUID-based and logic stays consistent
+            level_override = None
+            if role == "student":
+                ps = conn.execute(
+                    """
+                    SELECT current_level
+                    FROM progress_state
+                    WHERE student_id = ? AND standard_id = ?
+                    ORDER BY last_update DESC
+                    LIMIT 1
+                    """,
+                    (student_id, std_id if 'std_id' in locals() else None),
+                ).fetchone()
+
             std_row = conn.execute(
                 "SELECT standard_id FROM objectives WHERE objective_id=?",
                 (objective_id,),
             ).fetchone()
-            current_std_id = std_row["standard_id"] if std_row else current_std
+            current_std_id = std_row["standard_id"] if std_row else None
 
-            level_override = current_level if role == "student" else None
+            level_override = None
+            if role == "student" and current_std_id:
+                ps = conn.execute(
+                    """
+                    SELECT current_level
+                    FROM progress_state
+                    WHERE student_id = ? AND standard_id = ?
+                    ORDER BY last_update DESC
+                    LIMIT 1
+                    """,
+                    (student_id, current_std_id),
+                ).fetchone()
+
+                if ps and ps["current_level"] is not None:
+                    level_override = ps["current_level"]
 
             std_id, lvl, ts = record_attempt_and_response(
                 conn,
@@ -2484,78 +2507,15 @@ def student_view():
                 is_correct=correct,
                 objective_id=objective_id,
                 level_override=level_override,
-                attempt_prefix="ST",
+                attempt_prefix="ST",  # just a label so we know it came from student mode
             )
             conn.commit()
 
+
             engine_decision = None
             engine_summary = None
-
             if std_id != "UNKNOWN":
-                recent_count_row = conn.execute(
-                    """
-                    SELECT COUNT(*) AS n
-                    FROM responses
-                    WHERE student_id = ? AND standard_id = ? AND level = ?
-                    """,
-                    (student_id, std_id, lvl),
-                ).fetchone()
-                recent_count = int(recent_count_row["n"] or 0) if recent_count_row else 0
-
-                # True Rolling-7 gate: do not route/lock/advance until 7 responses exist at this standard+level.
-                if recent_count < 7:
-                    avg_now = ae.rolling7_avg(student_id, std_id, lvl)
-                    ae.set_state(student_id, std_id, lvl, "practicing", avg_now)
-                    engine_decision = {
-                        "status": "question",
-                        "action": "collect_rolling7",
-                        "standard": std_id,
-                        "level": lvl,
-                        "avg": avg_now,
-                        "reason": f"collecting_data_{recent_count}_of_7",
-                    }
-                else:
-                    engine_decision = ae.process_after_response(student_id, std_id)
-
-                    # Temporary MS-LS1-1 completion fallback: the engine currently loops to itself when progression_links is empty.
-                    if (
-                        isinstance(engine_decision, dict)
-                        and engine_decision.get("action") == "advance_standard"
-                        and engine_decision.get("from") == ("MS-LS1-1", 3)
-                        and engine_decision.get("to") == ("MS-LS1-1", 1)
-                    ):
-                        now = int(time.time())
-                        conn.execute(
-                            """
-                            INSERT INTO progress_state
-                              (student_id, standard_id, current_level, status, rolling_avg, locked, locked_reason, last_update)
-                            VALUES (?, ?, ?, ?, ?, 0, NULL, ?)
-                            ON CONFLICT(student_id, standard_id) DO UPDATE SET
-                              current_level=excluded.current_level,
-                              status=excluded.status,
-                              rolling_avg=excluded.rolling_avg,
-                              locked=0,
-                              locked_reason=NULL,
-                              last_update=excluded.last_update
-                            """,
-                            (student_id, "MS-LS1-1", 3, "completed", 1.0, now),
-                        )
-                        conn.execute(
-                            """
-                            INSERT INTO notifications (student_id, standard_id, event, details, ts)
-                            VALUES (?, ?, ?, ?, ?)
-                            """,
-                            (student_id, "MS-LS1-1", "complete", "✅ Completed MS-LS1-1 walkthrough", now),
-                        )
-                        conn.commit()
-                        engine_decision = {
-                            "status": "completed",
-                            "action": "complete_standard",
-                            "standard": "MS-LS1-1",
-                            "level": 3,
-                            "reason": "ms_ls1_1_final_objective_mastered",
-                        }
-
+                engine_decision = ae.process_after_response(student_id, std_id)
                 if isinstance(engine_decision, dict):
                     action = engine_decision.get("action")
                     level = engine_decision.get("level")
@@ -2576,39 +2536,90 @@ def student_view():
                     engine_summary = " ".join(parts)
                 elif engine_decision is not None:
                     engine_summary = str(engine_decision)
-
                 if isinstance(engine_decision, dict) and engine_decision.get("status") == "locked":
                     session["current_mode"] = "locked"
                     session["locked_payload"] = engine_decision
-                elif isinstance(engine_decision, dict) and engine_decision.get("status") == "completed":
-                    session["current_mode"] = "completed"
-                    session["locked_payload"] = None
                 else:
                     session["current_mode"] = "question"
                     session["locked_payload"] = None
 
-            feedback = {
-                "correct": bool(correct),
-                "engine_summary": engine_summary,
-                "engine_decision": engine_decision,
-            }
+# ---------- Handle locked state ----------
+if isinstance(engine_decision, dict) and engine_decision.get("status") == "locked":
+    # Store locked payload in session state
+    st.session_state["current_mode"] = "locked"
+    st.session_state["locked_payload"] = engine_decision
 
-            # Re-read engine target after response processing.
-            current_std, current_level, objective_id, progress_row = get_engine_target()
-        else:
-            feedback = {"error": "No question found for this objective."}
+feedback = {
+    "correct": bool(correct),
+    "engine_summary": engine_summary,
+    "engine_decision": engine_decision,
+}
 
-    if session.get("current_mode") == "completed":
-        return redirect(url_for("student_view"))
+    else:
+        feedback = {"error": "No question found for this objective."}
 
-    locked_review = session.get("locked_payload") if session.get("current_mode") == "locked" else None
+# ---------- LOCKED REVIEW MODE ----------
+if st.session_state.get("current_mode") == "locked":
+    locked_payload = st.session_state.get("locked_payload", {})
+    mini = locked_payload.get("mini_lesson", {})
+
+    st.warning("You need to review this concept before continuing.")
+
+    st.markdown(f"### {mini.get('title', 'Quick Review')}")
+
+    if mini.get("objective_text"):
+        st.markdown(f"**Focus Skill:** {mini['objective_text']}")
+
+    if mini.get("summary"):
+        st.write(mini["summary"])
+
+    key_points = mini.get("key_points", [])
+    if key_points:
+        for point in key_points:
+            st.write(f"- {point}")
+
+    # Continue button
+    if st.button("Continue After Review"):
+        st.session_state["current_mode"] = "question"
+        st.session_state["locked_payload"] = None
+        st.rerun()
+
+    # STOP the rest of the page from rendering
+    st.stop()
+
+    # ---------- Current question / locked review ----------
     current_question = None
+    locked_review = None
 
+    if session.get("current_mode") == "locked":
+        locked_review = session.get("locked_payload")
+    else:
+        locked_review = None
     if not locked_review and objective_id:
         qrows = get_questions_for_objective(conn, objective_id)
 
         if qrows:
+            # Determine current level for student mode
+            current_level = 1
+
+            if role == "student":
+                ps = conn.execute(
+                    """
+                    SELECT current_level
+                    FROM progress_state
+                    WHERE student_id = ?
+                    ORDER BY last_update DESC
+                    LIMIT 1
+                    """,
+                    (student_id,),
+                ).fetchone()
+
+                if ps and ps["current_level"]:
+                    current_level = ps["current_level"]
+
+            # Split question bank into level-based slices
             total = len(qrows)
+
             if total >= 6:
                 level_1_rows = qrows[:3]
                 level_2_rows = qrows[3:5]
@@ -2631,7 +2642,9 @@ def student_view():
 
             if level_qrows:
                 qids = [row["question_id"] for row in level_qrows]
+
                 placeholders = ",".join(["?"] * len(qids))
+
                 attempt_row = conn.execute(
                     f"""
                     SELECT COUNT(*) AS n
@@ -2641,10 +2654,12 @@ def student_view():
                     """,
                     [student_id] + qids,
                 ).fetchone()
+
                 attempt_count = attempt_row["n"] if attempt_row else 0
                 question_index = attempt_count % len(level_qrows)
                 current_question = level_qrows[question_index]
 
+    # ---------- Template ----------
     student_html = """
 <!doctype html>
 <title>Adaptive NGSS - Student Practice</title>
@@ -2666,9 +2681,9 @@ def student_view():
     <div>
       <h2 style="margin:0;">Student Practice TEST-16</h2>
       <p style="font-size:13px;color:#555;margin:2px 0 0 0;">
-        👩‍🎓 Logged in as <strong>{{ session.get('username', 'student') }}</strong>
-        | role = <strong>{{ session.get('role') }}</strong>
-      </p>
+  👩‍🎓 Logged in as <strong>{{ session.get('username', 'student') }}</strong>
+  | role = <strong>{{ session.get('role') }}</strong>
+</p>
     </div>
     <form action="{{ url_for('logout') }}" method="get" style="margin:0;">
       <button type="submit" class="btn" style="background:#dc2626;">Logout</button>
@@ -2696,15 +2711,17 @@ def student_view():
           {% endfor %}
         </select>
       </label>
-      <label>Objective
-        <select name="objective_id" onchange="this.form.submit()">
-          {% for o in objs %}
-            <option value="{{o['objective_id']}}" {% if o['objective_id']==objective_id %}selected{% endif %}>
-              {{o['objective_id']}}
-            </option>
-          {% endfor %}
-        </select>
-      </label>
+    {% endif %}
+    {% if session.get('role') == 'teacher' %}
+    <label>Objective
+      <select name="objective_id" onchange="this.form.submit()">
+        {% for o in objs %}
+          <option value="{{o['objective_id']}}" {% if o['objective_id']==objective_id %}selected{% endif %}>
+            {{o['objective_id']}}
+          </option>
+        {% endfor %}
+      </select>
+    </label>
     {% endif %}
     <noscript><button class="btn" type="submit">Go</button></noscript>
   </form>
@@ -2731,17 +2748,21 @@ def student_view():
     {% endif %}
   {% endif %}
 
-  {% if locked_review %}
+    {% if locked_review %}
     <div style="border: 1px solid #d9c27a; background: #fff8e1; padding: 16px; border-radius: 10px; margin-bottom: 20px;">
       <h3 style="margin-top: 0;">You need to review this concept before continuing.</h3>
+
       {% if locked_review.mini_lesson %}
         <h4>{{ locked_review.mini_lesson.title or "Quick Review" }}</h4>
+
         {% if locked_review.mini_lesson.objective_text %}
           <p><strong>Focus Skill:</strong> {{ locked_review.mini_lesson.objective_text }}</p>
         {% endif %}
+
         {% if locked_review.mini_lesson.summary %}
           <p>{{ locked_review.mini_lesson.summary }}</p>
         {% endif %}
+
         {% if locked_review.mini_lesson.key_points %}
           <ul>
             {% for point in locked_review.mini_lesson.key_points %}
@@ -2750,6 +2771,7 @@ def student_view():
           </ul>
         {% endif %}
       {% endif %}
+
       <form method="post">
         <input type="hidden" name="action" value="continue_after_review">
         <button class="btn" type="submit">Continue After Review</button>
@@ -2771,10 +2793,18 @@ def student_view():
       <input type="hidden" name="objective_id" value="{{objective_id}}">
       <input type="hidden" name="question_id" value="{{current_question['question_id']}}">
 
-      <div class="choice"><label><input type="radio" name="response" value="A" required> A. {{current_question['choice_a']}}</label></div>
-      <div class="choice"><label><input type="radio" name="response" value="B"> B. {{current_question['choice_b']}}</label></div>
-      <div class="choice"><label><input type="radio" name="response" value="C"> C. {{current_question['choice_c']}}</label></div>
-      <div class="choice"><label><input type="radio" name="response" value="D"> D. {{current_question['choice_d']}}</label></div>
+      <div class="choice">
+        <label><input type="radio" name="response" value="A" required> A. {{current_question['choice_a']}}</label>
+      </div>
+      <div class="choice">
+        <label><input type="radio" name="response" value="B"> B. {{current_question['choice_b']}}</label>
+      </div>
+      <div class="choice">
+        <label><input type="radio" name="response" value="C"> C. {{current_question['choice_c']}}</label>
+      </div>
+      <div class="choice">
+        <label><input type="radio" name="response" value="D"> D. {{current_question['choice_d']}}</label>
+      </div>
 
       <p><button class="btn" type="submit">Submit Answer</button></p>
     </form>
@@ -2792,7 +2822,7 @@ def student_view():
         current_question=current_question,
         feedback=feedback,
         locked_review=locked_review,
-        current_level=current_level,
+        current_level=current_level if 'current_level' in locals() else None,
     )
 
 # ---------- Diagnostic Arena ----------

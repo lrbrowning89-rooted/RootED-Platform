@@ -106,7 +106,7 @@ def import_standard(conn: sqlite3.Connection, std: Dict[str, Any], objectives: L
             counts["objectives_written"] += 1
 
         questions = obj.get("questions", [])
-        for q in questions:
+        for j, q in enumerate(questions, start=1):
             stem = q["stem"].strip()
             choice_a = q["choice_a"].strip()
             choice_b = q["choice_b"].strip()
@@ -115,17 +115,19 @@ def import_standard(conn: sqlite3.Connection, std: Dict[str, Any], objectives: L
             answer_key = q["answer_key"].strip().upper()
             reading_level = int(q["reading_level"])
 
+            question_id = f"Q_{objective_id}_{j}"
+
             if dry_run:
-                print(f"[DRY RUN] Would INSERT question for objective_id={objective_id}: {stem[:50]}...")
+                print(f"[DRY RUN] Would INSERT question_id={question_id} for objective_id={objective_id}: {stem[:50]}...")
             else:
-                # We avoid assuming question_id type. We insert without question_id and let SQLite handle it if it's autoincrement,
-                # OR if question_id is NOT autoincrement, SQLite will error and we'll adjust (safely).
                 conn.execute(
                     """
-                    INSERT INTO questions (objective_id, stem, choice_a, choice_b, choice_c, choice_d, answer_key, reading_level)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+                    INSERT INTO questions (
+                        question_id, objective_id, stem, choice_a, choice_b, choice_c, choice_d, answer_key, reading_level
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
                     """,
-                    (objective_id, stem, choice_a, choice_b, choice_c, choice_d, answer_key, reading_level),
+                    (question_id, objective_id, stem, choice_a, choice_b, choice_c, choice_d, answer_key, reading_level),
                 )
                 counts["questions_written"] += 1
 

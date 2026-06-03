@@ -1,37 +1,219 @@
 {
   "standard": {
     "standard_id": "MS-LS1-1",
-    "core_idea": "LS1",
+    "core_idea": "LS1.A",
     "grade_band": "MS"
   },
   "objectives": [
     {
       "objective_id": "MS-LS1-1A",
-      "objective_text": "REPLACE ME: Objective A text",
+      "objective_text": "Define a cell and explain why cells are considered the basic unit of life.",
       "order_in_band": 1,
       "questions": [
         {
-          "stem": "REPLACE ME: Question stem",
-          "choice_a": "REPLACE ME: A",
-          "choice_b": "REPLACE ME: B",
-          "choice_c": "REPLACE ME: C",
-          "choice_d": "REPLACE ME: D",
+          "stem": "Which statement best describes a cell?",
+          "choice_a": "The basic unit of life that carries out life functions",
+          "choice_b": "A type of tissue found only in animals",
+          "choice_c": "A small organ inside the body",
+          "choice_d": "A nonliving particle too small to affect organisms",
+          "answer_key": "A",
+          "reading_level": 5
+        },
+        {
+          "stem": "Which evidence best supports the claim that living things are made of cells?",
+          "choice_a": "Living things move from place to place",
+          "choice_b": "Under a microscope, living things show one or more cells",
+          "choice_c": "Living things have different colors",
+          "choice_d": "Living things are found in many environments",
+          "answer_key": "B",
+          "reading_level": 6
+        },
+        {
+          "stem": "A student says, \"If it is alive, you can see it moving.\" Which choice best corrects this idea?",
+          "choice_a": "All living things move fast enough to see",
+          "choice_b": "Some living things are too small to see without tools, and many do not move in ways you can see",
+          "choice_c": "Only animals are living things",
+          "choice_d": "If something does not move, it cannot grow",
+          "answer_key": "B",
+          "reading_level": 6
+        },
+        {
+          "stem": "Which item is alive based on the idea that living things are made of cells?",
+          "choice_a": "A crystal of salt",
+          "choice_b": "A plastic bead",
+          "choice_c": "A bacterium",
+          "choice_d": "A raindrop",
+          "answer_key": "C",
+          "reading_level": 5
+        },
+        {
+          "stem": "Which statement is the best claim about living things and cells?",
+          "choice_a": "Only animals are made of cells",
+          "choice_b": "Living things are made of cells, either one cell or many cells",
+          "choice_c": "Cells are made of organs",
+          "choice_d": "All cells look exactly the same",
+          "answer_key": "B",
+          "reading_level": 6
+        },
+        {
+          "stem": "A student observes many tiny boxes in a thin slice of onion under a microscope. What is the best explanation?",
+          "choice_a": "The boxes are cells that make up the onion tissue",
+          "choice_b": "The boxes are air bubbles that prove the onion is nonliving",
+          "choice_c": "The boxes are organs inside the onion",
+          "choice_d": "The boxes are pieces of dirt stuck to the onion",
+          "answer_key": "A",
+          "reading_level": 6
+        },
+        {
+          "stem": "Why is a microscope useful when studying whether something is made of cells?",
+          "choice_a": "It makes cells larger so they can be seen",
+          "choice_b": "It changes cells into organs",
+          "choice_c": "It proves that all cells are the same size",
+          "choice_d": "It removes cells so only tissues remain",
+          "answer_key": "A",
+          "reading_level": 5
+        }
+      ]
+    },
+    {
+      "objective_id": "MS-LS1-1B",
+      "objective_text": "Distinguish between unicellular and multicellular organisms using evidence and examples.",
+      "order_in_band": 2,
+      "questions": [
+        {
+          "stem": "What is a unicellular organism?",
+          "choice_a": "An organism made of one cell that carries out all life functions",
+          "choice_b": "An organism made of many different types of cells",
+          "choice_c": "A single organ inside a larger organism",
+          "choice_d": "A group of tissues working together",
+          "answer_key": "A",
+          "reading_level": 5
+        },
+        {
+          "stem": "Which organism is most likely unicellular?",
+          "choice_a": "A mushroom",
+          "choice_b": "A bacterium",
+          "choice_c": "A tree",
+          "choice_d": "A fish",
+          "answer_key": "B",
+          "reading_level": 5
+        },
+        {
+          "stem": "Which statement best describes a multicellular organism?",
+          "choice_a": "It is made of one cell that does everything",
+          "choice_b": "It is made of many cells, often with different types of cells doing different jobs",
+          "choice_c": "It has no cells because it is too large",
+          "choice_d": "It is alive only when it moves",
+          "answer_key": "B",
+          "reading_level": 6
+        },
+        {
+          "stem": "A student claims, \"An organism with only one cell cannot be alive.\" Which choice is the best rebuttal?",
+          "choice_a": "One cell can still take in materials, use energy, and reproduce",
+          "choice_b": "Only multicellular organisms can use energy",
+          "choice_c": "Unicellular organisms are made of nonliving parts only",
+          "choice_d": "Unicellular organisms are too small to be considered alive",
+          "answer_key": "A",
+          "reading_level": 6
+        },
+        {
+          "stem": "A microscope view shows a sample with thousands of similar-looking cells connected together. What is the best conclusion?",
+          "choice_a": "The sample is from a unicellular organism",
+          "choice_b": "The sample is from a multicellular organism",
+          "choice_c": "The sample is nonliving because there are too many cells",
+          "choice_d": "The sample is an organ, not an organism",
+          "answer_key": "B",
+          "reading_level": 6
+        },
+        {
+          "stem": "Which evidence best supports that a plant is multicellular?",
+          "choice_a": "A plant stays in one place",
+          "choice_b": "A plant has many cells visible in different tissues under a microscope",
+          "choice_c": "A plant is green",
+          "choice_d": "A plant grows toward light",
+          "answer_key": "B",
+          "reading_level": 6
+        },
+        {
+          "stem": "Which pair is correctly matched?",
+          "choice_a": "Unicellular: human; Multicellular: amoeba",
+          "choice_b": "Unicellular: bacterium; Multicellular: dog",
+          "choice_c": "Unicellular: tree; Multicellular: yeast",
+          "choice_d": "Unicellular: fish; Multicellular: virus",
           "answer_key": "B",
           "reading_level": 6
         }
       ]
     },
     {
-      "objective_id": "MS-LS1-1B",
-      "objective_text": "REPLACE ME: Objective B text",
-      "order_in_band": 2,
-      "questions": []
-    },
-    {
-      "objective_id": "OBJ-LS1-MS-1",
-      "objective_text": "REPLACE ME: Objective C text",
+      "objective_id": "MS-LS1-1C",
+      "objective_text": "Use investigation evidence to argue whether a sample is living based on the presence of one or more cells.",
       "order_in_band": 3,
-      "questions": []
+      "questions": [
+        {
+          "stem": "Students investigate two water samples under a microscope. Sample A shows moving single-celled organisms. Sample B shows no cells. Which claim is best supported?",
+          "choice_a": "Both samples are living because they contain water",
+          "choice_b": "Sample A is living because it contains cells; Sample B may be nonliving because no cells were found",
+          "choice_c": "Sample B is living because it has no cells",
+          "choice_d": "Neither sample is living because cells must be seen without tools",
+          "answer_key": "B",
+          "reading_level": 6
+        },
+        {
+          "stem": "A student finds tiny structures in a sample, but they are not organized like cells and do not repeat in a pattern. What is the best next step in the investigation?",
+          "choice_a": "Conclude the sample is living without more evidence",
+          "choice_b": "Adjust the microscope focus and examine multiple areas to look for cells",
+          "choice_c": "Stop using the microscope because it cannot show cells",
+          "choice_d": "Assume the sample is multicellular",
+          "answer_key": "B",
+          "reading_level": 6
+        },
+        {
+          "stem": "Which statement is the best reasoning to connect evidence to the claim \"The sample is living\"?",
+          "choice_a": "It looks interesting under the microscope",
+          "choice_b": "Living things are made of cells, and cells were observed in the sample",
+          "choice_c": "It was collected outside",
+          "choice_d": "It moved when the slide was tapped",
+          "answer_key": "B",
+          "reading_level": 6
+        },
+        {
+          "stem": "A student says a paper clip is alive because it moves when a magnet is near. Which evidence best refutes the claim?",
+          "choice_a": "A paper clip is shiny",
+          "choice_b": "A paper clip is cold to the touch",
+          "choice_c": "A paper clip has no cells when observed under a microscope",
+          "choice_d": "A paper clip can be picked up easily",
+          "answer_key": "C",
+          "reading_level": 6
+        },
+        {
+          "stem": "In an investigation, why should students observe more than one area of a sample on the slide?",
+          "choice_a": "Cells are always in the center of the slide",
+          "choice_b": "Cells may be unevenly distributed, so multiple views give stronger evidence",
+          "choice_c": "Observing more areas makes the microscope brighter",
+          "choice_d": "Only multicellular organisms require multiple observations",
+          "answer_key": "B",
+          "reading_level": 6
+        },
+        {
+          "stem": "A student observes a single-celled organism in pond water. Which explanation best describes how this organism can be alive with only one cell?",
+          "choice_a": "It is not alive until it becomes multicellular",
+          "choice_b": "One cell can perform all functions needed for life within that organism",
+          "choice_c": "It is alive only because pond water is alive",
+          "choice_d": "It is alive only if it moves fast enough to see",
+          "answer_key": "B",
+          "reading_level": 6
+        },
+        {
+          "stem": "Which claim is best supported by the evidence \"Cells were observed in the sample\"?",
+          "choice_a": "The sample is living or came from something living",
+          "choice_b": "The sample is definitely an animal",
+          "choice_c": "The sample is nonliving because cells are too small",
+          "choice_d": "The sample is made of only one organ",
+          "answer_key": "A",
+          "reading_level": 6
+        }
+      ]
     }
   ]
 }

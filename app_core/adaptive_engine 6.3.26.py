@@ -2,8 +2,6 @@ import os
 import sqlite3
 import time
 
-print("LOADED adaptive_engine from:", __file__)
-
 # Match the same DB as dashboard_v5.py
 from pathlib import Path
 
@@ -52,20 +50,6 @@ def get_last_n_responses(student_id: str, standard_id: str,
             (student_id, standard_id, level, n)
         ).fetchall()
     return [r["correct"] for r in rows]
-
-
-def response_count(student_id: str, standard_id: str, level: int) -> int:
-    """Return how many responses exist for this student/standard/level."""
-    with get_conn() as conn:
-        row = conn.execute(
-            """
-            SELECT COUNT(*) AS n
-            FROM responses
-            WHERE student_id = ? AND standard_id = ? AND level = ?
-            """,
-            (student_id, standard_id, level)
-        ).fetchone()
-    return int(row["n"] or 0)
 
 
 def rolling7_avg(student_id: str, standard_id: str, level: int) -> float:
@@ -290,7 +274,6 @@ def build_mini_lesson_payload(standard_id: str, objective_id: str | None = None,
     }
 
 def process_after_response(student_id: str, standard_id: str) -> dict:
-    print("RUNNING process_after_response", student_id, standard_id)
     """
     Call this AFTER log_response().
     It:
@@ -302,25 +285,6 @@ def process_after_response(student_id: str, standard_id: str) -> dict:
     """
     state = get_state(student_id, standard_id)
     level = state["level"]
-
-    avg = rolling7_avg(student_id, standard_id, level)
-    count = response_count(student_id, standard_id, level)
-
-    # Temporary MVP safeguard:
-    # Do not advance, remediate, or lock until a full Rolling-7 window exists.
-    # This prevents a single correct/incorrect answer from triggering routing.
-    if count < ROLL_N:
-        set_state(student_id, standard_id, level, "practicing", avg)
-        return {
-            "status": "question",
-            "action": "collecting_rolling7",
-            "standard": standard_id,
-            "level": level,
-            "avg": avg,
-            "count": count,
-            "needed": ROLL_N,
-            "reason": "insufficient_rolling7_data",
-        }
 
     if state["locked"]:
         mini_lesson = build_mini_lesson_payload(
@@ -336,6 +300,8 @@ def process_after_response(student_id: str, standard_id: str) -> dict:
             "reason": state["locked_reason"],
             "mini_lesson": mini_lesson,
         }
+
+    avg = rolling7_avg(student_id, standard_id, level)
 
     # ---- Advance (mastery) ----
     if avg >= MASTERY:
