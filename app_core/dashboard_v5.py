@@ -2389,7 +2389,12 @@ def student_view():
         return "MS-LS1-1C"
 
     def get_engine_target():
-        """Temporary narrow MS-LS1-1 walkthrough mapper: Level 1=A, 2=B, 3=C."""
+        """
+        Choose the student's current standard/objective from progress_state.
+        MS-LS1-1 still uses the temporary A/B/C mapper.
+        Other standards use the first available objective for that standard.
+        If no content exists yet, objective_id stays None.
+        """
         ps = conn.execute(
             """
             SELECT standard_id, current_level, status, locked, locked_reason
@@ -2401,14 +2406,29 @@ def student_view():
             (student_id,),
         ).fetchone()
 
-        if ps and ps["standard_id"] == "MS-LS1-1" and ps["status"] == "completed":
-            return "MS-LS1-1", int(ps["current_level"] or 3), None, ps
-
-        if ps and ps["standard_id"] == "MS-LS1-1":
+        if ps:
+            std = ps["standard_id"]
             level = int(ps["current_level"] or 1)
-            return "MS-LS1-1", level, ms_ls1_1_objective_for_level(level), ps
 
-        # Default the student walkthrough to MS-LS1-1 if no engine state exists yet.
+            if std == "MS-LS1-1" and ps["status"] == "completed":
+                return "MS-LS1-1", level, None, ps
+
+            if std == "MS-LS1-1":
+                return "MS-LS1-1", level, ms_ls1_1_objective_for_level(level), ps
+
+            obj = conn.execute(
+                """
+                SELECT objective_id
+                FROM objectives
+                WHERE standard_id = ?
+                ORDER BY order_in_band, objective_id
+                LIMIT 1
+                """,
+                (std,),
+            ).fetchone()
+
+            return std, level, obj["objective_id"] if obj else None, ps
+
         return "MS-LS1-1", 1, "MS-LS1-1A", ps
 
     current_std, current_level, objective_id, progress_row = get_engine_target()

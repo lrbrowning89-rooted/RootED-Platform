@@ -158,25 +158,28 @@ def lower_band_of(standard_id: str) -> str | None:
     return row["lower_standard_id"] if row else None
 
 
-def next_up_from(standard_id: str) -> tuple[str, int]:
+def next_up_from(standard_id: str) -> tuple[str | None, int | None]:
     """
-    Continuous progression:
-    get the next standard after Level 3 mastery (same band or HS/beyond).
-    Always starts the next one at Level 1.
+    Look up the next standard from standard_links.
+    Only progression links are used here.
     """
     with get_conn() as conn:
         row = conn.execute(
             """
-            SELECT next_standard_id
-            FROM progression_links
-            WHERE standard_id = ?
+            SELECT to_standard_id
+            FROM standard_links
+            WHERE from_standard_id = ?
+              AND link_type = 'progression'
+            ORDER BY priority ASC, id ASC
+            LIMIT 1
             """,
             (standard_id,)
         ).fetchone()
+
     if not row:
-        # if you ever have a "top of graph" standard, you can choose to loop or stay
-        return standard_id, 1
-    return row["next_standard_id"], 1
+        return None, None
+
+    return row["to_standard_id"], 1
 
 
 # -------------- Origin links (for returns after remediation) --------------
@@ -318,7 +321,8 @@ def process_after_response(student_id: str, standard_id: str) -> dict:
             "level": level,
             "avg": avg,
             "count": count,
-            "needed": ROLL_N,
+                           "standard": standard_id,
+ "needed": ROLL_N,
             "reason": "insufficient_rolling7_data",
         }
 
@@ -344,21 +348,33 @@ def process_after_response(student_id: str, standard_id: str) -> dict:
             set_state(student_id, standard_id, new_level, "practicing", avg)
             return {
                 "status": "question",
-                "action": "serve_practice",
                 "standard": standard_id,
                 "level": new_level,
                 "avg": avg,
                 "reason": "mastery_advance",
             }
 
-        # Finished Level 3 → move to next standard in progression
+        # Finished Level 3 → look for next standard in standard_links
         next_std, next_lvl = next_up_from(standard_id)
-        set_state(student_id, next_std, next_lvl, "practicing", 0.0)
+
+        if next_std:
+            set_state(student_id, next_std, next_lvl, "practicing", 0.0)
+            return {
+                "status": "question",
+                "action": "next_standard_found",
+                "from": (standard_id, level),
+                "to": (next_std, next_lvl),
+                "standard": next_std,
+                "level": next_lvl,
+                "reason": "progression_link_found",
+            }
+
         return {
-            "status": "question",
-            "action": "advance_standard",
-            "from": (standard_id, level),
-            "to": (next_std, next_lvl),
+            "status": "complete",
+            "action": "standard_complete",
+            "standard": standard_id,
+            "level": level,
+            "reason": "no_progression_link_found",
         }
 
     # ---- Middle band: keep practicing ----
