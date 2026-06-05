@@ -815,6 +815,56 @@ def get_objectives(conn):
     ).fetchall()
 
 
+def get_available_standards(conn):
+    return conn.execute(
+        """
+        SELECT
+            s.standard_id,
+            s.core_idea,
+            s.grade_band,
+            COUNT(o.objective_id) AS objective_count
+        FROM standards s
+        LEFT JOIN objectives o ON o.standard_id = s.standard_id
+        GROUP BY s.standard_id, s.core_idea, s.grade_band
+        ORDER BY s.core_idea, s.grade_band, s.standard_id
+        """
+    ).fetchall()
+
+
+def get_standard_meta(conn, standard_id):
+    if not standard_id:
+        return None
+    return conn.execute(
+        """
+        SELECT standard_id, core_idea, grade_band
+        FROM standards
+        WHERE standard_id = ?
+        """,
+        (standard_id,),
+    ).fetchone()
+
+
+def get_response_count_for_level(conn, student_id, standard_id, level):
+    if not student_id or not standard_id or not level:
+        return 0
+    row = conn.execute(
+        """
+        SELECT COUNT(*) AS n
+        FROM responses
+        WHERE student_id = ? AND standard_id = ? AND level = ?
+        """,
+        (student_id, standard_id, level),
+    ).fetchone()
+    return int(row["n"] or 0) if row else 0
+
+
+def row_get(row, key, default=None):
+    if not row or key not in row.keys():
+        return default
+    value = row[key]
+    return default if value is None else value
+
+
 def get_students(conn, period=None):
     if period and period != "ALL":
         return conn.execute(
@@ -1328,8 +1378,11 @@ def login():
             session["role"] = user["role"]
             flash(f"Welcome, {user['username']}!")
             if user["role"] == "teacher":
+                session["current_mode"] = "question"
                 return redirect(url_for("index"))
             else:
+                session["current_mode"] = "home"
+                session["locked_payload"] = None
                 return redirect(url_for("student_view"))
         else:
             flash("Invalid username or password.")
@@ -1521,8 +1574,11 @@ def sso_callback(provider):
     flash(f"Welcome, {user['username']} (SSO via {provider})!")
 
     if user["role"] == "teacher":
+        session["current_mode"] = "question"
         return redirect(url_for("index"))
     else:
+        session["current_mode"] = "home"
+        session["locked_payload"] = None
         return redirect(url_for("student_view"))
 
 
@@ -2328,7 +2384,7 @@ def student_view():
 
     role = session.get("role")
     if "current_mode" not in session:
-        session["current_mode"] = "question"
+        session["current_mode"] = "home" if role == "student" else "question"
     if "locked_payload" not in session:
         session["locked_payload"] = None
 
@@ -2465,6 +2521,12 @@ def student_view():
 
     # ---------- Handle continue after review ----------
     if request.method == "POST" and request.form.get("action") == "continue_after_review":
+        session["current_mode"] = "question"
+        session["locked_payload"] = None
+        return redirect(url_for("student_view"))
+
+    # ---------- Handle Continue Learning from student home ----------
+    if request.method == "POST" and request.form.get("action") == "continue_learning":
         session["current_mode"] = "question"
         session["locked_payload"] = None
         return redirect(url_for("student_view"))
@@ -2620,6 +2682,139 @@ def student_view():
 
     if session.get("current_mode") == "completed":
         return redirect(url_for("student_view"))
+
+    available_standards = get_available_standards(conn)
+    available_standard_cards = [
+        {
+            "standard_id": row_get(standard, "standard_id", "Unknown standard"),
+            "core_idea": row_get(standard, "core_idea", "Science"),
+            "grade_band": row_get(standard, "grade_band", "Available"),
+            "objective_count": row_get(standard, "objective_count", 0),
+        }
+        for standard in available_standards
+    ]
+    current_standard_meta = get_standard_meta(conn, current_std)
+    response_count = get_response_count_for_level(conn, student_id, current_std, current_level)
+    rolling_avg = float(row_get(progress_row, "rolling_avg", 0.0) or 0.0)
+    progress_percent = max(0, min(100, round(rolling_avg * 100)))
+    progress_status = row_get(progress_row, "status", "not started")
+    current_core_idea = row_get(current_standard_meta, "core_idea", "Science")
+    current_grade_band = row_get(current_standard_meta, "grade_band", "Current band")
+
+    if role == "student" and session.get("current_mode") == "home":
+        home_html = """
+<!doctype html>
+<title>Adaptive NGSS - Student Home</title>
+<style>
+  body{font-family:Arial, Helvetica, sans-serif;margin:24px;background:#f3f4f6;color:#111827}
+  .shell{max-width:900px;margin:0 auto}
+  .card{background:#fff;border-radius:10px;padding:18px 22px;border:1px solid #e5e7eb;margin-bottom:16px}
+  .header{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:12px}
+  .btn{background:#2563eb;color:#fff;border:none;padding:10px 14px;border-radius:8px;cursor:pointer;text-decoration:none;display:inline-block;font-weight:700}
+  .btn-danger{background:#dc2626}
+  .muted{font-size:13px;color:#4b5563}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .metric{border:1px solid #e5e7eb;border-radius:8px;padding:12px;background:#f9fafb}
+  .metric strong{display:block;font-size:22px;margin-top:4px}
+  .progress{height:12px;background:#e5e7eb;border-radius:999px;overflow:hidden;margin:10px 0 4px}
+  .bar{height:100%;background:#16a34a;width:{{ progress_percent }}%}
+  table{width:100%;border-collapse:collapse;margin-top:8px}
+  th,td{text-align:left;border-bottom:1px solid #e5e7eb;padding:9px 8px;font-size:14px;vertical-align:top}
+  th{font-size:12px;color:#4b5563;text-transform:uppercase;letter-spacing:.04em}
+  .pill{display:inline-block;padding:3px 7px;border-radius:999px;background:#dbeafe;color:#1d4ed8;font-size:12px;font-weight:700}
+  @media(max-width:700px){body{margin:14px}.grid{grid-template-columns:1fr}.header{display:block}.logout{margin-top:10px}}
+</style>
+
+<div class="shell">
+  <div class="card">
+    <div class="header">
+      <div>
+        <h2 style="margin:0;">Student Home</h2>
+        <p class="muted" style="margin:4px 0 0 0;">
+          Logged in as <strong>{{ session.get('username', 'student') }}</strong>
+        </p>
+      </div>
+      <form class="logout" action="{{ url_for('logout') }}" method="get" style="margin:0;">
+        <button type="submit" class="btn btn-danger">Logout</button>
+      </form>
+    </div>
+
+    {% with msgs = get_flashed_messages() %}
+      {% if msgs %}
+        <div style="background:#e7f7ee;border:1px solid #a8e0bf;color:#0f6b3a;padding:10px 12px;border-radius:8px;margin:10px 0;font-size:14px;">
+          {% for m in msgs %}
+            <div>{{ m }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+
+    <div class="grid">
+      <div class="metric">
+        <span class="muted">Current assigned standard</span>
+        <strong>{{ current_std }}</strong>
+        {% if current_standard_meta %}
+          <div class="muted">{{ current_core_idea }} | {{ current_grade_band }}</div>
+        {% endif %}
+      </div>
+      <div class="metric">
+        <span class="muted">Current progress</span>
+        <strong>Level {{ current_level }}</strong>
+        <div class="progress" aria-label="Current progress"><div class="bar"></div></div>
+        <div class="muted">{{ progress_percent }}% Rolling-7 average | {{ response_count }} of 7 responses at this level | {{ progress_status }}</div>
+      </div>
+    </div>
+
+    <form method="post" style="margin:16px 0 0 0;">
+      <input type="hidden" name="action" value="continue_learning">
+      <button class="btn" type="submit">Continue Learning</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h3 style="margin:0 0 8px 0;">Available Standards</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Standard</th>
+          <th>Core Idea</th>
+          <th>Grade Band</th>
+          <th>Objectives</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for standard in available_standards %}
+          <tr>
+            <td>
+              <strong>{{ standard.standard_id }}</strong>
+              {% if standard.standard_id == current_std %}
+                <span class="pill">Current</span>
+              {% endif %}
+            </td>
+            <td>{{ standard.core_idea }}</td>
+            <td>{{ standard.grade_band }}</td>
+            <td>{{ standard.objective_count }}</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="4"><em>No standards are available yet.</em></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+        """
+        return render_template_string(
+            home_html,
+            available_standards=available_standard_cards,
+            current_standard_meta=current_standard_meta,
+            current_std=current_std,
+            current_level=current_level,
+            current_core_idea=current_core_idea,
+            current_grade_band=current_grade_band,
+            progress_percent=progress_percent,
+            progress_status=progress_status,
+            response_count=response_count,
+        )
 
     locked_review = session.get("locked_payload") if session.get("current_mode") == "locked" else None
     current_question = None
