@@ -1464,6 +1464,435 @@ def login():
       </form>
     </div>
     """
+    login_html = """
+    <!doctype html>
+    <html lang="en">
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1">
+      <title>RootED | Where learning takes root</title>
+      <style>
+        :root{
+          --ink:#1f2933;
+          --muted:#5f6f64;
+          --leaf:#2f6f4e;
+          --leaf-dark:#24543d;
+          --moss:#dce9d5;
+          --sprout:#f3f8ee;
+          --gold:#c98f35;
+          --sky:#e6f0f6;
+          --line:#d9e2d4;
+          --shadow:0 24px 70px rgba(31,41,51,.14);
+        }
+        *{box-sizing:border-box;}
+        body{
+          margin:0;
+          font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, Helvetica, sans-serif;
+          color:var(--ink);
+          background:
+            radial-gradient(circle at 15% 15%, rgba(220,233,213,.88), transparent 30%),
+            linear-gradient(135deg, #fffdf8 0%, #f3f8ee 48%, #e6f0f6 100%);
+          min-height:100vh;
+        }
+        body:before{
+          content:"";
+          position:fixed;
+          inset:0;
+          pointer-events:none;
+          background:
+            linear-gradient(90deg, rgba(47,111,78,.06) 1px, transparent 1px),
+            linear-gradient(180deg, rgba(47,111,78,.05) 1px, transparent 1px);
+          background-size:56px 56px;
+          mask-image:linear-gradient(to bottom, rgba(0,0,0,.45), transparent 70%);
+        }
+        a{color:var(--leaf-dark);}
+        .page{
+          position:relative;
+          width:min(1180px, calc(100% - 40px));
+          margin:0 auto;
+          padding:36px 0 44px;
+        }
+        .hero{
+          display:grid;
+          grid-template-columns:minmax(0, 1.16fr) minmax(340px, .84fr);
+          gap:32px;
+          align-items:stretch;
+          min-height:calc(100vh - 80px);
+        }
+        .brand-panel{
+          display:flex;
+          flex-direction:column;
+          justify-content:space-between;
+          gap:28px;
+          padding:26px 0;
+        }
+        .brand-mark{
+          display:inline-flex;
+          align-items:center;
+          gap:12px;
+          color:var(--leaf-dark);
+          font-weight:800;
+          letter-spacing:0;
+        }
+        .mark-symbol{
+          width:42px;
+          height:42px;
+          border-radius:50%;
+          display:grid;
+          place-items:center;
+          color:#fff;
+          background:linear-gradient(145deg, var(--leaf), var(--gold));
+          box-shadow:0 12px 28px rgba(47,111,78,.22);
+          font-size:23px;
+          line-height:1;
+        }
+        h1{
+          margin:44px 0 8px;
+          font-size:clamp(54px, 7vw, 92px);
+          line-height:.95;
+          letter-spacing:0;
+          color:#183629;
+        }
+        .tagline{
+          margin:0;
+          font-size:clamp(24px, 3vw, 38px);
+          color:var(--leaf);
+          font-weight:700;
+          letter-spacing:0;
+        }
+        .hero-copy{
+          max-width:710px;
+          margin:24px 0 0;
+          font-size:20px;
+          line-height:1.6;
+          color:#304037;
+        }
+        .hero-actions{
+          display:flex;
+          gap:14px;
+          flex-wrap:wrap;
+          margin-top:30px;
+        }
+        .cta-link{
+          display:inline-flex;
+          align-items:center;
+          justify-content:center;
+          min-height:46px;
+          padding:12px 18px;
+          border-radius:8px;
+          text-decoration:none;
+          font-weight:750;
+          border:1px solid transparent;
+        }
+        .cta-primary{
+          background:var(--leaf);
+          color:#fff;
+          box-shadow:0 14px 28px rgba(47,111,78,.2);
+        }
+        .cta-secondary{
+          background:rgba(255,255,255,.58);
+          color:var(--leaf-dark);
+          border-color:rgba(47,111,78,.24);
+        }
+        .story-grid{
+          display:grid;
+          grid-template-columns:repeat(3, minmax(0, 1fr));
+          gap:14px;
+          margin-top:34px;
+        }
+        .story-card{
+          background:rgba(255,255,255,.7);
+          border:1px solid rgba(47,111,78,.16);
+          border-radius:8px;
+          padding:18px;
+          min-height:142px;
+          box-shadow:0 12px 30px rgba(31,41,51,.07);
+        }
+        .story-card h2{
+          margin:0 0 10px;
+          font-size:16px;
+          letter-spacing:0;
+          color:#214332;
+        }
+        .story-card p{
+          margin:0;
+          color:var(--muted);
+          line-height:1.5;
+          font-size:14px;
+        }
+        .pathway{
+          margin-top:16px;
+          padding:18px 20px;
+          background:rgba(230,240,246,.74);
+          border:1px solid rgba(47,111,78,.14);
+          border-radius:8px;
+          color:#40524a;
+          line-height:1.55;
+          font-size:14px;
+        }
+        .login-panel{
+          align-self:center;
+          background:rgba(255,255,255,.9);
+          border:1px solid rgba(47,111,78,.18);
+          border-radius:8px;
+          box-shadow:var(--shadow);
+          overflow:hidden;
+        }
+        .login-header{
+          padding:28px 28px 22px;
+          background:linear-gradient(135deg, rgba(47,111,78,.1), rgba(201,143,53,.1));
+          border-bottom:1px solid var(--line);
+        }
+        .login-header h2{
+          margin:0;
+          font-size:28px;
+          letter-spacing:0;
+          color:#183629;
+        }
+        .login-header p{
+          margin:10px 0 0;
+          color:#4d5e55;
+          line-height:1.5;
+        }
+        .access-notes{
+          display:grid;
+          grid-template-columns:1fr 1fr;
+          gap:10px;
+          padding:18px 28px 0;
+        }
+        .access-note{
+          border:1px solid var(--line);
+          border-radius:8px;
+          padding:12px;
+          background:#fffefa;
+        }
+        .access-note strong{
+          display:block;
+          margin-bottom:4px;
+          color:var(--leaf-dark);
+          font-size:14px;
+        }
+        .access-note span{
+          display:block;
+          color:var(--muted);
+          font-size:13px;
+          line-height:1.4;
+        }
+        .login-body{padding:22px 28px 28px;}
+        .flash-box{
+          background:#e7f7ee;
+          border:1px solid #a8e0bf;
+          color:#0f6b3a;
+          padding:10px 12px;
+          border-radius:8px;
+          margin:0 0 16px;
+          font-size:14px;
+        }
+        label{
+          display:block;
+          margin-bottom:14px;
+          color:#34443b;
+          font-size:14px;
+          font-weight:700;
+        }
+        input{
+          width:100%;
+          min-height:44px;
+          margin-top:7px;
+          padding:10px 12px;
+          border:1px solid #cbd8cd;
+          border-radius:8px;
+          background:#fff;
+          color:var(--ink);
+          font:inherit;
+        }
+        input:focus{
+          outline:3px solid rgba(47,111,78,.18);
+          border-color:var(--leaf);
+        }
+        .btn,
+        .btn-sso-google,
+        .btn-sso-ms{
+          width:100%;
+          border:none;
+          min-height:46px;
+          padding:11px 14px;
+          border-radius:8px;
+          cursor:pointer;
+          font-size:15px;
+          font-weight:750;
+        }
+        .btn{
+          background:var(--leaf);
+          color:#fff;
+          box-shadow:0 14px 24px rgba(47,111,78,.18);
+        }
+        .btn:hover,
+        .cta-primary:hover{background:var(--leaf-dark);}
+        .btn-sso-google{
+          background:#fff;
+          color:#2f3b34;
+          border:1px solid #d7ded8;
+        }
+        .btn-sso-ms{
+          background:#0078d4;
+          color:#fff;
+        }
+        .account-note{
+          font-size:13px;
+          color:var(--muted);
+          margin:10px 0 0;
+          line-height:1.45;
+        }
+        .divider{
+          display:flex;
+          align-items:center;
+          gap:10px;
+          margin:20px 0;
+          text-align:center;
+          font-size:12px;
+          color:#6b7280;
+          font-weight:700;
+        }
+        .divider:before,
+        .divider:after{
+          content:"";
+          flex:1;
+          border-top:1px solid #e1e7e2;
+        }
+        .sso-copy{
+          font-size:13px;
+          color:#4b5563;
+          margin:0 0 10px;
+          line-height:1.45;
+        }
+        .sso-form{margin:0 0 10px;}
+        .sso-form:last-child{margin-bottom:0;}
+        @media (max-width:900px){
+          .page{width:min(100% - 28px, 680px);padding:20px 0 34px;}
+          .hero{grid-template-columns:1fr;min-height:0;}
+          .brand-panel{padding:8px 0 0;}
+          h1{margin-top:32px;}
+          .hero-copy{font-size:18px;}
+          .story-grid{grid-template-columns:1fr;}
+          .login-panel{align-self:stretch;}
+        }
+        @media (max-width:520px){
+          .page{width:min(100% - 20px, 680px);}
+          .access-notes{grid-template-columns:1fr;padding:16px 18px 0;}
+          .login-header,
+          .login-body{padding-left:18px;padding-right:18px;}
+          .hero-actions{flex-direction:column;}
+          .cta-link{width:100%;}
+        }
+      </style>
+    </head>
+    <body>
+      <main class="page">
+        <section class="hero" aria-label="RootED public landing page">
+          <div class="brand-panel">
+            <div>
+              <div class="brand-mark" aria-label="RootED">
+                <span class="mark-symbol">R</span>
+                <span>RootED</span>
+              </div>
+              <h1>RootED</h1>
+              <p class="tagline">Where learning takes root.</p>
+              <p class="hero-copy">
+                RootED helps learners grow through curiosity, discovery, and meaningful challenge.
+              </p>
+              <div class="hero-actions">
+                <a class="cta-link cta-primary" href="#access">Log in to RootED</a>
+                <a class="cta-link cta-secondary" href="#mission">Explore the mission</a>
+              </div>
+            </div>
+
+            <div>
+              <div class="story-grid" id="mission">
+                <section class="story-card">
+                  <h2>Mission</h2>
+                  <p>
+                    RootED helps learners grow through curiosity, discovery, and meaningful challenge,
+                    building deep foundations of understanding that empower them to thrive.
+                  </p>
+                </section>
+                <section class="story-card">
+                  <h2>Learning Philosophy</h2>
+                  <p>
+                    Curiosity is sacred, creativity is calling, and learning should feel like discovery.
+                    Challenge becomes a supportive path toward growth.
+                  </p>
+                </section>
+                <section class="story-card">
+                  <h2>Adaptive Support</h2>
+                  <p>
+                    Learners progress at their own level while RootED responds to demonstrated
+                    understanding and helps mastery build from strong foundations.
+                  </p>
+                </section>
+              </div>
+              <div class="pathway">
+                The current RootED learning pathway supports science learning through structured
+                progressions, with standards alignment working quietly in the background.
+              </div>
+            </div>
+          </div>
+
+          <aside class="login-panel" id="access" aria-label="RootED access">
+            <div class="login-header">
+              <h2>Access RootED</h2>
+              <p>Students continue learning and discovery. Teachers guide learner growth and monitor progress.</p>
+            </div>
+            <div class="access-notes">
+              <div class="access-note">
+                <strong>Students</strong>
+                <span>Continue your learning journey at the level that fits your current understanding.</span>
+              </div>
+              <div class="access-note">
+                <strong>Teachers</strong>
+                <span>Guide growth, review progress, and support meaningful next steps.</span>
+              </div>
+            </div>
+            <div class="login-body">
+              {% with msgs = get_flashed_messages() %}
+                {% if msgs %}
+                  <div class="flash-box">
+                    {% for m in msgs %}
+                      <div>{{ m }}</div>
+                    {% endfor %}
+                  </div>
+                {% endif %}
+              {% endwith %}
+
+              <form method="post">
+                <label>Username
+                  <input name="username" required autocomplete="username">
+                </label>
+                <label>Password
+                  <input type="password" name="password" required autocomplete="current-password">
+                </label>
+                <button type="submit" class="btn">Log in</button>
+              </form>
+              <p class="account-note">
+                Do not have an account? Contact your teacher to be added.
+              </p>
+
+              <div class="divider"><span>OR</span></div>
+
+              <p class="sso-copy">Sign in with your school account:</p>
+              <form method="get" action="{{ url_for('sso_login', provider='google') }}" class="sso-form">
+                <button type="submit" class="btn-sso-google">Continue with Google</button>
+              </form>
+              <form method="get" action="{{ url_for('sso_login', provider='microsoft') }}" class="sso-form">
+                <button type="submit" class="btn-sso-ms">Continue with Microsoft</button>
+              </form>
+            </div>
+          </aside>
+        </section>
+      </main>
+    </body>
+    </html>
+    """
     return render_template_string(login_html)
 
 
@@ -2824,14 +3253,17 @@ def student_view():
 
         if qrows:
             total = len(qrows)
-            if total >= 6:
+
+            if total >= 21:
+                level_1_rows = qrows[:7]
+                level_2_rows = qrows[7:14]
+                level_3_rows = qrows[14:21]
+
+            elif total >= 6:
                 level_1_rows = qrows[:3]
                 level_2_rows = qrows[3:5]
                 level_3_rows = qrows[5:]
-            elif total >= 3:
-                level_1_rows = qrows[:1]
-                level_2_rows = qrows[1:2]
-                level_3_rows = qrows[2:]
+
             else:
                 level_1_rows = qrows
                 level_2_rows = qrows
