@@ -1,0 +1,533 @@
+{
+  "standard_id": "MS-LS1-1",
+  "objective_id": "MS-LS1-1A",
+  "objective_name": "Cells as the Basic Unit of Life",
+  "version": "1.0",
+  "status": "production_approved",
+  "standards": {
+    "content_architecture": "v1.0",
+    "question_standard": "v1.0",
+    "content_packaging": "v1.0",
+    "json_schema": "v1.0",
+    "remediation_tag_standard": "v1.0"
+  },
+  "questions": [
+    {
+      "question_id": "Q_MSLS1_1_A_001",
+      "standard_id": "MS-LS1-1",
+      "objective_id": "MS-LS1-1A",
+      "difficulty": "Recall",
+      "question_type": "Multiple Choice",
+      "prompt": "Which statement is true about all living things?",
+      "answer_choices": {
+        "A": "They are made of cells.",
+        "B": "They are made of rocks.",
+        "C": "They are made of metal.",
+        "D": "They are made of water only."
+      },
+      "correct_answer": "A",
+      "explanation": "All living things are made of one or more cells. Cells are the basic unit of life.",
+      "identifier_tags": [
+        "living_things_made_of_cells"
+      ],
+      "remediation_tags": [
+        "living_things_made_of_cells"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_1_A_002",
+      "standard_id": "MS-LS1-1",
+      "objective_id": "MS-LS1-1A",
+      "difficulty": "Recall",
+      "question_type": "Multiple Choice",
+      "prompt": "A bacterium is made of only one cell. A bacterium is:",
+      "answer_choices": {
+        "A": "multicellular",
+        "B": "nonliving",
+        "C": "unicellular",
+        "D": "an organ"
+      },
+      "correct_answer": "C",
+      "explanation": "An organism made of one cell is unicellular. Many bacteria are unicellular organisms.",
+      "identifier_tags": [
+        "unicellular"
+      ],
+      "remediation_tags": [
+        "unicellular"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_1_A_003",
+      "standard_id": "MS-LS1-1",
+      "objective_id": "MS-LS1-1A",
+      "difficulty": "Recall",
+      "question_type": "Multiple Choice",
+      "prompt": "Which organism is multicellular?",
+      "answer_choices": {
+        "A": "Human",
+        "B": "Bacterium",
+        "C": "Amoeba",
+        "D": "Paramecium"
+      },
+      "correct_answer": "A",
+      "explanation": "Humans are made of many cells, so they are multicellular. Bacteria, amoebas, and paramecia are examples of unicellular organisms.",
+      "identifier_tags": [
+        "multicellular"
+      ],
+      "remediation_tags": [
+        "multicellular"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_1_A_004",
+      "standard_id": "MS-LS1-1",
+      "objective_id": "MS-LS1-1A",
+      "difficulty": "Recall",
+      "question_type": "Multiple Choice",
+      "prompt": "What is the basic unit of life?",
+      "answer_choices": {
+        "A": "Cell",
+        "B": "Rock",
+        "C": "Water",
+        "D": "Air"
+      },
+      "correct_answer": "A",
+      "explanation": "A cell is the basic unit of life. All living things are made of one or more cells.",
+      "identifier_tags": [
+        "living_things_made_of_cells"
+      ],
+      "remediation_tags": [
+        "living_things_made_of_cells"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_1_A_005",
+      "standard_id": "MS-LS1-1",
+      "objective_id": "MS-LS1-1A",
+      "difficulty": "Recall",
+      "question_type": "Multiple Choice",
+      "prompt": "An organism made of many cells is called:",
+      "answer_choices": {
+        "A": "unicellular",
+        "B": "multicellular",
+        "C": "nonliving",
+        "D": "microscopic"
+      },
+      "correct_answer": "B",
+      "explanation": "A multicellular organism is made of many cells. Humans, trees, and mushrooms are examples of multicellular organisms.",
+      "identifier_tags": [
+        "multicellular"
+      ],
+      "remediation_tags": [
+        "multicellular"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_1_A_006",
+      "standard_id": "MS-LS1-1",
+      "objective_id": "MS-LS1-1A",
+      "difficulty": "Recall",
+      "question_type": "Multiple Choice",
+      "prompt": "Which statement best describes a unicellular organism?",
+      "answer_choices": {
+        "A": "It is made of many tissues.",
+        "B": "It is made of one cell.",
+        "C": "It is not alive.",
+        "D": "It is made only of organs."
+      },
+      "correct_answer": "B",
+      "explanation": "A unicellular organism is made of one cell. That one cell carries out the functions needed for life.",
+      "identifier_tags": [
+        "unicellular"
+      ],
+      "remediation_tags": [
+        "unicellular"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_1_A_007",
+      "standard_id": "MS-LS1-1",
+      "objective_id": "MS-LS1-1A",
+      "difficulty": "Recall",
+      "question_type": "Multiple Choice",
+      "prompt": "Which object is nonliving?",
+      "answer_choices": {
+        "A": "Bacterium",
+        "B": "Mushroom",
+        "C": "Tree",
+        "D": "Rock"
+      },
+      "correct_answer": "D",
+      "explanation": "A rock is nonliving because it is not made of cells. Bacteria, mushrooms, and trees are living things made of cells.",
+      "identifier_tags": [
+        "living_vs_nonliving",
+        "living_things_made_of_cells"
+      ],
+      "remediation_tags": [
+        "living_vs_nonliving",
+        "living_things_made_of_cells"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_1_A_008",
+      "standard_id": "MS-LS1-1",
+      "objective_id": "MS-LS1-1A",
+      "difficulty": "Application",
+      "question_type": "Multiple Choice",
+      "prompt": "A student observes an organism under a microscope and sees only one cell. How should the organism be classified?",
+      "answer_choices": {
+        "A": "Multicellular",
+        "B": "Unicellular",
+        "C": "Nonliving",
+        "D": "An organ system"
+      },
+      "correct_answer": "B",
+      "explanation": "If an organism consists of only one cell, it is classified as unicellular.",
+      "identifier_tags": [
+        "unicellular",
+        "living_things_made_of_cells"
+      ],
+      "remediation_tags": [
+        "unicellular",
+        "living_things_made_of_cells"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_1_A_009",
+      "standard_id": "MS-LS1-1",
+      "objective_id": "MS-LS1-1A",
+      "difficulty": "Application",
+      "question_type": "Multiple Choice",
+      "prompt": "A diagram shows a tree, a dog, a mushroom, and a rock. Which object is NOT made of cells?",
+      "answer_choices": {
+        "A": "Tree",
+        "B": "Dog",
+        "C": "Mushroom",
+        "D": "Rock"
+      },
+      "correct_answer": "D",
+      "explanation": "Trees, dogs, and mushrooms are living things and are made of cells. Rocks are nonliving and are not made of cells.",
+      "identifier_tags": [
+        "living_vs_nonliving",
+        "living_things_made_of_cells"
+      ],
+      "remediation_tags": [
+        "living_vs_nonliving",
+        "living_things_made_of_cells"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_1_A_010",
+      "standard_id": "MS-LS1-1",
+      "objective_id": "MS-LS1-1A",
+      "difficulty": "Application",
+      "question_type": "Multiple Choice",
+      "prompt": "Scientists observe four organisms. Organism A contains 1 cell. Organism B contains 50 cells. Organism C contains 1,000 cells. Organism D contains 10,000 cells. Which organism is unicellular?",
+      "answer_choices": {
+        "A": "Organism A",
+        "B": "Organism B",
+        "C": "Organism C",
+        "D": "Organism D"
+      },
+      "correct_answer": "A",
+      "explanation": "A unicellular organism is made of only one cell. Organism A contains a single cell, so it is unicellular.",
+      "identifier_tags": [
+        "unicellular",
+        "multicellular"
+      ],
+      "remediation_tags": [
+        "unicellular",
+        "multicellular"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_1_A_011",
+      "standard_id": "MS-LS1-1",
+      "objective_id": "MS-LS1-1A",
+      "difficulty": "Application",
+      "question_type": "Multiple Choice",
+      "prompt": "A student compares a dog, a mushroom, and a rock. Which statement correctly classifies them?",
+      "answer_choices": {
+        "A": "The dog and mushroom are living because they are made of cells.",
+        "B": "Only the dog is living because mushrooms do not move.",
+        "C": "The rock is living because it is found outside.",
+        "D": "All three are living because they are natural objects."
+      },
+      "correct_answer": "A",
+      "explanation": "Dogs and mushrooms are living things made of cells. A rock is natural, but it is not living because it is not made of cells.",
+      "identifier_tags": [
+        "living_vs_nonliving",
+        "living_things_made_of_cells"
+      ],
+      "remediation_tags": [
+        "living_vs_nonliving",
+        "living_things_made_of_cells"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_1_A_012",
+      "standard_id": "MS-LS1-1",
+      "objective_id": "MS-LS1-1A",
+      "difficulty": "Application",
+      "question_type": "Multiple Choice",
+      "prompt": "An organism is observed and found to contain only one cell. What is the best classification for this organism?",
+      "answer_choices": {
+        "A": "Multicellular",
+        "B": "Unicellular",
+        "C": "Nonliving",
+        "D": "An organ"
+      },
+      "correct_answer": "B",
+      "explanation": "An organism made of only one cell is unicellular. Being made of one cell does not mean it is nonliving.",
+      "identifier_tags": [
+        "unicellular",
+        "living_things_made_of_cells"
+      ],
+      "remediation_tags": [
+        "unicellular",
+        "living_things_made_of_cells"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_1_A_013",
+      "standard_id": "MS-LS1-1",
+      "objective_id": "MS-LS1-1A",
+      "difficulty": "Application",
+      "question_type": "Multiple Choice",
+      "prompt": "A teacher shows students two examples: an amoeba made of one cell and a human made of many cells. What do both examples have in common?",
+      "answer_choices": {
+        "A": "Both are made of cells.",
+        "B": "Both are multicellular.",
+        "C": "Both are nonliving.",
+        "D": "Both are made of organs."
+      },
+      "correct_answer": "A",
+      "explanation": "Both amoebas and humans are living things made of cells. An amoeba is unicellular, while a human is multicellular.",
+      "identifier_tags": [
+        "living_things_made_of_cells",
+        "unicellular",
+        "multicellular"
+      ],
+      "remediation_tags": [
+        "living_things_made_of_cells",
+        "unicellular",
+        "multicellular"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_1_A_014",
+      "standard_id": "MS-LS1-1",
+      "objective_id": "MS-LS1-1A",
+      "difficulty": "Application",
+      "question_type": "Multiple Choice",
+      "prompt": "A sample contains many different types of cells working together. What can be concluded about the organism?",
+      "answer_choices": {
+        "A": "It is unicellular.",
+        "B": "It is multicellular.",
+        "C": "It is nonliving.",
+        "D": "It is made of only one cell."
+      },
+      "correct_answer": "B",
+      "explanation": "An organism with many cells, especially different types of cells, is multicellular.",
+      "identifier_tags": [
+        "multicellular"
+      ],
+      "remediation_tags": [
+        "multicellular"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_1_A_015",
+      "standard_id": "MS-LS1-1",
+      "objective_id": "MS-LS1-1A",
+      "difficulty": "Reasoning",
+      "question_type": "Multiple Choice",
+      "prompt": "A student claims that mushrooms are not living things because they do not move from place to place. Which evidence best refutes the student's claim?",
+      "answer_choices": {
+        "A": "Mushrooms contain cells.",
+        "B": "Mushrooms are white.",
+        "C": "Mushrooms grow in soil.",
+        "D": "Mushrooms absorb water."
+      },
+      "correct_answer": "A",
+      "explanation": "One characteristic of living things is that they are made of cells. The presence of cells is stronger evidence that mushrooms are living than their color or location.",
+      "identifier_tags": [
+        "living_things_made_of_cells",
+        "living_vs_nonliving"
+      ],
+      "remediation_tags": [
+        "living_things_made_of_cells",
+        "living_vs_nonliving"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_1_A_016",
+      "standard_id": "MS-LS1-1",
+      "objective_id": "MS-LS1-1A",
+      "difficulty": "Reasoning",
+      "question_type": "Multiple Choice",
+      "prompt": "Two organisms are observed. Organism A contains one cell. Organism B contains many cells. What conclusion can be made?",
+      "answer_choices": {
+        "A": "Organism A is living and Organism B is nonliving.",
+        "B": "Organism A is unicellular and Organism B is multicellular.",
+        "C": "Both organisms are nonliving.",
+        "D": "Both organisms are multicellular."
+      },
+      "correct_answer": "B",
+      "explanation": "A single-celled organism is unicellular. An organism made of many cells is multicellular. Both can be living organisms.",
+      "identifier_tags": [
+        "unicellular",
+        "multicellular"
+      ],
+      "remediation_tags": [
+        "unicellular",
+        "multicellular"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_1_A_017",
+      "standard_id": "MS-LS1-1",
+      "objective_id": "MS-LS1-1A",
+      "difficulty": "Reasoning",
+      "question_type": "Multiple Choice",
+      "prompt": "A student claims that only animals are made of cells. Which evidence best shows that the claim is incorrect?",
+      "answer_choices": {
+        "A": "Plants are green.",
+        "B": "Plants can be observed to have cells.",
+        "C": "Animals move faster than plants.",
+        "D": "Plants need sunlight."
+      },
+      "correct_answer": "B",
+      "explanation": "The strongest evidence is that plants have cells. This shows that animals are not the only living things made of cells.",
+      "identifier_tags": [
+        "living_things_made_of_cells",
+        "living_vs_nonliving"
+      ],
+      "remediation_tags": [
+        "living_things_made_of_cells",
+        "living_vs_nonliving"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_1_A_018",
+      "standard_id": "MS-LS1-1",
+      "objective_id": "MS-LS1-1A",
+      "difficulty": "Reasoning",
+      "question_type": "Multiple Choice",
+      "prompt": "Two samples are observed. Sample A contains cells. Sample B does not contain cells. Which conclusion is best supported?",
+      "answer_choices": {
+        "A": "Sample A may be living, while Sample B is nonliving.",
+        "B": "Sample B must be living because it has no cells.",
+        "C": "Both samples must be living.",
+        "D": "Neither sample can be living."
+      },
+      "correct_answer": "A",
+      "explanation": "Living things are made of cells. If Sample B has no cells, it is not living. If Sample A contains cells, it may be living or may have come from something living.",
+      "identifier_tags": [
+        "living_things_made_of_cells",
+        "living_vs_nonliving"
+      ],
+      "remediation_tags": [
+        "living_things_made_of_cells",
+        "living_vs_nonliving"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_1_A_019",
+      "standard_id": "MS-LS1-1",
+      "objective_id": "MS-LS1-1A",
+      "difficulty": "Reasoning",
+      "question_type": "Multiple Choice",
+      "prompt": "Which statement best explains why both bacteria and humans are considered living organisms?",
+      "answer_choices": {
+        "A": "Both are made of cells, even though bacteria have one cell and humans have many.",
+        "B": "Both are made of many organs.",
+        "C": "Both are always visible without tools.",
+        "D": "Both have the same number of cells."
+      },
+      "correct_answer": "A",
+      "explanation": "Both bacteria and humans are living because both are made of cells. Bacteria are unicellular, while humans are multicellular.",
+      "identifier_tags": [
+        "living_things_made_of_cells",
+        "unicellular",
+        "multicellular"
+      ],
+      "remediation_tags": [
+        "living_things_made_of_cells",
+        "unicellular",
+        "multicellular"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_1_A_020",
+      "standard_id": "MS-LS1-1",
+      "objective_id": "MS-LS1-1A",
+      "difficulty": "Reasoning",
+      "question_type": "Multiple Choice",
+      "prompt": "A student says, “If something does not move from place to place, it must not be alive.” Which example best shows why this reasoning is incorrect?",
+      "answer_choices": {
+        "A": "A rock does not move and is not alive.",
+        "B": "A tree does not move from place to place but is made of cells.",
+        "C": "A cloud moves but is not made of cells.",
+        "D": "A car moves but is not alive."
+      },
+      "correct_answer": "B",
+      "explanation": "Movement from place to place is not required for something to be alive. A tree is living because it is made of cells, even though it does not move from place to place.",
+      "identifier_tags": [
+        "living_vs_nonliving",
+        "living_things_made_of_cells"
+      ],
+      "remediation_tags": [
+        "living_vs_nonliving",
+        "living_things_made_of_cells"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_1_A_021",
+      "standard_id": "MS-LS1-1",
+      "objective_id": "MS-LS1-1A",
+      "difficulty": "Reasoning",
+      "question_type": "Multiple Choice",
+      "prompt": "Which conclusion is best supported by the idea that cells are the basic unit of life?",
+      "answer_choices": {
+        "A": "All living things must be made of one or more cells.",
+        "B": "Only large organisms are made of cells.",
+        "C": "Nonliving things become alive when they move.",
+        "D": "All cells must form organs."
+      },
+      "correct_answer": "A",
+      "explanation": "If cells are the basic unit of life, then all living things must be made of one or more cells. Some living things have one cell, while others have many.",
+      "identifier_tags": [
+        "living_things_made_of_cells",
+        "unicellular",
+        "multicellular"
+      ],
+      "remediation_tags": [
+        "living_things_made_of_cells",
+        "unicellular",
+        "multicellular"
+      ],
+      "model_id": null
+    }
+  ]
+}

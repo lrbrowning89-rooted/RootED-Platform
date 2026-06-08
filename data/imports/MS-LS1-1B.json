@@ -1,0 +1,559 @@
+{
+  "schema_version": "1.0",
+  "artifact_type": "objective_question_bank",
+  "standard_id": "MS-LS1-1",
+  "objective_id": "MS-LS1-1B",
+  "objective_name": "Evidence for Cell Theory",
+  "objective_description": "Students use evidence from microscope observations, investigations, and models to explain how observations of cells support cell theory.",
+  "total_questions": 21,
+  "difficulty_counts": {
+    "Recall": 7,
+    "Application": 7,
+    "Reasoning": 7
+  },
+  "identifier_vocabulary": [
+    "microscope_observations",
+    "investigation_evidence",
+    "cell_theory_evidence",
+    "model_interpretation"
+  ],
+  "remediation_tag_vocabulary": [
+    "microscope_observations",
+    "investigation_evidence",
+    "cell_theory_evidence",
+    "model_interpretation"
+  ],
+  "questions": [
+    {
+      "question_id": "Q_MSLS1_1_B_001",
+      "standard_id": "MS-LS1-1",
+      "objective_id": "MS-LS1-1B",
+      "difficulty": "Recall",
+      "question_type": "multiple_choice",
+      "prompt": "Which statement best describes a major idea of cell theory?",
+      "answer_choices": {
+        "A": "All living things are made of one or more cells.",
+        "B": "Only animals are made of cells.",
+        "C": "Cells are found only in organisms that can move.",
+        "D": "All cells can be seen without magnification."
+      },
+      "correct_answer": "A",
+      "explanation": "Cell theory states that all living things are made of one or more cells. This idea is supported by repeated microscope observations of many different organisms.",
+      "identifier_tags": [
+        "cell_theory_evidence"
+      ],
+      "remediation_tags": [
+        "cell_theory_evidence"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_1_B_002",
+      "standard_id": "MS-LS1-1",
+      "objective_id": "MS-LS1-1B",
+      "difficulty": "Recall",
+      "question_type": "multiple_choice",
+      "prompt": "What tool allowed scientists to gather the first direct evidence that living things are made of cells?",
+      "answer_choices": {
+        "A": "Balance",
+        "B": "Microscope",
+        "C": "Thermometer",
+        "D": "Graduated cylinder"
+      },
+      "correct_answer": "B",
+      "explanation": "Microscopes made cells visible. Before microscopes, cells were too small for scientists to observe directly.",
+      "identifier_tags": [
+        "microscope_observations",
+        "cell_theory_evidence"
+      ],
+      "remediation_tags": [
+        "microscope_observations",
+        "cell_theory_evidence"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_1_B_003",
+      "standard_id": "MS-LS1-1",
+      "objective_id": "MS-LS1-1B",
+      "difficulty": "Recall",
+      "question_type": "multiple_choice",
+      "prompt": "A student observes thin slices of cork and sees many tiny box-like spaces. Which kind of evidence is the student collecting?",
+      "answer_choices": {
+        "A": "Microscope observation evidence",
+        "B": "Weather evidence",
+        "C": "Chemical reaction evidence",
+        "D": "Fossil evidence"
+      },
+      "correct_answer": "A",
+      "explanation": "The student is using a microscope to observe small structures. Microscope observations are a key source of evidence used to develop cell theory.",
+      "identifier_tags": [
+        "microscope_observations"
+      ],
+      "remediation_tags": [
+        "microscope_observations"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_1_B_004",
+      "standard_id": "MS-LS1-1",
+      "objective_id": "MS-LS1-1B",
+      "difficulty": "Recall",
+      "question_type": "multiple_choice",
+      "prompt": "Which statement is part of cell theory?",
+      "answer_choices": {
+        "A": "Cells come from other cells.",
+        "B": "Cells appear only in plants.",
+        "C": "Cells are larger than organs.",
+        "D": "Cells do not perform life functions."
+      },
+      "correct_answer": "A",
+      "explanation": "A core part of cell theory is that cells come from preexisting cells. This explains how living things grow, repair, and reproduce at the cellular level.",
+      "identifier_tags": [
+        "cell_theory_evidence"
+      ],
+      "remediation_tags": [
+        "cell_theory_evidence"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_1_B_005",
+      "standard_id": "MS-LS1-1",
+      "objective_id": "MS-LS1-1B",
+      "difficulty": "Recall",
+      "question_type": "multiple_choice",
+      "prompt": "Why are repeated investigations important when scientists build evidence for cell theory?",
+      "answer_choices": {
+        "A": "They make evidence stronger when results are consistent.",
+        "B": "They allow scientists to ignore observations that do not fit.",
+        "C": "They prove that microscopes are never needed.",
+        "D": "They replace the need for careful data collection."
+      },
+      "correct_answer": "A",
+      "explanation": "Repeated investigations help scientists check whether observations are reliable. Consistent evidence from many investigations strengthens scientific explanations.",
+      "identifier_tags": [
+        "investigation_evidence",
+        "cell_theory_evidence"
+      ],
+      "remediation_tags": [
+        "investigation_evidence",
+        "cell_theory_evidence"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_1_B_006",
+      "standard_id": "MS-LS1-1",
+      "objective_id": "MS-LS1-1B",
+      "difficulty": "Recall",
+      "question_type": "multiple_choice",
+      "prompt": "In a cell model, what should the student focus on when deciding whether the model supports cell theory?",
+      "answer_choices": {
+        "A": "Whether the model is colorful",
+        "B": "Whether the model shows that living things are made of cells",
+        "C": "Whether the model includes every atom in the organism",
+        "D": "Whether the model is larger than the real organism"
+      },
+      "correct_answer": "B",
+      "explanation": "A useful model should represent the important scientific idea. For cell theory, the model should show how organisms are made of cells.",
+      "identifier_tags": [
+        "model_interpretation",
+        "cell_theory_evidence"
+      ],
+      "remediation_tags": [
+        "model_interpretation",
+        "cell_theory_evidence"
+      ],
+      "model_id": "MS-LS1-1B_model_cell_theory_basic_01"
+    },
+    {
+      "question_id": "Q_MSLS1_1_B_007",
+      "standard_id": "MS-LS1-1",
+      "objective_id": "MS-LS1-1B",
+      "difficulty": "Recall",
+      "question_type": "multiple_choice",
+      "prompt": "Which observation would best support the idea that plants are made of cells?",
+      "answer_choices": {
+        "A": "A leaf has a green color.",
+        "B": "A microscope view of a leaf shows many repeating cell-shaped structures.",
+        "C": "A plant bends toward sunlight.",
+        "D": "A plant grows taller over time."
+      },
+      "correct_answer": "B",
+      "explanation": "Seeing repeating cell-shaped structures in a leaf under a microscope is direct evidence that the plant is made of cells.",
+      "identifier_tags": [
+        "microscope_observations",
+        "cell_theory_evidence"
+      ],
+      "remediation_tags": [
+        "microscope_observations",
+        "cell_theory_evidence"
+      ],
+      "model_id": "MS-LS1-1B_model_leaf_cells_01"
+    },
+    {
+      "question_id": "Q_MSLS1_1_B_008",
+      "standard_id": "MS-LS1-1",
+      "objective_id": "MS-LS1-1B",
+      "difficulty": "Application",
+      "question_type": "multiple_choice",
+      "prompt": "A student looks at pond water under a microscope and sees tiny moving organisms made of single cells. Which conclusion is best supported by the observation?",
+      "answer_choices": {
+        "A": "Some living things can be made of only one cell.",
+        "B": "Only pond organisms are made of cells.",
+        "C": "Movement proves an organism is not made of cells.",
+        "D": "All cells are large enough to see without tools."
+      },
+      "correct_answer": "A",
+      "explanation": "Single-celled organisms support cell theory because they show that one cell can be a complete living organism.",
+      "identifier_tags": [
+        "microscope_observations",
+        "cell_theory_evidence"
+      ],
+      "remediation_tags": [
+        "microscope_observations",
+        "cell_theory_evidence"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_1_B_009",
+      "standard_id": "MS-LS1-1",
+      "objective_id": "MS-LS1-1B",
+      "difficulty": "Application",
+      "question_type": "multiple_choice",
+      "prompt": "A class observes onion skin, cheek cells, and pond organisms under microscopes. Each sample shows cells. What is the strongest conclusion from these observations?",
+      "answer_choices": {
+        "A": "Only onion cells are living.",
+        "B": "Different kinds of living things are made of cells.",
+        "C": "Cells are found only in wet environments.",
+        "D": "All cells have exactly the same shape."
+      },
+      "correct_answer": "B",
+      "explanation": "The samples come from different living things, yet all show cells. This supports the cell theory idea that living things are made of cells.",
+      "identifier_tags": [
+        "microscope_observations",
+        "investigation_evidence",
+        "cell_theory_evidence"
+      ],
+      "remediation_tags": [
+        "microscope_observations",
+        "investigation_evidence",
+        "cell_theory_evidence"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_1_B_010",
+      "standard_id": "MS-LS1-1",
+      "objective_id": "MS-LS1-1B",
+      "difficulty": "Application",
+      "question_type": "multiple_choice",
+      "prompt": "A student claims, \u201cThis diagram proves that an entire organism is made of one giant cell.\u201d The diagram shows many small cells grouped together to form tissue. What is the best response?",
+      "answer_choices": {
+        "A": "The claim is correct because tissues are always one giant cell.",
+        "B": "The claim is not supported because the model shows many cells working together.",
+        "C": "The claim is correct because models are always exact copies of real organisms.",
+        "D": "The claim cannot be evaluated because diagrams never provide evidence."
+      },
+      "correct_answer": "B",
+      "explanation": "The model shows many cells grouped together, not one giant cell. Interpreting the model correctly helps connect cells to tissues and supports cell theory.",
+      "identifier_tags": [
+        "model_interpretation",
+        "cell_theory_evidence"
+      ],
+      "remediation_tags": [
+        "model_interpretation",
+        "cell_theory_evidence"
+      ],
+      "model_id": "MS-LS1-1B_model_cells_to_tissue_01"
+    },
+    {
+      "question_id": "Q_MSLS1_1_B_011",
+      "standard_id": "MS-LS1-1",
+      "objective_id": "MS-LS1-1B",
+      "difficulty": "Application",
+      "question_type": "multiple_choice",
+      "prompt": "A student compares microscope images of a plant root and an animal skin sample. Both images show many small units with boundaries. Which inference is best?",
+      "answer_choices": {
+        "A": "Both samples contain cells.",
+        "B": "Only the plant root contains cells.",
+        "C": "The animal sample is not living tissue.",
+        "D": "The boundaries show that the samples are minerals."
+      },
+      "correct_answer": "A",
+      "explanation": "Small units with boundaries in living tissue are evidence of cells. Finding them in both plant and animal samples supports cell theory across different organisms.",
+      "identifier_tags": [
+        "microscope_observations",
+        "cell_theory_evidence"
+      ],
+      "remediation_tags": [
+        "microscope_observations",
+        "cell_theory_evidence"
+      ],
+      "model_id": "MS-LS1-1B_model_plant_animal_cells_01"
+    },
+    {
+      "question_id": "Q_MSLS1_1_B_012",
+      "standard_id": "MS-LS1-1",
+      "objective_id": "MS-LS1-1B",
+      "difficulty": "Application",
+      "question_type": "multiple_choice",
+      "prompt": "During an investigation, one group sees cells in a prepared slide but another group does not. What should the class do to improve the evidence?",
+      "answer_choices": {
+        "A": "Accept the first group's result and stop investigating.",
+        "B": "Repeat the observations, check microscope focus, and compare results.",
+        "C": "Throw away all results because one group disagreed.",
+        "D": "Conclude that cell theory is false."
+      },
+      "correct_answer": "B",
+      "explanation": "When results differ, scientists check methods and repeat observations. This improves the reliability of the investigation evidence.",
+      "identifier_tags": [
+        "investigation_evidence",
+        "microscope_observations"
+      ],
+      "remediation_tags": [
+        "investigation_evidence",
+        "microscope_observations"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_1_B_013",
+      "standard_id": "MS-LS1-1",
+      "objective_id": "MS-LS1-1B",
+      "difficulty": "Application",
+      "question_type": "multiple_choice",
+      "prompt": "A model shows an organism, its organs, tissues, and many cells. How does this model support cell theory?",
+      "answer_choices": {
+        "A": "It shows that cells are one level of organization within living things.",
+        "B": "It shows that organs are smaller than cells.",
+        "C": "It shows that tissues are not made of cells.",
+        "D": "It shows that cells are not related to organisms."
+      },
+      "correct_answer": "A",
+      "explanation": "The model connects cells to larger structures in an organism. This supports the idea that living things are organized from cells.",
+      "identifier_tags": [
+        "model_interpretation",
+        "cell_theory_evidence"
+      ],
+      "remediation_tags": [
+        "model_interpretation",
+        "cell_theory_evidence"
+      ],
+      "model_id": "MS-LS1-1B_model_organization_levels_01"
+    },
+    {
+      "question_id": "Q_MSLS1_1_B_014",
+      "standard_id": "MS-LS1-1",
+      "objective_id": "MS-LS1-1B",
+      "difficulty": "Application",
+      "question_type": "multiple_choice",
+      "prompt": "A student observes a sample from a mushroom under a microscope and identifies cell walls around many small units. Why does this observation matter for cell theory?",
+      "answer_choices": {
+        "A": "It adds evidence that fungi, like plants and animals, are made of cells.",
+        "B": "It proves fungi are plants.",
+        "C": "It shows that only organisms with cell walls are alive.",
+        "D": "It proves cells do not come from other cells."
+      },
+      "correct_answer": "A",
+      "explanation": "Observing cells in a fungus adds evidence from another type of organism. Evidence from many kinds of organisms strengthens cell theory.",
+      "identifier_tags": [
+        "microscope_observations",
+        "investigation_evidence",
+        "cell_theory_evidence"
+      ],
+      "remediation_tags": [
+        "microscope_observations",
+        "investigation_evidence",
+        "cell_theory_evidence"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_1_B_015",
+      "standard_id": "MS-LS1-1",
+      "objective_id": "MS-LS1-1B",
+      "difficulty": "Reasoning",
+      "question_type": "multiple_choice",
+      "prompt": "A scientist studies several unknown samples. Sample 1 has repeating cell-like structures under a microscope. Sample 2 has crystals with sharp edges. Sample 3 has cells dividing into two cells. Which samples provide evidence related to cell theory?",
+      "answer_choices": {
+        "A": "Samples 1 and 3",
+        "B": "Samples 1 and 2",
+        "C": "Samples 2 and 3",
+        "D": "Samples 1, 2, and 3"
+      },
+      "correct_answer": "A",
+      "explanation": "Samples 1 and 3 provide cell-related evidence: one shows cell structures and the other shows cells coming from other cells. Crystals are not evidence that a sample is living or made of cells.",
+      "identifier_tags": [
+        "microscope_observations",
+        "cell_theory_evidence",
+        "investigation_evidence"
+      ],
+      "remediation_tags": [
+        "microscope_observations",
+        "cell_theory_evidence",
+        "investigation_evidence"
+      ],
+      "model_id": "MS-LS1-1B_model_unknown_samples_01"
+    },
+    {
+      "question_id": "Q_MSLS1_1_B_016",
+      "standard_id": "MS-LS1-1",
+      "objective_id": "MS-LS1-1B",
+      "difficulty": "Reasoning",
+      "question_type": "multiple_choice",
+      "prompt": "A student says, \u201cCell theory is based on one scientist looking at one slide.\u201d Which evidence best challenges that statement?",
+      "answer_choices": {
+        "A": "Many scientists observed cells in many organisms over time.",
+        "B": "One slide can prove every scientific idea.",
+        "C": "Scientists do not need tools to study cells.",
+        "D": "Cells were discovered before microscopes existed."
+      },
+      "correct_answer": "A",
+      "explanation": "Cell theory developed from many observations and investigations by multiple scientists over time. Scientific explanations become stronger when supported by repeated evidence.",
+      "identifier_tags": [
+        "investigation_evidence",
+        "cell_theory_evidence"
+      ],
+      "remediation_tags": [
+        "investigation_evidence",
+        "cell_theory_evidence"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_1_B_017",
+      "standard_id": "MS-LS1-1",
+      "objective_id": "MS-LS1-1B",
+      "difficulty": "Reasoning",
+      "question_type": "multiple_choice",
+      "prompt": "A diagram shows a seedling growing over several days. A second diagram zooms in to show cells dividing in the root tip. Which explanation best connects the diagrams to cell theory?",
+      "answer_choices": {
+        "A": "The seedling grows because new cells come from existing cells.",
+        "B": "The seedling grows because cells disappear over time.",
+        "C": "The seedling is not made of cells until it is fully grown.",
+        "D": "The root tip is made of crystals, not cells."
+      },
+      "correct_answer": "A",
+      "explanation": "The zoomed-in model shows cells dividing. This supports the cell theory idea that cells come from preexisting cells and helps explain growth.",
+      "identifier_tags": [
+        "model_interpretation",
+        "cell_theory_evidence"
+      ],
+      "remediation_tags": [
+        "model_interpretation",
+        "cell_theory_evidence"
+      ],
+      "model_id": "MS-LS1-1B_model_seedling_cell_division_01"
+    },
+    {
+      "question_id": "Q_MSLS1_1_B_018",
+      "standard_id": "MS-LS1-1",
+      "objective_id": "MS-LS1-1B",
+      "difficulty": "Reasoning",
+      "question_type": "multiple_choice",
+      "prompt": "A student observes cells in a leaf but not in a thick piece of bark. The student concludes, \u201cBark is not made of cells.\u201d What is the best critique of this conclusion?",
+      "answer_choices": {
+        "A": "The conclusion may be wrong because the bark sample may have been too thick or poorly focused to see cells.",
+        "B": "The conclusion is correct because bark is never part of a plant.",
+        "C": "The conclusion is correct because cells are only found in leaves.",
+        "D": "The conclusion cannot be tested with a microscope."
+      },
+      "correct_answer": "A",
+      "explanation": "Failure to see cells does not always mean cells are absent. The sample preparation or microscope focus may have prevented clear observation, so more investigation is needed.",
+      "identifier_tags": [
+        "microscope_observations",
+        "investigation_evidence",
+        "cell_theory_evidence"
+      ],
+      "remediation_tags": [
+        "microscope_observations",
+        "investigation_evidence",
+        "cell_theory_evidence"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_1_B_019",
+      "standard_id": "MS-LS1-1",
+      "objective_id": "MS-LS1-1B",
+      "difficulty": "Reasoning",
+      "question_type": "multiple_choice",
+      "prompt": "A model compares a brick wall to a living tissue. The bricks represent cells. What is one limitation of this model?",
+      "answer_choices": {
+        "A": "Bricks are not alive and do not perform life functions like cells do.",
+        "B": "The model shows that tissues can be made of smaller units.",
+        "C": "The model helps explain that cells can form larger structures.",
+        "D": "The model uses parts to represent a whole."
+      },
+      "correct_answer": "A",
+      "explanation": "The brick wall model can show how smaller units form a larger structure, but it has limits. Bricks are not living and cannot carry out cell processes.",
+      "identifier_tags": [
+        "model_interpretation",
+        "cell_theory_evidence"
+      ],
+      "remediation_tags": [
+        "model_interpretation",
+        "cell_theory_evidence"
+      ],
+      "model_id": "MS-LS1-1B_model_brick_wall_cells_01"
+    },
+    {
+      "question_id": "Q_MSLS1_1_B_020",
+      "standard_id": "MS-LS1-1",
+      "objective_id": "MS-LS1-1B",
+      "difficulty": "Reasoning",
+      "question_type": "multiple_choice",
+      "prompt": "A class collects this evidence: cells are seen in plant samples, animal samples, fungi samples, and pond organisms. Which reasoning best explains why this evidence supports cell theory?",
+      "answer_choices": {
+        "A": "The evidence comes from many different living things, so it supports the broad claim that living things are made of cells.",
+        "B": "The evidence proves that all cells have identical structures.",
+        "C": "The evidence shows that only organisms from ponds are made of cells.",
+        "D": "The evidence means microscopes are no longer useful."
+      },
+      "correct_answer": "A",
+      "explanation": "Cell theory is a broad scientific explanation. Evidence from many different organisms supports the idea that cells are a basic unit of living things.",
+      "identifier_tags": [
+        "investigation_evidence",
+        "microscope_observations",
+        "cell_theory_evidence"
+      ],
+      "remediation_tags": [
+        "investigation_evidence",
+        "microscope_observations",
+        "cell_theory_evidence"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_1_B_021",
+      "standard_id": "MS-LS1-1",
+      "objective_id": "MS-LS1-1B",
+      "difficulty": "Reasoning",
+      "question_type": "multiple_choice",
+      "prompt": "A student observes that a single-celled organism moves, takes in food, and divides. How does this evidence support cell theory?",
+      "answer_choices": {
+        "A": "It shows that a cell can be the basic unit that carries out life functions.",
+        "B": "It shows that cells are not living structures.",
+        "C": "It shows that single-celled organisms are not real organisms.",
+        "D": "It shows that only moving organisms have cells."
+      },
+      "correct_answer": "A",
+      "explanation": "The observation shows one cell carrying out life functions. This supports the cell theory idea that cells are the basic unit of structure and function in living things.",
+      "identifier_tags": [
+        "microscope_observations",
+        "investigation_evidence",
+        "cell_theory_evidence"
+      ],
+      "remediation_tags": [
+        "microscope_observations",
+        "investigation_evidence",
+        "cell_theory_evidence"
+      ],
+      "model_id": null
+    }
+  ]
+}

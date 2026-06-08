@@ -343,7 +343,9 @@ def process_after_response(student_id: str, standard_id: str) -> dict:
 
     # ---- Advance (mastery) ----
     if avg >= MASTERY:
-        if level < 3:
+        max_level = 2 if standard_id == "MS-LS1-1" else 3
+
+        if level < max_level:
             new_level = level + 1
             set_state(student_id, standard_id, new_level, "practicing", avg)
             return {
@@ -354,7 +356,7 @@ def process_after_response(student_id: str, standard_id: str) -> dict:
                 "reason": "mastery_advance",
             }
 
-        # Finished Level 3 → look for next standard in standard_links
+        # Finished final level → look for next standard in standard_links
         next_std, next_lvl = next_up_from(standard_id)
 
         if next_std:

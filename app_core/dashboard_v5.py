@@ -1389,83 +1389,6 @@ def login():
 
     login_html = """
     <!doctype html>
-    <title>Login</title>
-    <style>
-      body{font-family:Arial, Helvetica, sans-serif;margin:24px;}
-      .flash-box{
-        background:#e7f7ee;border:1px solid #a8e0bf;color:#0f6b3a;
-        padding:10px 12px;border-radius:8px;margin:10px 0;font-size:14px;
-      }
-      .btn{
-        background:#2563eb;color:#fff;border:none;padding:8px 12px;
-        border-radius:8px;cursor:pointer;font-size:14px;
-      }
-      .btn-sso-google{
-        background:#ea4335;color:#fff;border:none;padding:8px 12px;
-        border-radius:8px;cursor:pointer;font-size:14px;
-      }
-      .btn-sso-ms{
-        background:#0078d4;color:#fff;border:none;padding:8px 12px;
-        border-radius:8px;cursor:pointer;font-size:14px;
-      }
-      .divider{
-        margin:16px 0;
-        text-align:center;
-        font-size:12px;
-        color:#6b7280;
-      }
-      .divider span{
-        background:#fff;
-        padding:0 8px;
-      }
-      .divider:before,
-      .divider:after{
-        content:"";
-        display:inline-block;
-        width:40%;
-        border-top:1px solid #e5e7eb;
-        transform:translateY(-0.35em);
-      }
-      .divider:before{margin-right:8px;}
-      .divider:after{margin-left:8px;}
-    </style>
-
-    {% with msgs = get_flashed_messages() %}
-      {% if msgs %}
-        <div class="flash-box">
-          {% for m in msgs %}
-            <div>✅ {{ m }}</div>
-          {% endfor %}
-        </div>
-      {% endif %}
-    {% endwith %}
-
-    <h2>Login</h2>
-    <form method="post" style="max-width:300px;">
-      <label>Username<br><input name="username" required></label><br><br>
-      <label>Password<br><input type="password" name="password" required></label><br><br>
-      <button type="submit" class="btn">Login</button>
-    </form>
-    <p style="font-size:12px;color:#666;margin-top:4px;">
-      Don’t have an account? Contact your teacher to be added.
-    </p>
-
-    <div class="divider"><span>OR</span></div>
-
-    <div style="max-width:300px;">
-      <p style="font-size:13px;color:#4b5563;margin-bottom:8px;">
-        Sign in with your school account:
-      </p>
-      <form method="get" action="{{ url_for('sso_login', provider='google') }}" style="margin-bottom:8px;">
-        <button type="submit" class="btn-sso-google">Continue with Google</button>
-      </form>
-      <form method="get" action="{{ url_for('sso_login', provider='microsoft') }}">
-        <button type="submit" class="btn-sso-ms">Continue with Microsoft</button>
-      </form>
-    </div>
-    """
-    login_html = """
-    <!doctype html>
     <html lang="en">
     <head>
       <meta charset="utf-8">
@@ -1534,17 +1457,13 @@ def login():
           font-weight:800;
           letter-spacing:0;
         }
-        .mark-symbol{
-          width:42px;
-          height:42px;
-          border-radius:50%;
-          display:grid;
-          place-items:center;
-          color:#fff;
-          background:linear-gradient(145deg, var(--leaf), var(--gold));
-          box-shadow:0 12px 28px rgba(47,111,78,.22);
-          font-size:23px;
-          line-height:1;
+        .brand-logo{
+          width:72px;
+          height:72px;
+          object-fit:contain;
+          border-radius:8px;
+          background:#fffdf8;
+          box-shadow:0 12px 28px rgba(47,111,78,.16);
         }
         h1{
           margin:44px 0 8px;
@@ -1793,7 +1712,7 @@ def login():
           <div class="brand-panel">
             <div>
               <div class="brand-mark" aria-label="RootED">
-                <span class="mark-symbol">R</span>
+                <img class="brand-logo" src="{{ url_for('static', filename='Logo.png') }}" alt="RootED logo">
                 <span>RootED</span>
               </div>
               <h1>RootED</h1>
