@@ -48,6 +48,18 @@ CREATE TABLE IF NOT EXISTS questions (
   FOREIGN KEY (objective_id) REFERENCES objectives(objective_id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS model_assets (
+  model_id    TEXT PRIMARY KEY,
+  asset_type  TEXT NOT NULL,
+  title       TEXT,
+  description TEXT,
+  file_path   TEXT,
+  alt_text    TEXT,
+  caption     TEXT,
+  source      TEXT,
+  created_at  INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS skills (
   skill_id    TEXT PRIMARY KEY,
   skill_name  TEXT NOT NULL,
