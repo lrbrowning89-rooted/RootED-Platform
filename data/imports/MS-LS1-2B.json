@@ -1,0 +1,568 @@
+{
+  "standard_id": "MS-LS1-2",
+  "objective_id": "MS-LS1-2B",
+  "objective_title": "Cell as a System",
+  "questions": [
+    {
+      "question_id": "Q_MSLS1_2_B_001",
+      "standard_id": "MS-LS1-2",
+      "objective_id": "MS-LS1-2B",
+      "difficulty": "Recall",
+      "question_type": "multiple_choice",
+      "prompt": "Which statement best describes a cell as a system?",
+      "answer_choices": {
+        "A": "A cell has parts that work together to help it survive.",
+        "B": "A cell has parts that each work completely alone.",
+        "C": "A cell only needs one structure to carry out all life processes.",
+        "D": "A cell is not organized because its structures move randomly."
+      },
+      "correct_answer": "A",
+      "explanation": "A cell functions as a system because its structures work together to carry out life processes.",
+      "identifier_tags": [
+        "structure/function relationships"
+      ],
+      "remediation_tags": [
+        "structure/function relationships"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_2_B_002",
+      "standard_id": "MS-LS1-2",
+      "objective_id": "MS-LS1-2B",
+      "difficulty": "Recall",
+      "question_type": "multiple_choice",
+      "prompt": "Which cell structure controls many cell activities by providing instructions?",
+      "answer_choices": {
+        "A": "Nucleus",
+        "B": "Cell wall",
+        "C": "Cytoplasm",
+        "D": "Cell membrane"
+      },
+      "correct_answer": "A",
+      "explanation": "The nucleus contains genetic information that helps control many cell activities.",
+      "identifier_tags": [
+        "nucleus",
+        "structure/function relationships"
+      ],
+      "remediation_tags": [
+        "nucleus",
+        "structure/function relationships"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_2_B_003",
+      "standard_id": "MS-LS1-2",
+      "objective_id": "MS-LS1-2B",
+      "difficulty": "Recall",
+      "question_type": "multiple_choice",
+      "prompt": "Which structure helps control what enters and leaves the cell?",
+      "answer_choices": {
+        "A": "Cell membrane",
+        "B": "Cell wall",
+        "C": "Chloroplast",
+        "D": "Nucleus"
+      },
+      "correct_answer": "A",
+      "explanation": "The cell membrane helps regulate the movement of materials into and out of the cell.",
+      "identifier_tags": [
+        "cell membrane",
+        "structure/function relationships"
+      ],
+      "remediation_tags": [
+        "cell membrane",
+        "structure/function relationships"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_2_B_004",
+      "standard_id": "MS-LS1-2",
+      "objective_id": "MS-LS1-2B",
+      "difficulty": "Recall",
+      "question_type": "multiple_choice",
+      "prompt": "Which cell structure releases usable energy from food for the cell?",
+      "answer_choices": {
+        "A": "Mitochondria",
+        "B": "Cell wall",
+        "C": "Nucleus",
+        "D": "Cytoplasm"
+      },
+      "correct_answer": "A",
+      "explanation": "Mitochondria release usable energy from food so the cell can carry out life processes.",
+      "identifier_tags": [
+        "mitochondria",
+        "structure/function relationships"
+      ],
+      "remediation_tags": [
+        "mitochondria",
+        "structure/function relationships"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_2_B_005",
+      "standard_id": "MS-LS1-2",
+      "objective_id": "MS-LS1-2B",
+      "difficulty": "Recall",
+      "question_type": "multiple_choice",
+      "prompt": "In many plant cells, which structure captures light energy to help make food?",
+      "answer_choices": {
+        "A": "Chloroplast",
+        "B": "Cell membrane",
+        "C": "Mitochondria",
+        "D": "Cell wall"
+      },
+      "correct_answer": "A",
+      "explanation": "Chloroplasts capture light energy and help plant cells make food.",
+      "identifier_tags": [
+        "chloroplast",
+        "structure/function relationships"
+      ],
+      "remediation_tags": [
+        "chloroplast",
+        "structure/function relationships"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_2_B_006",
+      "standard_id": "MS-LS1-2",
+      "objective_id": "MS-LS1-2B",
+      "difficulty": "Recall",
+      "question_type": "multiple_choice",
+      "prompt": "Which structure provides extra support and protection in many plant cells?",
+      "answer_choices": {
+        "A": "Cell wall",
+        "B": "Nucleus",
+        "C": "Mitochondria",
+        "D": "Cytoplasm"
+      },
+      "correct_answer": "A",
+      "explanation": "The cell wall gives many plant cells extra support and protection.",
+      "identifier_tags": [
+        "cell wall",
+        "structure/function relationships"
+      ],
+      "remediation_tags": [
+        "cell wall",
+        "structure/function relationships"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_2_B_007",
+      "standard_id": "MS-LS1-2",
+      "objective_id": "MS-LS1-2B",
+      "difficulty": "Recall",
+      "question_type": "multiple_choice",
+      "prompt": "Which part of the cell is a gel-like material where many cell structures are located?",
+      "answer_choices": {
+        "A": "Cytoplasm",
+        "B": "Cell wall",
+        "C": "Nucleus",
+        "D": "Chloroplast"
+      },
+      "correct_answer": "A",
+      "explanation": "Cytoplasm is the gel-like material inside the cell where many structures are found.",
+      "identifier_tags": [
+        "cytoplasm",
+        "structure/function relationships"
+      ],
+      "remediation_tags": [
+        "cytoplasm",
+        "structure/function relationships"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_2_B_008",
+      "standard_id": "MS-LS1-2",
+      "objective_id": "MS-LS1-2B",
+      "difficulty": "Application",
+      "question_type": "multiple_choice",
+      "prompt": "A model shows arrows moving from the cell membrane into the cytoplasm. What interaction is the model most likely showing?",
+      "answer_choices": {
+        "A": "Materials entering the cell and moving through the cytoplasm",
+        "B": "The nucleus turning into cytoplasm",
+        "C": "The cell wall producing energy",
+        "D": "Chloroplasts blocking all materials from entering"
+      },
+      "correct_answer": "A",
+      "explanation": "The cell membrane controls what enters the cell, and materials can then move through the cytoplasm.",
+      "identifier_tags": [
+        "cell membrane",
+        "cytoplasm",
+        "structure/function relationships",
+        "model interpretation"
+      ],
+      "remediation_tags": [
+        "cell membrane",
+        "cytoplasm",
+        "structure/function relationships",
+        "model interpretation"
+      ],
+      "model_id": "CELL_MODEL_07"
+    },
+    {
+      "question_id": "Q_MSLS1_2_B_009",
+      "standard_id": "MS-LS1-2",
+      "objective_id": "MS-LS1-2B",
+      "difficulty": "Application",
+      "question_type": "multiple_choice",
+      "prompt": "A plant cell is not getting enough light. Which cell structures would most directly be affected in making and using food?",
+      "answer_choices": {
+        "A": "Chloroplasts and mitochondria",
+        "B": "Cell wall and nucleus only",
+        "C": "Cytoplasm and cell wall only",
+        "D": "Cell membrane and cell wall only"
+      },
+      "correct_answer": "A",
+      "explanation": "Chloroplasts help make food using light energy, and mitochondria release usable energy from food.",
+      "identifier_tags": [
+        "chloroplast",
+        "mitochondria",
+        "structure/function relationships"
+      ],
+      "remediation_tags": [
+        "chloroplast",
+        "mitochondria",
+        "structure/function relationships"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_2_B_010",
+      "standard_id": "MS-LS1-2",
+      "objective_id": "MS-LS1-2B",
+      "difficulty": "Application",
+      "question_type": "multiple_choice",
+      "prompt": "A model shows the nucleus connected by arrows to several other cell structures. What does this best represent?",
+      "answer_choices": {
+        "A": "The nucleus provides instructions that help direct cell activities.",
+        "B": "The nucleus is the only structure needed for survival.",
+        "C": "The nucleus moves materials in and out of the cell.",
+        "D": "The nucleus captures light energy."
+      },
+      "correct_answer": "A",
+      "explanation": "The nucleus contains genetic information that helps control many activities in the cell.",
+      "identifier_tags": [
+        "nucleus",
+        "structure/function relationships",
+        "model interpretation"
+      ],
+      "remediation_tags": [
+        "nucleus",
+        "structure/function relationships",
+        "model interpretation"
+      ],
+      "model_id": "CELL_MODEL_08"
+    },
+    {
+      "question_id": "Q_MSLS1_2_B_011",
+      "standard_id": "MS-LS1-2",
+      "objective_id": "MS-LS1-2B",
+      "difficulty": "Application",
+      "question_type": "multiple_choice",
+      "prompt": "If a cell membrane stopped working correctly, which problem would the cell most likely have?",
+      "answer_choices": {
+        "A": "The cell could have trouble controlling what enters and leaves.",
+        "B": "The cell wall would disappear immediately.",
+        "C": "The nucleus would stop containing genetic information.",
+        "D": "The cytoplasm would turn into a chloroplast."
+      },
+      "correct_answer": "A",
+      "explanation": "The cell membrane regulates movement of materials into and out of the cell, so a damaged membrane can disrupt the whole cell system.",
+      "identifier_tags": [
+        "cell membrane",
+        "structure/function relationships"
+      ],
+      "remediation_tags": [
+        "cell membrane",
+        "structure/function relationships"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_2_B_012",
+      "standard_id": "MS-LS1-2",
+      "objective_id": "MS-LS1-2B",
+      "difficulty": "Application",
+      "question_type": "multiple_choice",
+      "prompt": "A student says, “The cytoplasm is important because it holds structures in place and allows materials to move around the cell.” Which idea does this support?",
+      "answer_choices": {
+        "A": "Cell structures interact within the cell system.",
+        "B": "The cytoplasm controls all genetic information.",
+        "C": "Only plant cells have cytoplasm.",
+        "D": "The cytoplasm prevents all cell activity."
+      },
+      "correct_answer": "A",
+      "explanation": "Cytoplasm supports the cell system by surrounding structures and allowing materials to move within the cell.",
+      "identifier_tags": [
+        "cytoplasm",
+        "structure/function relationships"
+      ],
+      "remediation_tags": [
+        "cytoplasm",
+        "structure/function relationships"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_2_B_013",
+      "standard_id": "MS-LS1-2",
+      "objective_id": "MS-LS1-2B",
+      "difficulty": "Application",
+      "question_type": "multiple_choice",
+      "prompt": "A model of a plant cell shows the cell wall outside the cell membrane. What does this arrangement help show?",
+      "answer_choices": {
+        "A": "The cell wall provides support while the membrane controls movement of materials.",
+        "B": "The cell wall replaces the need for a membrane.",
+        "C": "The membrane makes food while the cell wall stores genetic information.",
+        "D": "The cell wall and membrane have exactly the same function."
+      },
+      "correct_answer": "A",
+      "explanation": "In plant cells, the cell wall provides support and protection, while the cell membrane regulates what enters and leaves.",
+      "identifier_tags": [
+        "cell wall",
+        "cell membrane",
+        "structure/function relationships",
+        "model interpretation"
+      ],
+      "remediation_tags": [
+        "cell wall",
+        "cell membrane",
+        "structure/function relationships",
+        "model interpretation"
+      ],
+      "model_id": "CELL_MODEL_09"
+    },
+    {
+      "question_id": "Q_MSLS1_2_B_014",
+      "standard_id": "MS-LS1-2",
+      "objective_id": "MS-LS1-2B",
+      "difficulty": "Application",
+      "question_type": "multiple_choice",
+      "prompt": "A cell needs energy to repair itself. Which structure is most responsible for releasing usable energy for this process?",
+      "answer_choices": {
+        "A": "Mitochondria",
+        "B": "Cell wall",
+        "C": "Cell membrane",
+        "D": "Chloroplast"
+      },
+      "correct_answer": "A",
+      "explanation": "Mitochondria release usable energy from food so the cell can perform activities such as growth and repair.",
+      "identifier_tags": [
+        "mitochondria",
+        "structure/function relationships"
+      ],
+      "remediation_tags": [
+        "mitochondria",
+        "structure/function relationships"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_2_B_015",
+      "standard_id": "MS-LS1-2",
+      "objective_id": "MS-LS1-2B",
+      "difficulty": "Reasoning",
+      "question_type": "multiple_choice",
+      "prompt": "A model shows a plant cell with chloroplasts making food and mitochondria using food to release energy. Which conclusion is best supported by the model?",
+      "answer_choices": {
+        "A": "Cell structures work together to support the cell’s energy needs.",
+        "B": "Chloroplasts and mitochondria have no relationship.",
+        "C": "Mitochondria make sunlight for chloroplasts.",
+        "D": "Only mitochondria are needed for plant cells to survive."
+      },
+      "correct_answer": "A",
+      "explanation": "The model supports the idea that chloroplasts and mitochondria work together in the cell system by connecting food production and energy use.",
+      "identifier_tags": [
+        "chloroplast",
+        "mitochondria",
+        "structure/function relationships",
+        "model interpretation"
+      ],
+      "remediation_tags": [
+        "chloroplast",
+        "mitochondria",
+        "structure/function relationships",
+        "model interpretation"
+      ],
+      "model_id": "CELL_MODEL_10"
+    },
+    {
+      "question_id": "Q_MSLS1_2_B_016",
+      "standard_id": "MS-LS1-2",
+      "objective_id": "MS-LS1-2B",
+      "difficulty": "Reasoning",
+      "question_type": "multiple_choice",
+      "prompt": "A student claims that the nucleus is important to the whole cell system, not just one part of the cell. Which evidence best supports this claim?",
+      "answer_choices": {
+        "A": "The nucleus contains information that helps direct many cell activities.",
+        "B": "The nucleus forms a hard outer covering around the cell.",
+        "C": "The nucleus controls what materials enter and leave the cell.",
+        "D": "The nucleus captures light energy to make food."
+      },
+      "correct_answer": "A",
+      "explanation": "The nucleus affects the whole cell system because its genetic information helps direct many cell activities.",
+      "identifier_tags": [
+        "nucleus",
+        "structure/function relationships"
+      ],
+      "remediation_tags": [
+        "nucleus",
+        "structure/function relationships"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_2_B_017",
+      "standard_id": "MS-LS1-2",
+      "objective_id": "MS-LS1-2B",
+      "difficulty": "Reasoning",
+      "question_type": "multiple_choice",
+      "prompt": "A cell is compared to a school. The cell membrane is compared to the school doors, the nucleus to the office, and mitochondria to the power supply. What is the main purpose of this model?",
+      "answer_choices": {
+        "A": "To show that different parts have different functions that support the whole system",
+        "B": "To show that all cell structures do the same job",
+        "C": "To show that cells and schools are made of the same materials",
+        "D": "To show that only one part of a system matters"
+      },
+      "correct_answer": "A",
+      "explanation": "The model helps show that different structures have different functions, but they work together as part of one system.",
+      "identifier_tags": [
+        "cell membrane",
+        "nucleus",
+        "mitochondria",
+        "structure/function relationships",
+        "model interpretation"
+      ],
+      "remediation_tags": [
+        "cell membrane",
+        "nucleus",
+        "mitochondria",
+        "structure/function relationships",
+        "model interpretation"
+      ],
+      "model_id": "CELL_MODEL_07"
+    },
+    {
+      "question_id": "Q_MSLS1_2_B_018",
+      "standard_id": "MS-LS1-2",
+      "objective_id": "MS-LS1-2B",
+      "difficulty": "Reasoning",
+      "question_type": "multiple_choice",
+      "prompt": "A plant cell has a damaged cell wall. Which explanation best describes why this affects the cell system?",
+      "answer_choices": {
+        "A": "The cell may lose support and protection, making it harder for other structures to function normally.",
+        "B": "The cell will immediately stop having cytoplasm.",
+        "C": "The mitochondria will become the cell wall.",
+        "D": "The nucleus will no longer exist in any plant cell."
+      },
+      "correct_answer": "A",
+      "explanation": "The cell wall supports and protects the plant cell, so damage to it can affect how well the whole cell system functions.",
+      "identifier_tags": [
+        "cell wall",
+        "structure/function relationships"
+      ],
+      "remediation_tags": [
+        "cell wall",
+        "structure/function relationships"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_2_B_019",
+      "standard_id": "MS-LS1-2",
+      "objective_id": "MS-LS1-2B",
+      "difficulty": "Reasoning",
+      "question_type": "multiple_choice",
+      "prompt": "A model shows materials entering through the cell membrane, moving through the cytoplasm, and being used by mitochondria. What does this model best explain?",
+      "answer_choices": {
+        "A": "Several structures interact to help the cell get and use materials.",
+        "B": "Only the cell membrane is involved in cell survival.",
+        "C": "Mitochondria prevent materials from entering the cell.",
+        "D": "Cytoplasm stores genetic information."
+      },
+      "correct_answer": "A",
+      "explanation": "The model shows that the cell membrane, cytoplasm, and mitochondria interact as part of a functioning cell system.",
+      "identifier_tags": [
+        "cell membrane",
+        "cytoplasm",
+        "mitochondria",
+        "structure/function relationships",
+        "model interpretation"
+      ],
+      "remediation_tags": [
+        "cell membrane",
+        "cytoplasm",
+        "mitochondria",
+        "structure/function relationships",
+        "model interpretation"
+      ],
+      "model_id": "CELL_MODEL_08"
+    },
+    {
+      "question_id": "Q_MSLS1_2_B_020",
+      "standard_id": "MS-LS1-2",
+      "objective_id": "MS-LS1-2B",
+      "difficulty": "Reasoning",
+      "question_type": "multiple_choice",
+      "prompt": "Why is it inaccurate to describe a cell as just a collection of separate parts?",
+      "answer_choices": {
+        "A": "Because cell structures interact and depend on one another to carry out life processes",
+        "B": "Because cells do not contain structures",
+        "C": "Because only the cell wall performs life processes",
+        "D": "Because all cell structures have one identical function"
+      },
+      "correct_answer": "A",
+      "explanation": "A cell is a system because its structures interact and depend on one another to keep the cell alive.",
+      "identifier_tags": [
+        "structure/function relationships"
+      ],
+      "remediation_tags": [
+        "structure/function relationships"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_2_B_021",
+      "standard_id": "MS-LS1-2",
+      "objective_id": "MS-LS1-2B",
+      "difficulty": "Reasoning",
+      "question_type": "multiple_choice",
+      "prompt": "A plant cell model shows the nucleus, chloroplasts, mitochondria, cytoplasm, cell membrane, and cell wall. Which explanation best describes how the model represents the cell as a system?",
+      "answer_choices": {
+        "A": "It shows several structures with different jobs working together to support cell survival.",
+        "B": "It shows that plant cells only need chloroplasts to survive.",
+        "C": "It shows that the cell wall controls all cell activities.",
+        "D": "It shows that structures inside a cell are unrelated."
+      },
+      "correct_answer": "A",
+      "explanation": "The model represents the cell as a system by showing that many structures with different functions work together to support survival.",
+      "identifier_tags": [
+        "nucleus",
+        "chloroplast",
+        "mitochondria",
+        "cytoplasm",
+        "cell membrane",
+        "cell wall",
+        "structure/function relationships",
+        "model interpretation"
+      ],
+      "remediation_tags": [
+        "nucleus",
+        "chloroplast",
+        "mitochondria",
+        "cytoplasm",
+        "cell membrane",
+        "cell wall",
+        "structure/function relationships",
+        "model interpretation"
+      ],
+      "model_id": "CELL_MODEL_09"
+    }
+  ]
+}
