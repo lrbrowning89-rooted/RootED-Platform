@@ -1,0 +1,559 @@
+{
+  "standard_id": "MS-LS1-2",
+  "objective_id": "MS-LS1-2A",
+  "objective_name": "Cell Structures and Functions",
+  "questions": [
+    {
+      "question_id": "Q_MSLS1_2_A_001",
+      "standard_id": "MS-LS1-2",
+      "objective_id": "MS-LS1-2A",
+      "difficulty": "Recall",
+      "question_type": "multiple_choice",
+      "prompt": "Which cell structure controls many of the cell's activities by containing genetic information?",
+      "answer_choices": {
+        "A": "nucleus",
+        "B": "cell membrane",
+        "C": "cytoplasm",
+        "D": "cell wall"
+      },
+      "correct_answer": "A",
+      "explanation": "The nucleus contains genetic information and helps control many cell activities. The cell membrane controls what enters and leaves the cell, the cytoplasm fills much of the cell, and the cell wall provides support in plant cells.",
+      "identifier_tags": [
+        "nucleus",
+        "structure/function relationships"
+      ],
+      "remediation_tags": [
+        "nucleus",
+        "cell membrane",
+        "structure/function relationships"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_2_A_002",
+      "standard_id": "MS-LS1-2",
+      "objective_id": "MS-LS1-2A",
+      "difficulty": "Recall",
+      "question_type": "multiple_choice",
+      "prompt": "Which cell structure controls what materials enter and leave the cell?",
+      "answer_choices": {
+        "A": "cell membrane",
+        "B": "chloroplast",
+        "C": "mitochondrion",
+        "D": "nucleus"
+      },
+      "correct_answer": "A",
+      "explanation": "The cell membrane surrounds the cell and controls which materials move into and out of the cell. This helps the cell maintain the conditions it needs to function.",
+      "identifier_tags": [
+        "cell membrane",
+        "structure/function relationships"
+      ],
+      "remediation_tags": [
+        "cell membrane",
+        "structure/function relationships"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_2_A_003",
+      "standard_id": "MS-LS1-2",
+      "objective_id": "MS-LS1-2A",
+      "difficulty": "Recall",
+      "question_type": "multiple_choice",
+      "prompt": "Which structure provides extra support and protection in many plant cells?",
+      "answer_choices": {
+        "A": "cell wall",
+        "B": "cell membrane",
+        "C": "cytoplasm",
+        "D": "mitochondrion"
+      },
+      "correct_answer": "A",
+      "explanation": "The cell wall is a rigid outer layer found in plant cells that provides support and protection. Animal cells have cell membranes but do not have cell walls.",
+      "identifier_tags": [
+        "cell wall",
+        "structure/function relationships"
+      ],
+      "remediation_tags": [
+        "cell wall",
+        "cell membrane",
+        "structure/function relationships"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_2_A_004",
+      "standard_id": "MS-LS1-2",
+      "objective_id": "MS-LS1-2A",
+      "difficulty": "Recall",
+      "question_type": "multiple_choice",
+      "prompt": "Which cell structure captures light energy for photosynthesis in plant cells?",
+      "answer_choices": {
+        "A": "chloroplast",
+        "B": "mitochondrion",
+        "C": "nucleus",
+        "D": "cytoplasm"
+      },
+      "correct_answer": "A",
+      "explanation": "Chloroplasts capture light energy and use it during photosynthesis. This allows plant cells to make sugars that can be used for energy and growth.",
+      "identifier_tags": [
+        "chloroplast",
+        "structure/function relationships"
+      ],
+      "remediation_tags": [
+        "chloroplast",
+        "structure/function relationships"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_2_A_005",
+      "standard_id": "MS-LS1-2",
+      "objective_id": "MS-LS1-2A",
+      "difficulty": "Recall",
+      "question_type": "multiple_choice",
+      "prompt": "Which cell structure releases usable energy from food molecules?",
+      "answer_choices": {
+        "A": "mitochondrion",
+        "B": "chloroplast",
+        "C": "cell wall",
+        "D": "nucleus"
+      },
+      "correct_answer": "A",
+      "explanation": "Mitochondria release usable energy from food molecules through cellular respiration. This energy helps power the cell's activities.",
+      "identifier_tags": [
+        "mitochondria",
+        "structure/function relationships"
+      ],
+      "remediation_tags": [
+        "mitochondria",
+        "chloroplast",
+        "structure/function relationships"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_2_A_006",
+      "standard_id": "MS-LS1-2",
+      "objective_id": "MS-LS1-2A",
+      "difficulty": "Recall",
+      "question_type": "multiple_choice",
+      "prompt": "Which part of the cell is the jelly-like material where many cell structures are located?",
+      "answer_choices": {
+        "A": "cytoplasm",
+        "B": "cell wall",
+        "C": "nucleus",
+        "D": "chloroplast"
+      },
+      "correct_answer": "A",
+      "explanation": "The cytoplasm is the jelly-like material inside the cell where many cell structures are found. It helps support the organelles and is where many cell processes occur.",
+      "identifier_tags": [
+        "cytoplasm",
+        "structure/function relationships"
+      ],
+      "remediation_tags": [
+        "cytoplasm",
+        "structure/function relationships"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_2_A_007",
+      "standard_id": "MS-LS1-2",
+      "objective_id": "MS-LS1-2A",
+      "difficulty": "Recall",
+      "question_type": "model_interpretation",
+      "prompt": "In CELL_MODEL_01, a labeled structure surrounds the entire cell and forms the cell's outer boundary. Which structure is being shown?",
+      "answer_choices": {
+        "A": "cell membrane",
+        "B": "nucleus",
+        "C": "mitochondrion",
+        "D": "chloroplast"
+      },
+      "correct_answer": "A",
+      "explanation": "The cell membrane forms the boundary around the cell. In a cell model, the outer boundary usually represents the membrane because it controls what enters and leaves the cell.",
+      "identifier_tags": [
+        "cell membrane",
+        "model interpretation"
+      ],
+      "remediation_tags": [
+        "cell membrane",
+        "model interpretation"
+      ],
+      "model_id": "CELL_MODEL_01"
+    },
+    {
+      "question_id": "Q_MSLS1_2_A_008",
+      "standard_id": "MS-LS1-2",
+      "objective_id": "MS-LS1-2A",
+      "difficulty": "Application",
+      "question_type": "multiple_choice",
+      "prompt": "A cell is unable to control which materials move into and out of it. Which structure is most likely not working correctly?",
+      "answer_choices": {
+        "A": "cell membrane",
+        "B": "cell wall",
+        "C": "chloroplast",
+        "D": "cytoplasm"
+      },
+      "correct_answer": "A",
+      "explanation": "The cell membrane regulates movement of materials into and out of the cell. If the cell cannot control this movement, the membrane is most likely affected.",
+      "identifier_tags": [
+        "cell membrane",
+        "structure/function relationships"
+      ],
+      "remediation_tags": [
+        "cell membrane",
+        "structure/function relationships"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_2_A_009",
+      "standard_id": "MS-LS1-2",
+      "objective_id": "MS-LS1-2A",
+      "difficulty": "Application",
+      "question_type": "multiple_choice",
+      "prompt": "A plant cell is not able to capture sunlight to make sugar. Which structure is most directly affected?",
+      "answer_choices": {
+        "A": "chloroplast",
+        "B": "mitochondrion",
+        "C": "cell membrane",
+        "D": "nucleus"
+      },
+      "correct_answer": "A",
+      "explanation": "Chloroplasts capture light energy for photosynthesis. If a plant cell cannot use sunlight to make sugar, the chloroplasts are most directly involved.",
+      "identifier_tags": [
+        "chloroplast",
+        "structure/function relationships"
+      ],
+      "remediation_tags": [
+        "chloroplast",
+        "structure/function relationships"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_2_A_010",
+      "standard_id": "MS-LS1-2",
+      "objective_id": "MS-LS1-2A",
+      "difficulty": "Application",
+      "question_type": "multiple_choice",
+      "prompt": "A muscle cell needs a large amount of usable energy to help an animal move. Which structure would you expect this cell to have many of?",
+      "answer_choices": {
+        "A": "mitochondria",
+        "B": "cell walls",
+        "C": "chloroplasts",
+        "D": "nuclei"
+      },
+      "correct_answer": "A",
+      "explanation": "Mitochondria release usable energy from food molecules. Cells that need more energy, such as muscle cells, often have many mitochondria.",
+      "identifier_tags": [
+        "mitochondria",
+        "structure/function relationships"
+      ],
+      "remediation_tags": [
+        "mitochondria",
+        "structure/function relationships"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_2_A_011",
+      "standard_id": "MS-LS1-2",
+      "objective_id": "MS-LS1-2A",
+      "difficulty": "Application",
+      "question_type": "model_interpretation",
+      "prompt": "In CELL_MODEL_02, a student points to a large round structure inside the cell and says it stores genetic information. Which structure is the student identifying?",
+      "answer_choices": {
+        "A": "nucleus",
+        "B": "cell membrane",
+        "C": "cytoplasm",
+        "D": "cell wall"
+      },
+      "correct_answer": "A",
+      "explanation": "The nucleus is often shown as a large round structure inside the cell. Its function is to contain genetic information and help control cell activities.",
+      "identifier_tags": [
+        "nucleus",
+        "model interpretation",
+        "structure/function relationships"
+      ],
+      "remediation_tags": [
+        "nucleus",
+        "model interpretation",
+        "structure/function relationships"
+      ],
+      "model_id": "CELL_MODEL_02"
+    },
+    {
+      "question_id": "Q_MSLS1_2_A_012",
+      "standard_id": "MS-LS1-2",
+      "objective_id": "MS-LS1-2A",
+      "difficulty": "Application",
+      "question_type": "multiple_choice",
+      "prompt": "A scientist observes a cell with a cell wall and chloroplasts. What type of cell is the scientist most likely observing?",
+      "answer_choices": {
+        "A": "a plant cell",
+        "B": "an animal cell",
+        "C": "a cell that cannot make food",
+        "D": "a cell without internal structures"
+      },
+      "correct_answer": "A",
+      "explanation": "Plant cells commonly have cell walls and chloroplasts. Animal cells do not have cell walls or chloroplasts.",
+      "identifier_tags": [
+        "cell wall",
+        "chloroplast",
+        "structure/function relationships"
+      ],
+      "remediation_tags": [
+        "cell wall",
+        "chloroplast",
+        "structure/function relationships"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_2_A_013",
+      "standard_id": "MS-LS1-2",
+      "objective_id": "MS-LS1-2A",
+      "difficulty": "Application",
+      "question_type": "model_interpretation",
+      "prompt": "In CELL_MODEL_03, the shaded area fills the space between the nucleus and the cell membrane. Which structure or material does this shaded area most likely represent?",
+      "answer_choices": {
+        "A": "cytoplasm",
+        "B": "cell wall",
+        "C": "chloroplast",
+        "D": "mitochondrion"
+      },
+      "correct_answer": "A",
+      "explanation": "Cytoplasm fills much of the inside of the cell and surrounds the organelles. In a model, the material between the nucleus and membrane usually represents cytoplasm.",
+      "identifier_tags": [
+        "cytoplasm",
+        "model interpretation"
+      ],
+      "remediation_tags": [
+        "cytoplasm",
+        "model interpretation"
+      ],
+      "model_id": "CELL_MODEL_03"
+    },
+    {
+      "question_id": "Q_MSLS1_2_A_014",
+      "standard_id": "MS-LS1-2",
+      "objective_id": "MS-LS1-2A",
+      "difficulty": "Application",
+      "question_type": "multiple_choice",
+      "prompt": "A student builds a model of a plant cell but leaves out the cell wall. Which important function is missing from the model?",
+      "answer_choices": {
+        "A": "extra support and protection",
+        "B": "control of genetic information",
+        "C": "release of usable energy from food",
+        "D": "capture of light energy"
+      },
+      "correct_answer": "A",
+      "explanation": "The cell wall gives plant cells extra support and protection. Without the cell wall, the model is missing an important structure that helps the plant cell keep its shape.",
+      "identifier_tags": [
+        "cell wall",
+        "structure/function relationships",
+        "model interpretation"
+      ],
+      "remediation_tags": [
+        "cell wall",
+        "model interpretation",
+        "structure/function relationships"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_2_A_015",
+      "standard_id": "MS-LS1-2",
+      "objective_id": "MS-LS1-2A",
+      "difficulty": "Reasoning",
+      "question_type": "multiple_choice",
+      "prompt": "A cell has many mitochondria but no chloroplasts. Which conclusion is best supported by this information?",
+      "answer_choices": {
+        "A": "The cell can release usable energy from food but probably does not capture light energy for photosynthesis.",
+        "B": "The cell can capture light energy but cannot release usable energy from food.",
+        "C": "The cell has no way to control what enters and leaves it.",
+        "D": "The cell must be a plant cell because it has mitochondria."
+      },
+      "correct_answer": "A",
+      "explanation": "Mitochondria release usable energy from food molecules, while chloroplasts capture light energy for photosynthesis. Having mitochondria but no chloroplasts supports the idea that the cell uses food for energy but does not photosynthesize.",
+      "identifier_tags": [
+        "mitochondria",
+        "chloroplast",
+        "structure/function relationships"
+      ],
+      "remediation_tags": [
+        "mitochondria",
+        "chloroplast",
+        "structure/function relationships"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_2_A_016",
+      "standard_id": "MS-LS1-2",
+      "objective_id": "MS-LS1-2A",
+      "difficulty": "Reasoning",
+      "question_type": "model_interpretation",
+      "prompt": "CELL_MODEL_04 shows a plant cell with the nucleus, chloroplasts, cell wall, cell membrane, cytoplasm, and mitochondria labeled. Which statement best explains how two of these structures work together to help the cell function?",
+      "answer_choices": {
+        "A": "Chloroplasts make sugar using light energy, and mitochondria release usable energy from sugar.",
+        "B": "The cell wall controls genetic information, and the nucleus captures light energy.",
+        "C": "The cytoplasm releases energy, and the cell membrane makes the cell rigid.",
+        "D": "The mitochondria control what enters the cell, and the chloroplasts provide outer support."
+      },
+      "correct_answer": "A",
+      "explanation": "Chloroplasts and mitochondria have different but related roles. Chloroplasts help make sugar using light energy, and mitochondria release usable energy from food molecules such as sugar.",
+      "identifier_tags": [
+        "chloroplast",
+        "mitochondria",
+        "model interpretation",
+        "structure/function relationships"
+      ],
+      "remediation_tags": [
+        "chloroplast",
+        "mitochondria",
+        "model interpretation",
+        "structure/function relationships"
+      ],
+      "model_id": "CELL_MODEL_04"
+    },
+    {
+      "question_id": "Q_MSLS1_2_A_017",
+      "standard_id": "MS-LS1-2",
+      "objective_id": "MS-LS1-2A",
+      "difficulty": "Reasoning",
+      "question_type": "multiple_choice",
+      "prompt": "A student says, 'The cell wall and cell membrane do the same job because both are around the outside of a plant cell.' Which response best corrects the student's thinking?",
+      "answer_choices": {
+        "A": "The cell wall provides support and protection, while the cell membrane controls what enters and leaves the cell.",
+        "B": "The cell wall controls genetic information, while the cell membrane captures sunlight.",
+        "C": "The cell wall releases energy, while the cell membrane stores food.",
+        "D": "The cell wall is found only in animal cells, while the cell membrane is found only in plant cells."
+      },
+      "correct_answer": "A",
+      "explanation": "The cell wall and cell membrane may both be near the outside of a plant cell, but they have different functions. The wall provides support and protection, while the membrane controls movement of materials.",
+      "identifier_tags": [
+        "cell wall",
+        "cell membrane",
+        "structure/function relationships"
+      ],
+      "remediation_tags": [
+        "cell wall",
+        "cell membrane",
+        "structure/function relationships"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_2_A_018",
+      "standard_id": "MS-LS1-2",
+      "objective_id": "MS-LS1-2A",
+      "difficulty": "Reasoning",
+      "question_type": "model_interpretation",
+      "prompt": "In CELL_MODEL_05, an animal cell is shown without chloroplasts or a cell wall. Which explanation best supports why the model is still accurate?",
+      "answer_choices": {
+        "A": "Animal cells have cell membranes, cytoplasm, nuclei, and mitochondria, but they do not have cell walls or chloroplasts.",
+        "B": "Animal cells do not need any structure to control what enters and leaves them.",
+        "C": "Animal cells use chloroplasts only when sunlight is available.",
+        "D": "Animal cells have cell walls instead of cell membranes."
+      },
+      "correct_answer": "A",
+      "explanation": "Animal cells have several structures also found in plant cells, such as cell membranes, cytoplasm, nuclei, and mitochondria. However, animal cells do not have cell walls or chloroplasts.",
+      "identifier_tags": [
+        "cell wall",
+        "chloroplast",
+        "model interpretation",
+        "structure/function relationships"
+      ],
+      "remediation_tags": [
+        "cell wall",
+        "chloroplast",
+        "model interpretation",
+        "structure/function relationships"
+      ],
+      "model_id": "CELL_MODEL_05"
+    },
+    {
+      "question_id": "Q_MSLS1_2_A_019",
+      "standard_id": "MS-LS1-2",
+      "objective_id": "MS-LS1-2A",
+      "difficulty": "Reasoning",
+      "question_type": "multiple_choice",
+      "prompt": "A cell's nucleus is damaged. Which outcome is most likely?",
+      "answer_choices": {
+        "A": "The cell may have trouble controlling its activities because genetic information is affected.",
+        "B": "The cell will immediately gain a cell wall.",
+        "C": "The cell will no longer have cytoplasm.",
+        "D": "The cell will begin capturing sunlight even if it has no chloroplasts."
+      },
+      "correct_answer": "A",
+      "explanation": "The nucleus contains genetic information and helps control cell activities. If the nucleus is damaged, the cell may have trouble carrying out normal functions.",
+      "identifier_tags": [
+        "nucleus",
+        "structure/function relationships"
+      ],
+      "remediation_tags": [
+        "nucleus",
+        "structure/function relationships"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_2_A_020",
+      "standard_id": "MS-LS1-2",
+      "objective_id": "MS-LS1-2A",
+      "difficulty": "Reasoning",
+      "question_type": "model_interpretation",
+      "prompt": "CELL_MODEL_06 shows a cell with many green oval structures and a rigid outer layer. Which evidence best supports the claim that the model shows a plant cell?",
+      "answer_choices": {
+        "A": "The model includes chloroplasts and a cell wall.",
+        "B": "The model includes only mitochondria and cytoplasm.",
+        "C": "The model does not include a nucleus.",
+        "D": "The model shows a flexible outer boundary but no other structures."
+      },
+      "correct_answer": "A",
+      "explanation": "Chloroplasts and a cell wall are strong evidence that a model represents a plant cell. Chloroplasts capture light energy, and the cell wall provides rigid support.",
+      "identifier_tags": [
+        "chloroplast",
+        "cell wall",
+        "model interpretation"
+      ],
+      "remediation_tags": [
+        "chloroplast",
+        "cell wall",
+        "model interpretation"
+      ],
+      "model_id": "CELL_MODEL_06"
+    },
+    {
+      "question_id": "Q_MSLS1_2_A_021",
+      "standard_id": "MS-LS1-2",
+      "objective_id": "MS-LS1-2A",
+      "difficulty": "Reasoning",
+      "question_type": "model_interpretation",
+      "prompt": "CELL_MODEL_07 shows a cell as a system made of smaller parts. Which statement best explains why this model helps describe cell function?",
+      "answer_choices": {
+        "A": "It shows that different cell structures have different jobs that contribute to the cell working as a whole.",
+        "B": "It shows that all cell structures have the exact same function.",
+        "C": "It shows that cells only need one structure to survive.",
+        "D": "It shows that cell parts work separately and do not affect the whole cell."
+      },
+      "correct_answer": "A",
+      "explanation": "A cell functions because its parts carry out different jobs that support the whole cell. Models can help show how structures such as the nucleus, membrane, cytoplasm, mitochondria, chloroplasts, and cell wall contribute to cell function.",
+      "identifier_tags": [
+        "model interpretation",
+        "structure/function relationships",
+        "nucleus",
+        "cytoplasm"
+      ],
+      "remediation_tags": [
+        "model interpretation",
+        "structure/function relationships",
+        "nucleus",
+        "cytoplasm"
+      ],
+      "model_id": "CELL_MODEL_07"
+    }
+  ]
+}
