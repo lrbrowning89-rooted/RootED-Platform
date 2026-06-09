@@ -2788,14 +2788,12 @@ def student_view():
     def ms_ls1_1_objective_for_level(level: int) -> str:
         if level == 1:
             return "MS-LS1-1A"
-        if level == 2:
-            return "MS-LS1-1B"
-        return "MS-LS1-1C"
+        return "MS-LS1-1B"
 
     def get_engine_target():
         """
         Choose the student's current standard/objective from progress_state.
-        MS-LS1-1 still uses the temporary A/B/C mapper.
+        MS-LS1-1 uses the approved A/B mapper; unexpected higher levels fall back to B.
         Other standards use the first available objective for that standard.
         If no content exists yet, objective_id stays None.
         """
