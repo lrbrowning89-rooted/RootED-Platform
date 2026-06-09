@@ -822,9 +822,11 @@ def get_available_standards(conn):
             s.standard_id,
             s.core_idea,
             s.grade_band,
-            COUNT(o.objective_id) AS objective_count
+            COUNT(DISTINCT o.objective_id) AS objective_count,
+            COUNT(DISTINCT q.question_id) AS question_count
         FROM standards s
         LEFT JOIN objectives o ON o.standard_id = s.standard_id
+        LEFT JOIN questions q ON q.objective_id = o.objective_id
         GROUP BY s.standard_id, s.core_idea, s.grade_band
         ORDER BY s.core_idea, s.grade_band, s.standard_id
         """
@@ -856,6 +858,21 @@ def get_response_count_for_level(conn, student_id, standard_id, level):
         (student_id, standard_id, level),
     ).fetchone()
     return int(row["n"] or 0) if row else 0
+
+
+def get_progress_by_standard(conn, student_id):
+    if not student_id:
+        return {}
+    rows = conn.execute(
+        """
+        SELECT standard_id, current_level, status, rolling_avg, locked, last_update
+        FROM progress_state
+        WHERE student_id = ?
+        ORDER BY last_update DESC
+        """,
+        (student_id,),
+    ).fetchall()
+    return {row["standard_id"]: row for row in rows}
 
 
 def row_get(row, key, default=None):
@@ -2789,6 +2806,72 @@ def student_view():
         if level == 1:
             return "MS-LS1-1A"
         return "MS-LS1-1B"
+    
+    def get_first_objective_for_standard(std):
+        row = conn.execute(
+            """
+SELECT o.objective_id
+FROM objectives o
+WHERE o.standard_id = ?
+  AND EXISTS (
+      SELECT 1
+      FROM questions q
+      WHERE q.objective_id = o.objective_id
+  )
+ORDER BY o.order_in_band, o.objective_id
+LIMIT 1
+            """,
+            (std,),
+        ).fetchone()
+        return row["objective_id"] if row else None
+
+    def get_next_objective_for_standard(std, current_objective_id):
+        current = conn.execute(
+            """
+            SELECT order_in_band
+            FROM objectives
+            WHERE objective_id = ?
+            """,
+            (current_objective_id,),
+        ).fetchone()
+
+        if not current:
+            return None
+
+        row = conn.execute(
+            """
+SELECT o.objective_id
+FROM objectives o
+WHERE o.standard_id = ?
+  AND o.order_in_band > ?
+  AND EXISTS (
+      SELECT 1
+      FROM questions q
+      WHERE q.objective_id = o.objective_id
+  )
+ORDER BY o.order_in_band, o.objective_id
+LIMIT 1
+            """,
+            (std, current["order_in_band"]),
+        ).fetchone()
+
+        return row["objective_id"] if row else None
+
+    def set_student_objective(student_id, std, objective_id):
+        now = int(time.time())
+        conn.execute(
+            """
+            INSERT INTO student_objective_state
+              (student_id, standard_id, current_objective_id, status, last_update)
+            VALUES (?, ?, ?, 'active', ?)
+            ON CONFLICT(student_id, standard_id) DO UPDATE SET
+              current_objective_id=excluded.current_objective_id,
+              status='active',
+              last_update=excluded.last_update
+            """,
+            (student_id, std, objective_id, now),
+        )
+        conn.commit()
 
     def get_engine_target():
         """
@@ -2815,21 +2898,26 @@ def student_view():
             if std == "MS-LS1-1" and ps["status"] == "completed":
                 return "MS-LS1-1", level, None, ps
 
-            if std == "MS-LS1-1":
-                return "MS-LS1-1", level, ms_ls1_1_objective_for_level(level), ps
 
-            obj = conn.execute(
+            saved_obj = conn.execute(
                 """
-                SELECT objective_id
-                FROM objectives
-                WHERE standard_id = ?
-                ORDER BY order_in_band, objective_id
-                LIMIT 1
+                SELECT current_objective_id
+                FROM student_objective_state
+                WHERE student_id = ?
+                  AND standard_id = ?
+                  AND status = 'active'
                 """,
-                (std,),
+                (student_id, std),
             ).fetchone()
 
-            return std, level, obj["objective_id"] if obj else None, ps
+            if saved_obj:
+                return std, level, saved_obj["current_objective_id"], ps
+
+            first_obj = get_first_objective_for_standard(std)
+            if first_obj:
+                set_student_objective(student_id, std, first_obj)
+
+            return std, level, first_obj, ps
 
         return "MS-LS1-1", 1, "MS-LS1-1A", ps
 
@@ -2923,14 +3011,18 @@ def student_view():
                 recent_count_row = conn.execute(
                     """
                     SELECT COUNT(*) AS n
-                    FROM responses
-                    WHERE student_id = ? AND standard_id = ? AND level = ?
+                    FROM responses r
+                    JOIN questions q ON q.question_id = r.question_id
+                    WHERE r.student_id = ?
+                      AND r.standard_id = ?
+                      AND r.level = ?
+                      AND q.objective_id = ?
                     """,
-                    (student_id, std_id, lvl),
+                    (student_id, std_id, lvl, objective_id),
                 ).fetchone()
+
                 recent_count = int(recent_count_row["n"] or 0) if recent_count_row else 0
 
-                # True Rolling-7 gate: do not route/lock/advance until 7 responses exist at this standard+level.
                 if recent_count < 7:
                     avg_now = ae.rolling7_avg(student_id, std_id, lvl)
                     ae.set_state(student_id, std_id, lvl, "practicing", avg_now)
@@ -2945,44 +3037,27 @@ def student_view():
                 else:
                     engine_decision = ae.process_after_response(student_id, std_id)
 
-                    # Temporary MS-LS1-1 completion fallback: the engine currently loops to itself when progression_links is empty.
                     if (
                         isinstance(engine_decision, dict)
-                        and engine_decision.get("action") == "advance_standard"
-                        and engine_decision.get("from") == ("MS-LS1-1", 3)
-                        and engine_decision.get("to") == ("MS-LS1-1", 1)
+                        and engine_decision.get("action") == "next_standard_found"
                     ):
-                        now = int(time.time())
-                        conn.execute(
-                            """
-                            INSERT INTO progress_state
-                              (student_id, standard_id, current_level, status, rolling_avg, locked, locked_reason, last_update)
-                            VALUES (?, ?, ?, ?, ?, 0, NULL, ?)
-                            ON CONFLICT(student_id, standard_id) DO UPDATE SET
-                              current_level=excluded.current_level,
-                              status=excluded.status,
-                              rolling_avg=excluded.rolling_avg,
-                              locked=0,
-                              locked_reason=NULL,
-                              last_update=excluded.last_update
-                            """,
-                            (student_id, "MS-LS1-1", 3, "completed", 1.0, now),
+                        next_objective = get_next_objective_for_standard(
+                            std_id,
+                            objective_id,
                         )
-                        conn.execute(
-                            """
-                            INSERT INTO notifications (student_id, standard_id, event, details, ts)
-                            VALUES (?, ?, ?, ?, ?)
-                            """,
-                            (student_id, "MS-LS1-1", "complete", "✅ Completed MS-LS1-1 walkthrough", now),
-                        )
-                        conn.commit()
-                        engine_decision = {
-                            "status": "completed",
-                            "action": "complete_standard",
-                            "standard": "MS-LS1-1",
-                            "level": 3,
-                            "reason": "ms_ls1_1_final_objective_mastered",
-                        }
+
+                        if next_objective:
+                            ae.set_state(student_id, std_id, 1, "practicing", 0.0)
+                            set_student_objective(student_id, std_id, next_objective)
+
+                            engine_decision = {
+                                "status": "question",
+                                "action": "next_objective_found",
+                                "standard": std_id,
+                                "level": 1,
+                                "objective": next_objective,
+                                "reason": "next_objective_in_standard_found",
+                            }
 
                 if isinstance(engine_decision, dict):
                     action = engine_decision.get("action")
@@ -3030,122 +3105,238 @@ def student_view():
         return redirect(url_for("student_view"))
 
     available_standards = get_available_standards(conn)
+    progress_by_standard = get_progress_by_standard(conn, student_id)
     available_standard_cards = [
         {
             "standard_id": row_get(standard, "standard_id", "Unknown standard"),
             "core_idea": row_get(standard, "core_idea", "Science"),
             "grade_band": row_get(standard, "grade_band", "Available"),
             "objective_count": row_get(standard, "objective_count", 0),
+            "question_count": row_get(standard, "question_count", 0),
         }
         for standard in available_standards
     ]
+    for standard in available_standard_cards:
+        standard_progress = progress_by_standard.get(standard["standard_id"])
+        standard["level"] = row_get(standard_progress, "current_level", None)
+        standard["rolling_avg"] = row_get(standard_progress, "rolling_avg", None)
+        standard["is_locked"] = bool(row_get(standard_progress, "locked", 0))
+        status = row_get(standard_progress, "status", None)
+        if standard["standard_id"] == current_std:
+            standard["status_label"] = "Current"
+            standard["status_class"] = "current"
+        elif status == "completed":
+            standard["status_label"] = "Completed"
+            standard["status_class"] = "complete"
+        elif standard_progress:
+            standard["status_label"] = "In progress"
+            standard["status_class"] = "progress"
+        else:
+            standard["status_label"] = "Available"
+            standard["status_class"] = "available"
+        if standard["is_locked"]:
+            standard["status_label"] = "Review"
+            standard["status_class"] = "review"
     current_standard_meta = get_standard_meta(conn, current_std)
     response_count = get_response_count_for_level(conn, student_id, current_std, current_level)
     rolling_avg = float(row_get(progress_row, "rolling_avg", 0.0) or 0.0)
     progress_percent = max(0, min(100, round(rolling_avg * 100)))
     progress_status = row_get(progress_row, "status", "not started")
+    response_goal = 7
+    response_percent = max(0, min(100, round((response_count / response_goal) * 100)))
     current_core_idea = row_get(current_standard_meta, "core_idea", "Science")
     current_grade_band = row_get(current_standard_meta, "grade_band", "Current band")
 
     if role == "student" and session.get("current_mode") == "home":
         home_html = """
 <!doctype html>
-<title>Adaptive NGSS - Student Home</title>
+<title>RootED - Student Home</title>
 <style>
-  body{font-family:Arial, Helvetica, sans-serif;margin:24px;background:#f3f4f6;color:#111827}
-  .shell{max-width:900px;margin:0 auto}
-  .card{background:#fff;border-radius:10px;padding:18px 22px;border:1px solid #e5e7eb;margin-bottom:16px}
-  .header{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:12px}
-  .btn{background:#2563eb;color:#fff;border:none;padding:10px 14px;border-radius:8px;cursor:pointer;text-decoration:none;display:inline-block;font-weight:700}
-  .btn-danger{background:#dc2626}
-  .muted{font-size:13px;color:#4b5563}
-  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-  .metric{border:1px solid #e5e7eb;border-radius:8px;padding:12px;background:#f9fafb}
-  .metric strong{display:block;font-size:22px;margin-top:4px}
-  .progress{height:12px;background:#e5e7eb;border-radius:999px;overflow:hidden;margin:10px 0 4px}
-  .bar{height:100%;background:#16a34a;width:{{ progress_percent }}%}
-  table{width:100%;border-collapse:collapse;margin-top:8px}
-  th,td{text-align:left;border-bottom:1px solid #e5e7eb;padding:9px 8px;font-size:14px;vertical-align:top}
-  th{font-size:12px;color:#4b5563;text-transform:uppercase;letter-spacing:.04em}
-  .pill{display:inline-block;padding:3px 7px;border-radius:999px;background:#dbeafe;color:#1d4ed8;font-size:12px;font-weight:700}
-  @media(max-width:700px){body{margin:14px}.grid{grid-template-columns:1fr}.header{display:block}.logout{margin-top:10px}}
+  :root{
+    --ink:#1f2933;
+    --muted:#5f6f64;
+    --leaf:#2f6f4e;
+    --leaf-dark:#24543d;
+    --moss:#dce9d5;
+    --sprout:#f3f8ee;
+    --gold:#c98f35;
+    --sky:#e6f0f6;
+    --line:#d9e2d4;
+    --paper:#fffefa;
+    --shadow:0 20px 50px rgba(31,41,51,.11);
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0;
+    min-height:100vh;
+    font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, Helvetica, sans-serif;
+    color:var(--ink);
+    background:
+      radial-gradient(circle at 12% 10%, rgba(220,233,213,.84), transparent 28%),
+      linear-gradient(135deg, #fffdf8 0%, #f3f8ee 48%, #e6f0f6 100%);
+  }
+  body:before{
+    content:"";
+    position:fixed;
+    inset:0;
+    pointer-events:none;
+    background:
+      linear-gradient(90deg, rgba(47,111,78,.06) 1px, transparent 1px),
+      linear-gradient(180deg, rgba(47,111,78,.05) 1px, transparent 1px);
+    background-size:56px 56px;
+    mask-image:linear-gradient(to bottom, rgba(0,0,0,.42), transparent 72%);
+  }
+  .shell{position:relative;width:min(1080px, calc(100% - 40px));margin:0 auto;padding:28px 0 42px}
+  .topbar{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:18px}
+  .brand{display:flex;align-items:center;gap:12px;color:var(--leaf-dark);font-weight:800}
+  .brand img{width:58px;height:58px;object-fit:contain;border-radius:8px;background:#fffdf8;box-shadow:0 12px 24px rgba(47,111,78,.14)}
+  .brand span{font-size:20px}
+  .btn{border:none;border-radius:8px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;font-weight:750}
+  .btn-danger{min-height:40px;padding:9px 12px;background:rgba(255,255,255,.72);color:#8a2f2f;border:1px solid rgba(138,47,47,.22)}
+  .hero-card,.card{background:rgba(255,255,255,.88);border:1px solid rgba(47,111,78,.16);border-radius:8px;box-shadow:var(--shadow)}
+  .hero-card{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(300px,.8fr);gap:22px;padding:28px;margin-bottom:16px}
+  .eyebrow{margin:0 0 8px;color:var(--leaf);font-size:13px;font-weight:800;text-transform:uppercase;letter-spacing:.06em}
+  h1,h2,h3,p{letter-spacing:0}
+  h1{margin:0;font-size:clamp(34px,5vw,58px);line-height:1;color:#183629}
+  .lead{margin:12px 0 0;color:#304037;font-size:17px;line-height:1.55;max-width:660px}
+  .current-panel{background:linear-gradient(135deg, rgba(47,111,78,.1), rgba(201,143,53,.1));border:1px solid var(--line);border-radius:8px;padding:18px}
+  .standard-code{font-size:28px;font-weight:850;color:#183629;margin:2px 0 6px}
+  .muted{font-size:13px;color:var(--muted)}
+  .status-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0}
+  .pill{display:inline-flex;align-items:center;padding:4px 8px;border-radius:999px;font-size:12px;font-weight:800}
+  .pill-current{background:#dce9d5;color:#24543d}
+  .pill-complete{background:#e7f7ee;color:#0f6b3a}
+  .pill-progress{background:#e6f0f6;color:#24506d}
+  .pill-available{background:#f4efe5;color:#7a5729}
+  .pill-review{background:#fff0cf;color:#7a4d00}
+  .stats{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
+  .stat{background:rgba(255,255,255,.72);border:1px solid rgba(47,111,78,.13);border-radius:8px;padding:12px}
+  .stat strong{display:block;font-size:22px;color:#1f3d2f;margin-top:4px}
+  .progress{height:12px;background:#e1e7e2;border-radius:999px;overflow:hidden;margin:10px 0 6px}
+  .bar{height:100%;background:linear-gradient(90deg,var(--leaf),#6b9b58);width:{{ progress_percent }}%}
+  .response-bar{height:100%;background:linear-gradient(90deg,var(--gold),#d7aa58);width:{{ response_percent }}%}
+  .cta-panel{display:flex;flex-direction:column;justify-content:space-between;gap:16px;background:#fffefa;border:1px solid var(--line);border-radius:8px;padding:18px}
+  .cta-panel h2{margin:0;color:#183629;font-size:24px}
+  .cta-panel p{margin:8px 0 0;color:#4d5e55;line-height:1.5}
+  .cta-button{width:100%;min-height:52px;padding:13px 16px;background:var(--leaf);color:#fff;box-shadow:0 14px 24px rgba(47,111,78,.18);font-size:16px}
+  .cta-button:hover{background:var(--leaf-dark)}
+  .card{padding:20px 22px;margin-bottom:16px}
+  .section-head{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;margin-bottom:14px}
+  .section-head h2{margin:0;color:#183629;font-size:24px}
+  .standards-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+  .standard-card{border:1px solid var(--line);border-radius:8px;background:rgba(255,254,250,.78);padding:14px}
+  .standard-card-head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
+  .standard-card h3{margin:0;color:#183629;font-size:18px}
+  .standard-card p{margin:8px 0 0;color:var(--muted);font-size:13px;line-height:1.45}
+  .standard-meta{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;color:#40524a;font-size:12px}
+  .empty-state{border:1px dashed rgba(47,111,78,.35);border-radius:8px;background:rgba(255,255,255,.58);padding:18px;color:var(--muted);line-height:1.5}
+  .flash-box{background:#e7f7ee;border:1px solid #a8e0bf;color:#0f6b3a;padding:10px 12px;border-radius:8px;margin:0 0 16px;font-size:14px}
+  @media(max-width:820px){.shell{width:min(100% - 28px, 760px);padding-top:18px}.hero-card{grid-template-columns:1fr}.standards-grid{grid-template-columns:1fr}.stats{grid-template-columns:1fr}}
+  @media(max-width:520px){.topbar{align-items:flex-start}.brand img{width:48px;height:48px}.hero-card,.card{padding:16px}.section-head{display:block}.btn-danger{margin-top:8px}}
 </style>
 
 <div class="shell">
-  <div class="card">
-    <div class="header">
-      <div>
-        <h2 style="margin:0;">Student Home</h2>
-        <p class="muted" style="margin:4px 0 0 0;">
-          Logged in as <strong>{{ session.get('username', 'student') }}</strong>
-        </p>
-      </div>
-      <form class="logout" action="{{ url_for('logout') }}" method="get" style="margin:0;">
-        <button type="submit" class="btn btn-danger">Logout</button>
-      </form>
+  <div class="topbar">
+    <div class="brand" aria-label="RootED">
+      <img src="{{ url_for('static', filename='Logo.png') }}" alt="RootED logo">
+      <span>RootED</span>
     </div>
-
-    {% with msgs = get_flashed_messages() %}
-      {% if msgs %}
-        <div style="background:#e7f7ee;border:1px solid #a8e0bf;color:#0f6b3a;padding:10px 12px;border-radius:8px;margin:10px 0;font-size:14px;">
-          {% for m in msgs %}
-            <div>{{ m }}</div>
-          {% endfor %}
-        </div>
-      {% endif %}
-    {% endwith %}
-
-    <div class="grid">
-      <div class="metric">
-        <span class="muted">Current assigned standard</span>
-        <strong>{{ current_std }}</strong>
-        {% if current_standard_meta %}
-          <div class="muted">{{ current_core_idea }} | {{ current_grade_band }}</div>
-        {% endif %}
-      </div>
-      <div class="metric">
-        <span class="muted">Current progress</span>
-        <strong>Level {{ current_level }}</strong>
-        <div class="progress" aria-label="Current progress"><div class="bar"></div></div>
-        <div class="muted">{{ progress_percent }}% Rolling-7 average | {{ response_count }} of 7 responses at this level | {{ progress_status }}</div>
-      </div>
-    </div>
-
-    <form method="post" style="margin:16px 0 0 0;">
-      <input type="hidden" name="action" value="continue_learning">
-      <button class="btn" type="submit">Continue Learning</button>
+    <form action="{{ url_for('logout') }}" method="get" style="margin:0;">
+      <button type="submit" class="btn btn-danger">Logout</button>
     </form>
   </div>
 
-  <div class="card">
-    <h3 style="margin:0 0 8px 0;">Available Standards</h3>
-    <table>
-      <thead>
-        <tr>
-          <th>Standard</th>
-          <th>Core Idea</th>
-          <th>Grade Band</th>
-          <th>Objectives</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for standard in available_standards %}
-          <tr>
-            <td>
-              <strong>{{ standard.standard_id }}</strong>
-              {% if standard.standard_id == current_std %}
-                <span class="pill">Current</span>
-              {% endif %}
-            </td>
-            <td>{{ standard.core_idea }}</td>
-            <td>{{ standard.grade_band }}</td>
-            <td>{{ standard.objective_count }}</td>
-          </tr>
-        {% else %}
-          <tr><td colspan="4"><em>No standards are available yet.</em></td></tr>
+  {% with msgs = get_flashed_messages() %}
+    {% if msgs %}
+      <div class="flash-box">
+        {% for m in msgs %}
+          <div>{{ m }}</div>
         {% endfor %}
-      </tbody>
-    </table>
+      </div>
+    {% endif %}
+  {% endwith %}
+
+  <section class="hero-card" aria-label="Student learning overview">
+    <div>
+      <p class="eyebrow">Student Home</p>
+      <h1>Keep growing from here.</h1>
+      <p class="lead">
+        You are signed in as <strong>{{ session.get('username', 'student') }}</strong>.
+        RootED will continue at the level that matches your current progress.
+      </p>
+      <div class="current-panel" style="margin-top:20px;">
+        <div class="muted">Current assigned standard</div>
+        <div class="standard-code">{{ current_std }}</div>
+        {% if current_standard_meta %}
+          <div class="muted">{{ current_core_idea }} | {{ current_grade_band }}</div>
+        {% endif %}
+        <div class="status-row">
+          <span class="pill pill-current">{{ progress_status }}</span>
+          <span class="muted">Level {{ current_level }}</span>
+        </div>
+        <div class="stats">
+          <div class="stat">
+            <span class="muted">Rolling-7 progress</span>
+            <strong>{{ progress_percent }}%</strong>
+            <div class="progress" aria-label="Rolling-7 progress"><div class="bar"></div></div>
+          </div>
+          <div class="stat">
+            <span class="muted">Responses at this level</span>
+            <strong>{{ response_count }} / 7</strong>
+            <div class="progress" aria-label="Responses collected"><div class="response-bar"></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <aside class="cta-panel" aria-label="Continue learning">
+      <div>
+        <h2>Ready for the next question?</h2>
+        <p>Continue Learning opens the existing practice flow without changing your assigned route.</p>
+      </div>
+      <form method="post" style="margin:0;">
+        <input type="hidden" name="action" value="continue_learning">
+        <button class="btn cta-button" type="submit">Continue Learning</button>
+      </form>
+    </aside>
+  </section>
+
+  <div class="card">
+    <div class="section-head">
+      <div>
+        <h2>Available Standards</h2>
+        <p class="muted" style="margin:6px 0 0;">Current, completed, and in-progress labels use existing progress data.</p>
+      </div>
+    </div>
+    {% if available_standards %}
+      <div class="standards-grid">
+        {% for standard in available_standards %}
+          <section class="standard-card">
+            <div class="standard-card-head">
+              <h3>{{ standard.standard_id }}</h3>
+              <span class="pill pill-{{ standard.status_class }}">{{ standard.status_label }}</span>
+            </div>
+            <p>{{ standard.core_idea }} | {{ standard.grade_band }}</p>
+            <div class="standard-meta">
+              <span>{{ standard.objective_count }} objectives</span>
+              <span>{{ standard.question_count }} questions</span>
+              {% if standard.level %}
+                <span>Level {{ standard.level }}</span>
+              {% endif %}
+            </div>
+            {% if standard.question_count == 0 %}
+              <p class="muted">Questions are not available for this standard yet.</p>
+            {% elif standard.rolling_avg is not none %}
+              <p class="muted">Latest Rolling-7 average: {{ (standard.rolling_avg * 100)|round|int }}%</p>
+            {% endif %}
+          </section>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="empty-state">
+        Standards will appear here after learning content is available.
+      </div>
+    {% endif %}
   </div>
 </div>
         """
@@ -3158,6 +3349,7 @@ def student_view():
             current_core_idea=current_core_idea,
             current_grade_band=current_grade_band,
             progress_percent=progress_percent,
+            response_percent=response_percent,
             progress_status=progress_status,
             response_count=response_count,
         )

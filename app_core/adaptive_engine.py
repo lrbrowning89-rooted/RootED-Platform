@@ -343,7 +343,7 @@ def process_after_response(student_id: str, standard_id: str) -> dict:
 
     # ---- Advance (mastery) ----
     if avg >= MASTERY:
-        max_level = 2 if standard_id == "MS-LS1-1" else 3
+        max_level = 3
 
         if level < max_level:
             new_level = level + 1
