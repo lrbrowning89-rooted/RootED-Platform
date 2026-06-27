@@ -1,0 +1,535 @@
+{
+  "standard_id": "MS-LS1-3",
+  "objective_id": "MS-LS1-3A",
+  "objective_title": "Levels of Biological Organization",
+  "mastery_target": "Explain how cells, tissues, organs, and organ systems are organized.",
+  "questions": [
+    {
+      "question_id": "Q_MSLS1_3_A_001",
+      "standard_id": "MS-LS1-3",
+      "objective_id": "MS-LS1-3A",
+      "difficulty": "Recall",
+      "question_type": "multiple_choice",
+      "prompt": "Which sequence correctly shows levels of organization in the human body from simplest to most complex?",
+      "answer_choices": {
+        "A": "organ system \u2192 organ \u2192 tissue \u2192 cell",
+        "B": "cell \u2192 tissue \u2192 organ \u2192 organ system",
+        "C": "tissue \u2192 cell \u2192 organ system \u2192 organ",
+        "D": "organ \u2192 cell \u2192 tissue \u2192 organ system"
+      },
+      "correct_answer": "B",
+      "explanation": "Cells are the basic units of living things. Similar cells work together as tissues, tissues work together as organs, and organs work together as organ systems.",
+      "identifier_tags": [
+        "levels_of_organization"
+      ],
+      "remediation_tags": [
+        "levels_of_organization"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_3_A_002",
+      "standard_id": "MS-LS1-3",
+      "objective_id": "MS-LS1-3A",
+      "difficulty": "Recall",
+      "question_type": "multiple_choice",
+      "prompt": "What is a tissue?",
+      "answer_choices": {
+        "A": "A group of similar cells working together",
+        "B": "A group of organs working together",
+        "C": "A single body system",
+        "D": "A part of a cell that performs one job"
+      },
+      "correct_answer": "A",
+      "explanation": "A tissue is made of similar cells that work together to perform a specific function.",
+      "identifier_tags": [
+        "cells_to_tissues"
+      ],
+      "remediation_tags": [
+        "cells_to_tissues"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_3_A_003",
+      "standard_id": "MS-LS1-3",
+      "objective_id": "MS-LS1-3A",
+      "difficulty": "Recall",
+      "question_type": "multiple_choice",
+      "prompt": "Which statement best describes an organ?",
+      "answer_choices": {
+        "A": "A group of tissues working together to perform a function",
+        "B": "A group of identical cells with no specific function",
+        "C": "A single cell that controls the whole body",
+        "D": "A group of organ systems working together"
+      },
+      "correct_answer": "A",
+      "explanation": "An organ is made of different tissues that work together to do a job for the body.",
+      "identifier_tags": [
+        "tissues_to_organs"
+      ],
+      "remediation_tags": [
+        "tissues_to_organs"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_3_A_004",
+      "standard_id": "MS-LS1-3",
+      "objective_id": "MS-LS1-3A",
+      "difficulty": "Recall",
+      "question_type": "multiple_choice",
+      "prompt": "Which example shows organs working together as an organ system?",
+      "answer_choices": {
+        "A": "Muscle cells forming muscle tissue",
+        "B": "Nerve cells forming nervous tissue",
+        "C": "The stomach and intestines working together in digestion",
+        "D": "Skin cells forming skin tissue"
+      },
+      "correct_answer": "C",
+      "explanation": "The stomach and intestines are organs. When organs work together for a major body function, they form an organ system.",
+      "identifier_tags": [
+        "organs_to_organ_systems"
+      ],
+      "remediation_tags": [
+        "organs_to_organ_systems"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_3_A_005",
+      "standard_id": "MS-LS1-3",
+      "objective_id": "MS-LS1-3A",
+      "difficulty": "Recall",
+      "question_type": "multiple_choice",
+      "prompt": "Which level of organization is made directly from cells?",
+      "answer_choices": {
+        "A": "Tissue",
+        "B": "Organ",
+        "C": "Organ system",
+        "D": "Whole organism"
+      },
+      "correct_answer": "A",
+      "explanation": "Cells with similar structures and functions can work together to form tissues.",
+      "identifier_tags": [
+        "cells_to_tissues",
+        "levels_of_organization"
+      ],
+      "remediation_tags": [
+        "cells_to_tissues",
+        "levels_of_organization"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_3_A_006",
+      "standard_id": "MS-LS1-3",
+      "objective_id": "MS-LS1-3A",
+      "difficulty": "Recall",
+      "question_type": "multiple_choice",
+      "prompt": "Which level of organization includes the heart, blood vessels, and blood working together?",
+      "answer_choices": {
+        "A": "Cell",
+        "B": "Tissue",
+        "C": "Organ",
+        "D": "Organ system"
+      },
+      "correct_answer": "D",
+      "explanation": "The heart, blood vessels, and blood work together as parts of the circulatory system, which is an organ system.",
+      "identifier_tags": [
+        "organs_to_organ_systems"
+      ],
+      "remediation_tags": [
+        "organs_to_organ_systems"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_3_A_007",
+      "standard_id": "MS-LS1-3",
+      "objective_id": "MS-LS1-3A",
+      "difficulty": "Recall",
+      "question_type": "multiple_choice",
+      "prompt": "A diagram shows a muscle cell, muscle tissue, a muscle, and the muscular system. What idea does the diagram best show?",
+      "answer_choices": {
+        "A": "Body structures are organized from cells into larger systems",
+        "B": "All organs have the same type of tissue",
+        "C": "Cells are larger than organ systems",
+        "D": "Organ systems are not made of organs"
+      },
+      "correct_answer": "A",
+      "explanation": "The diagram shows the biological organization pattern: cells form tissues, tissues form organs, and organs form organ systems.",
+      "identifier_tags": [
+        "model_interpretation",
+        "levels_of_organization"
+      ],
+      "remediation_tags": [
+        "model_interpretation",
+        "levels_of_organization"
+      ],
+      "model_id": "BODY_MODEL_01"
+    },
+    {
+      "question_id": "Q_MSLS1_3_A_008",
+      "standard_id": "MS-LS1-3",
+      "objective_id": "MS-LS1-3A",
+      "difficulty": "Application",
+      "question_type": "multiple_choice",
+      "prompt": "A student is sorting body structures into levels of organization. Which item should be placed in the tissue category?",
+      "answer_choices": {
+        "A": "A red blood cell",
+        "B": "Cardiac muscle tissue",
+        "C": "The heart",
+        "D": "The circulatory system"
+      },
+      "correct_answer": "B",
+      "explanation": "Cardiac muscle tissue is made of similar muscle cells working together. The heart is an organ, and the circulatory system is an organ system.",
+      "identifier_tags": [
+        "cells_to_tissues",
+        "levels_of_organization"
+      ],
+      "remediation_tags": [
+        "cells_to_tissues",
+        "levels_of_organization"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_3_A_009",
+      "standard_id": "MS-LS1-3",
+      "objective_id": "MS-LS1-3A",
+      "difficulty": "Application",
+      "question_type": "multiple_choice",
+      "prompt": "A model shows epithelial tissue, muscle tissue, nervous tissue, and connective tissue all working together in the stomach. What level of organization is the stomach?",
+      "answer_choices": {
+        "A": "Cell",
+        "B": "Tissue",
+        "C": "Organ",
+        "D": "Organ system"
+      },
+      "correct_answer": "C",
+      "explanation": "The stomach is an organ because it contains multiple tissues that work together to perform a function.",
+      "identifier_tags": [
+        "tissues_to_organs",
+        "model_interpretation"
+      ],
+      "remediation_tags": [
+        "tissues_to_organs",
+        "model_interpretation"
+      ],
+      "model_id": "BODY_MODEL_02"
+    },
+    {
+      "question_id": "Q_MSLS1_3_A_010",
+      "standard_id": "MS-LS1-3",
+      "objective_id": "MS-LS1-3A",
+      "difficulty": "Application",
+      "question_type": "multiple_choice",
+      "prompt": "A student claims that the lungs are an organ system because they help the body breathe. Which correction is most accurate?",
+      "answer_choices": {
+        "A": "The lungs are organs; they are part of the respiratory system.",
+        "B": "The lungs are tissues; they are made of organ systems.",
+        "C": "The lungs are cells; they combine to make tissue.",
+        "D": "The lungs are not part of any level of organization."
+      },
+      "correct_answer": "A",
+      "explanation": "The lungs are organs. They work with other structures, such as the trachea and diaphragm, as part of the respiratory system.",
+      "identifier_tags": [
+        "organs_to_organ_systems",
+        "tissues_to_organs"
+      ],
+      "remediation_tags": [
+        "organs_to_organ_systems",
+        "tissues_to_organs"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_3_A_011",
+      "standard_id": "MS-LS1-3",
+      "objective_id": "MS-LS1-3A",
+      "difficulty": "Application",
+      "question_type": "multiple_choice",
+      "prompt": "Which example correctly matches a body structure to its level of organization?",
+      "answer_choices": {
+        "A": "Neuron \u2014 organ system",
+        "B": "Nervous tissue \u2014 tissue",
+        "C": "Brain \u2014 cell",
+        "D": "Nervous system \u2014 organ"
+      },
+      "correct_answer": "B",
+      "explanation": "Nervous tissue is a tissue because it is made of cells that work together. A neuron is a cell, the brain is an organ, and the nervous system is an organ system.",
+      "identifier_tags": [
+        "levels_of_organization",
+        "cells_to_tissues"
+      ],
+      "remediation_tags": [
+        "levels_of_organization",
+        "cells_to_tissues"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_3_A_012",
+      "standard_id": "MS-LS1-3",
+      "objective_id": "MS-LS1-3A",
+      "difficulty": "Application",
+      "question_type": "multiple_choice",
+      "prompt": "A chart lists these structures: skin cell, skin tissue, skin, integumentary system. Which structure is an organ?",
+      "answer_choices": {
+        "A": "Skin cell",
+        "B": "Skin tissue",
+        "C": "Skin",
+        "D": "Integumentary system"
+      },
+      "correct_answer": "C",
+      "explanation": "Skin is an organ because it is made of multiple tissues working together. The integumentary system is an organ system.",
+      "identifier_tags": [
+        "tissues_to_organs",
+        "levels_of_organization"
+      ],
+      "remediation_tags": [
+        "tissues_to_organs",
+        "levels_of_organization"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_3_A_013",
+      "standard_id": "MS-LS1-3",
+      "objective_id": "MS-LS1-3A",
+      "difficulty": "Application",
+      "question_type": "multiple_choice",
+      "prompt": "In BODY_MODEL_01, the labels show cell \u2192 tissue \u2192 organ \u2192 organ system. If the tissue label were removed, which structure would most likely belong in that missing position?",
+      "answer_choices": {
+        "A": "A single muscle cell",
+        "B": "A group of muscle cells working together",
+        "C": "A whole muscle",
+        "D": "The muscular system"
+      },
+      "correct_answer": "B",
+      "explanation": "A tissue is made of a group of similar cells working together. A whole muscle is an organ, and the muscular system is an organ system.",
+      "identifier_tags": [
+        "model_interpretation",
+        "cells_to_tissues"
+      ],
+      "remediation_tags": [
+        "model_interpretation",
+        "cells_to_tissues"
+      ],
+      "model_id": "BODY_MODEL_01"
+    },
+    {
+      "question_id": "Q_MSLS1_3_A_014",
+      "standard_id": "MS-LS1-3",
+      "objective_id": "MS-LS1-3A",
+      "difficulty": "Application",
+      "question_type": "multiple_choice",
+      "prompt": "Which statement uses evidence from levels of organization to explain why the heart is an organ?",
+      "answer_choices": {
+        "A": "The heart is an organ because it is located inside the body.",
+        "B": "The heart is an organ because different tissues in it work together to pump blood.",
+        "C": "The heart is an organ because it is smaller than a cell.",
+        "D": "The heart is an organ because it works alone without other body parts."
+      },
+      "correct_answer": "B",
+      "explanation": "This statement uses evidence: the heart contains different tissues that work together for a function. That is what makes it an organ.",
+      "identifier_tags": [
+        "evidence_based_reasoning",
+        "tissues_to_organs"
+      ],
+      "remediation_tags": [
+        "evidence_based_reasoning",
+        "tissues_to_organs"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_3_A_015",
+      "standard_id": "MS-LS1-3",
+      "objective_id": "MS-LS1-3A",
+      "difficulty": "Reasoning",
+      "question_type": "multiple_choice",
+      "prompt": "A student argues, \u201cA tissue and an organ are the same thing because both are made of cells.\u201d Which response best explains the error?",
+      "answer_choices": {
+        "A": "The student is correct because every body part is one level of organization.",
+        "B": "The student is incorrect because tissues are made of similar cells, while organs are made of multiple tissues working together.",
+        "C": "The student is incorrect because tissues are larger than organ systems.",
+        "D": "The student is correct because organs cannot contain tissues."
+      },
+      "correct_answer": "B",
+      "explanation": "Both tissues and organs contain cells, but they are different levels. Tissues are groups of similar cells, while organs are made of multiple tissues working together.",
+      "identifier_tags": [
+        "evidence_based_reasoning",
+        "cells_to_tissues",
+        "tissues_to_organs"
+      ],
+      "remediation_tags": [
+        "evidence_based_reasoning",
+        "cells_to_tissues",
+        "tissues_to_organs"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_3_A_016",
+      "standard_id": "MS-LS1-3",
+      "objective_id": "MS-LS1-3A",
+      "difficulty": "Reasoning",
+      "question_type": "multiple_choice",
+      "prompt": "A model shows many similar muscle cells arranged together. The model then shows those groups combining with other tissues to form a whole muscle. Which conclusion is best supported?",
+      "answer_choices": {
+        "A": "Cells can combine to form tissues, and tissues can combine to form organs.",
+        "B": "Organ systems combine to form cells.",
+        "C": "A tissue is always more complex than an organ.",
+        "D": "All organs are made of only one type of cell."
+      },
+      "correct_answer": "A",
+      "explanation": "The model supports the conclusion that body organization builds from cells to tissues and from tissues to organs.",
+      "identifier_tags": [
+        "model_interpretation",
+        "evidence_based_reasoning",
+        "cells_to_tissues",
+        "tissues_to_organs"
+      ],
+      "remediation_tags": [
+        "model_interpretation",
+        "evidence_based_reasoning",
+        "cells_to_tissues",
+        "tissues_to_organs"
+      ],
+      "model_id": "BODY_MODEL_01"
+    },
+    {
+      "question_id": "Q_MSLS1_3_A_017",
+      "standard_id": "MS-LS1-3",
+      "objective_id": "MS-LS1-3A",
+      "difficulty": "Reasoning",
+      "question_type": "multiple_choice",
+      "prompt": "Which claim is best supported by the evidence that the digestive system includes the mouth, esophagus, stomach, and intestines?",
+      "answer_choices": {
+        "A": "The digestive system is a tissue because it contains similar cells.",
+        "B": "The digestive system is an organ system because multiple organs work together.",
+        "C": "The digestive system is a cell because it performs one function.",
+        "D": "The digestive system is an organ because it is made of only one tissue."
+      },
+      "correct_answer": "B",
+      "explanation": "The evidence lists several organs working together. That supports the claim that the digestive system is an organ system.",
+      "identifier_tags": [
+        "evidence_based_reasoning",
+        "organs_to_organ_systems"
+      ],
+      "remediation_tags": [
+        "evidence_based_reasoning",
+        "organs_to_organ_systems"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_3_A_018",
+      "standard_id": "MS-LS1-3",
+      "objective_id": "MS-LS1-3A",
+      "difficulty": "Reasoning",
+      "question_type": "multiple_choice",
+      "prompt": "In BODY_MODEL_02, the stomach is shown containing several tissue layers and also connected to other digestive organs. Which explanation best uses the model?",
+      "answer_choices": {
+        "A": "The stomach is a tissue because it has layers.",
+        "B": "The stomach is an organ made of tissues and is part of an organ system with other organs.",
+        "C": "The stomach is an organ system because it contains cells.",
+        "D": "The stomach is a cell because it has a specific function."
+      },
+      "correct_answer": "B",
+      "explanation": "The model gives two pieces of evidence: the stomach contains tissues, making it an organ, and it connects with other organs in an organ system.",
+      "identifier_tags": [
+        "model_interpretation",
+        "evidence_based_reasoning",
+        "tissues_to_organs",
+        "organs_to_organ_systems"
+      ],
+      "remediation_tags": [
+        "model_interpretation",
+        "evidence_based_reasoning",
+        "tissues_to_organs",
+        "organs_to_organ_systems"
+      ],
+      "model_id": "BODY_MODEL_02"
+    },
+    {
+      "question_id": "Q_MSLS1_3_A_019",
+      "standard_id": "MS-LS1-3",
+      "objective_id": "MS-LS1-3A",
+      "difficulty": "Reasoning",
+      "question_type": "multiple_choice",
+      "prompt": "A student says, \u201cThe brain and spinal cord are both organs, so together they are still just one organ.\u201d Which evidence best challenges this idea?",
+      "answer_choices": {
+        "A": "Organs that work together for a major function form an organ system.",
+        "B": "Organs are always smaller than tissues.",
+        "C": "Cells cannot be part of tissues.",
+        "D": "A body system must contain only one organ."
+      },
+      "correct_answer": "A",
+      "explanation": "When organs such as the brain and spinal cord work together for a major function, they are part of an organ system.",
+      "identifier_tags": [
+        "evidence_based_reasoning",
+        "organs_to_organ_systems"
+      ],
+      "remediation_tags": [
+        "evidence_based_reasoning",
+        "organs_to_organ_systems"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_3_A_020",
+      "standard_id": "MS-LS1-3",
+      "objective_id": "MS-LS1-3A",
+      "difficulty": "Reasoning",
+      "question_type": "multiple_choice",
+      "prompt": "Which explanation best connects all four levels of organization?",
+      "answer_choices": {
+        "A": "Cells form tissues, tissues form organs, and organs form organ systems.",
+        "B": "Organ systems form organs, organs form cells, and cells form tissues.",
+        "C": "Tissues form cells, cells form organ systems, and organ systems form organs.",
+        "D": "Organs form tissues, tissues form organ systems, and organ systems form cells."
+      },
+      "correct_answer": "A",
+      "explanation": "The correct organization pattern is cell to tissue to organ to organ system. Each level is made from parts of the level before it.",
+      "identifier_tags": [
+        "levels_of_organization",
+        "evidence_based_reasoning"
+      ],
+      "remediation_tags": [
+        "levels_of_organization",
+        "evidence_based_reasoning"
+      ],
+      "model_id": null
+    },
+    {
+      "question_id": "Q_MSLS1_3_A_021",
+      "standard_id": "MS-LS1-3",
+      "objective_id": "MS-LS1-3A",
+      "difficulty": "Reasoning",
+      "question_type": "multiple_choice",
+      "prompt": "A model shows this evidence: individual cells are grouped into tissue, several tissues are grouped into an organ, and several organs are grouped into a body system. Which claim is best supported by the model?",
+      "answer_choices": {
+        "A": "The body is organized in levels that increase in complexity.",
+        "B": "Cells and organ systems are the same level of organization.",
+        "C": "Tissues are made of organ systems.",
+        "D": "Organs do not contain cells."
+      },
+      "correct_answer": "A",
+      "explanation": "The model supports the claim that body organization increases in complexity from cells to tissues to organs to organ systems.",
+      "identifier_tags": [
+        "model_interpretation",
+        "evidence_based_reasoning",
+        "levels_of_organization"
+      ],
+      "remediation_tags": [
+        "model_interpretation",
+        "evidence_based_reasoning",
+        "levels_of_organization"
+      ],
+      "model_id": "BODY_MODEL_01"
+    }
+  ]
+}

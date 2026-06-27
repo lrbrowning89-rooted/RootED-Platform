@@ -1,0 +1,546 @@
+{
+  "standard_id": "MS-LS1-3",
+  "objective_id": "MS-LS1-3B",
+  "objective_title": "Organ Systems and Their Functions",
+  "mastery_target": "Identify major organ systems and describe their primary functions.",
+  "question_count": 21,
+  "questions": [
+    {
+      "question_id": "Q_MSLS1_3_B_001",
+      "standard_id": "MS-LS1-3",
+      "objective_id": "MS-LS1-3B",
+      "difficulty": "Recall",
+      "question_type": "multiple_choice",
+      "prompt": "Which organ system breaks food down so the body can absorb nutrients?",
+      "answer_choices": {
+        "A": "respiratory system",
+        "B": "digestive system",
+        "C": "skeletal system",
+        "D": "nervous system"
+      },
+      "correct_answer": "B",
+      "explanation": "The digestive system breaks food into smaller materials and absorbs nutrients the body can use.",
+      "identifier_tags": [
+        "digestive_system"
+      ],
+      "remediation_tags": [
+        "digestive_system"
+      ],
+      "model_id": "BODY_MODEL_03"
+    },
+    {
+      "question_id": "Q_MSLS1_3_B_002",
+      "standard_id": "MS-LS1-3",
+      "objective_id": "MS-LS1-3B",
+      "difficulty": "Recall",
+      "question_type": "multiple_choice",
+      "prompt": "Which organ system moves blood, oxygen, nutrients, and wastes through the body?",
+      "answer_choices": {
+        "A": "circulatory system",
+        "B": "muscular system",
+        "C": "digestive system",
+        "D": "skeletal system"
+      },
+      "correct_answer": "A",
+      "explanation": "The circulatory system transports materials through the body using the heart, blood, and blood vessels.",
+      "identifier_tags": [
+        "circulatory_system"
+      ],
+      "remediation_tags": [
+        "circulatory_system"
+      ],
+      "model_id": "BODY_MODEL_04"
+    },
+    {
+      "question_id": "Q_MSLS1_3_B_003",
+      "standard_id": "MS-LS1-3",
+      "objective_id": "MS-LS1-3B",
+      "difficulty": "Recall",
+      "question_type": "multiple_choice",
+      "prompt": "Which organ system brings oxygen into the body and removes carbon dioxide?",
+      "answer_choices": {
+        "A": "nervous system",
+        "B": "respiratory system",
+        "C": "skeletal system",
+        "D": "digestive system"
+      },
+      "correct_answer": "B",
+      "explanation": "The respiratory system exchanges gases, bringing oxygen into the body and removing carbon dioxide.",
+      "identifier_tags": [
+        "respiratory_system"
+      ],
+      "remediation_tags": [
+        "respiratory_system"
+      ],
+      "model_id": "BODY_MODEL_05"
+    },
+    {
+      "question_id": "Q_MSLS1_3_B_004",
+      "standard_id": "MS-LS1-3",
+      "objective_id": "MS-LS1-3B",
+      "difficulty": "Recall",
+      "question_type": "multiple_choice",
+      "prompt": "Which organ system receives information, sends signals, and helps control body responses?",
+      "answer_choices": {
+        "A": "nervous system",
+        "B": "digestive system",
+        "C": "circulatory system",
+        "D": "muscular system"
+      },
+      "correct_answer": "A",
+      "explanation": "The nervous system uses the brain, spinal cord, and nerves to receive information and send signals that coordinate responses.",
+      "identifier_tags": [
+        "nervous_system"
+      ],
+      "remediation_tags": [
+        "nervous_system"
+      ],
+      "model_id": "BODY_MODEL_06"
+    },
+    {
+      "question_id": "Q_MSLS1_3_B_005",
+      "standard_id": "MS-LS1-3",
+      "objective_id": "MS-LS1-3B",
+      "difficulty": "Recall",
+      "question_type": "multiple_choice",
+      "prompt": "Which organ system works with bones to move body parts?",
+      "answer_choices": {
+        "A": "respiratory system",
+        "B": "muscular system",
+        "C": "digestive system",
+        "D": "circulatory system"
+      },
+      "correct_answer": "B",
+      "explanation": "The muscular system is made of muscles that contract and relax to move body parts, often by pulling on bones.",
+      "identifier_tags": [
+        "muscular_system"
+      ],
+      "remediation_tags": [
+        "muscular_system"
+      ],
+      "model_id": "BODY_MODEL_07"
+    },
+    {
+      "question_id": "Q_MSLS1_3_B_006",
+      "standard_id": "MS-LS1-3",
+      "objective_id": "MS-LS1-3B",
+      "difficulty": "Recall",
+      "question_type": "multiple_choice",
+      "prompt": "Which organ system supports the body, protects organs, and helps with movement?",
+      "answer_choices": {
+        "A": "skeletal system",
+        "B": "nervous system",
+        "C": "respiratory system",
+        "D": "digestive system"
+      },
+      "correct_answer": "A",
+      "explanation": "The skeletal system provides support, protects organs such as the brain and heart, and works with muscles for movement.",
+      "identifier_tags": [
+        "skeletal_system"
+      ],
+      "remediation_tags": [
+        "skeletal_system"
+      ],
+      "model_id": "BODY_MODEL_08"
+    },
+    {
+      "question_id": "Q_MSLS1_3_B_007",
+      "standard_id": "MS-LS1-3",
+      "objective_id": "MS-LS1-3B",
+      "difficulty": "Recall",
+      "question_type": "multiple_choice",
+      "prompt": "In levels of organization, what is an organ system?",
+      "answer_choices": {
+        "A": "one cell doing one job",
+        "B": "a group of similar tissues doing the same job",
+        "C": "a group of organs working together to perform major body functions",
+        "D": "all organisms living in an environment"
+      },
+      "correct_answer": "C",
+      "explanation": "An organ system is made of multiple organs that work together to carry out major body functions.",
+      "identifier_tags": [
+        "organs_to_organ_systems"
+      ],
+      "remediation_tags": [
+        "organs_to_organ_systems"
+      ],
+      "model_id": "BODY_MODEL_03"
+    },
+    {
+      "question_id": "Q_MSLS1_3_B_008",
+      "standard_id": "MS-LS1-3",
+      "objective_id": "MS-LS1-3B",
+      "difficulty": "Application",
+      "question_type": "multiple_choice",
+      "prompt": "A model shows the stomach, small intestine, and large intestine highlighted together. Which organ system is being represented?",
+      "answer_choices": {
+        "A": "digestive system",
+        "B": "respiratory system",
+        "C": "muscular system",
+        "D": "nervous system"
+      },
+      "correct_answer": "A",
+      "explanation": "The stomach and intestines are organs that work together in the digestive system to process food and absorb nutrients.",
+      "identifier_tags": [
+        "digestive_system",
+        "organs_to_organ_systems",
+        "model_interpretation"
+      ],
+      "remediation_tags": [
+        "digestive_system",
+        "organs_to_organ_systems",
+        "model_interpretation"
+      ],
+      "model_id": "BODY_MODEL_03"
+    },
+    {
+      "question_id": "Q_MSLS1_3_B_009",
+      "standard_id": "MS-LS1-3",
+      "objective_id": "MS-LS1-3B",
+      "difficulty": "Application",
+      "question_type": "multiple_choice",
+      "prompt": "A student observes a body model with the heart and blood vessels highlighted. What primary function should the student connect to this system?",
+      "answer_choices": {
+        "A": "breaking down food",
+        "B": "transporting materials throughout the body",
+        "C": "supporting the body frame",
+        "D": "sending nerve signals"
+      },
+      "correct_answer": "B",
+      "explanation": "The heart and blood vessels belong to the circulatory system, which transports materials such as oxygen, nutrients, and wastes.",
+      "identifier_tags": [
+        "circulatory_system",
+        "model_interpretation"
+      ],
+      "remediation_tags": [
+        "circulatory_system",
+        "model_interpretation"
+      ],
+      "model_id": "BODY_MODEL_04"
+    },
+    {
+      "question_id": "Q_MSLS1_3_B_010",
+      "standard_id": "MS-LS1-3",
+      "objective_id": "MS-LS1-3B",
+      "difficulty": "Application",
+      "question_type": "multiple_choice",
+      "prompt": "A person breathes faster during exercise. Which organ system is most directly increasing gas exchange with the air?",
+      "answer_choices": {
+        "A": "respiratory system",
+        "B": "skeletal system",
+        "C": "digestive system",
+        "D": "nervous system"
+      },
+      "correct_answer": "A",
+      "explanation": "The respiratory system increases breathing to bring in more oxygen and remove more carbon dioxide during activity.",
+      "identifier_tags": [
+        "respiratory_system"
+      ],
+      "remediation_tags": [
+        "respiratory_system"
+      ],
+      "model_id": "BODY_MODEL_05"
+    },
+    {
+      "question_id": "Q_MSLS1_3_B_011",
+      "standard_id": "MS-LS1-3",
+      "objective_id": "MS-LS1-3B",
+      "difficulty": "Application",
+      "question_type": "multiple_choice",
+      "prompt": "A diagram shows the brain, spinal cord, and nerves. Which function best matches this organ system?",
+      "answer_choices": {
+        "A": "absorbing nutrients from food",
+        "B": "moving oxygen through blood vessels",
+        "C": "coordinating information and body responses",
+        "D": "protecting the lungs with ribs"
+      },
+      "correct_answer": "C",
+      "explanation": "The brain, spinal cord, and nerves are parts of the nervous system, which coordinates information and responses.",
+      "identifier_tags": [
+        "nervous_system",
+        "model_interpretation"
+      ],
+      "remediation_tags": [
+        "nervous_system",
+        "model_interpretation"
+      ],
+      "model_id": "BODY_MODEL_06"
+    },
+    {
+      "question_id": "Q_MSLS1_3_B_012",
+      "standard_id": "MS-LS1-3",
+      "objective_id": "MS-LS1-3B",
+      "difficulty": "Application",
+      "question_type": "multiple_choice",
+      "prompt": "A student bends an arm to pick up a backpack. Which two systems are most directly working together to create the movement?",
+      "answer_choices": {
+        "A": "digestive and respiratory systems",
+        "B": "muscular and skeletal systems",
+        "C": "circulatory and digestive systems",
+        "D": "nervous and respiratory systems only"
+      },
+      "correct_answer": "B",
+      "explanation": "Muscles contract and pull on bones, so the muscular and skeletal systems work together to move the arm.",
+      "identifier_tags": [
+        "muscular_system",
+        "skeletal_system",
+        "organs_to_organ_systems"
+      ],
+      "remediation_tags": [
+        "muscular_system",
+        "skeletal_system",
+        "organs_to_organ_systems"
+      ],
+      "model_id": "BODY_MODEL_07"
+    },
+    {
+      "question_id": "Q_MSLS1_3_B_013",
+      "standard_id": "MS-LS1-3",
+      "objective_id": "MS-LS1-3B",
+      "difficulty": "Application",
+      "question_type": "multiple_choice",
+      "prompt": "A model highlights the skull, ribs, and backbone. Which claim is best supported by the model?",
+      "answer_choices": {
+        "A": "The skeletal system protects some internal organs.",
+        "B": "The digestive system absorbs oxygen.",
+        "C": "The nervous system pumps blood.",
+        "D": "The respiratory system breaks down food."
+      },
+      "correct_answer": "A",
+      "explanation": "The skull protects the brain, the ribs protect organs in the chest, and the backbone helps protect the spinal cord.",
+      "identifier_tags": [
+        "skeletal_system",
+        "model_interpretation",
+        "evidence_based_reasoning"
+      ],
+      "remediation_tags": [
+        "skeletal_system",
+        "model_interpretation",
+        "evidence_based_reasoning"
+      ],
+      "model_id": "BODY_MODEL_08"
+    },
+    {
+      "question_id": "Q_MSLS1_3_B_014",
+      "standard_id": "MS-LS1-3",
+      "objective_id": "MS-LS1-3B",
+      "difficulty": "Application",
+      "question_type": "multiple_choice",
+      "prompt": "A student sorts body parts into groups. Which group correctly shows organs that belong to the same organ system?",
+      "answer_choices": {
+        "A": "heart, blood vessels, blood",
+        "B": "stomach, lungs, skull",
+        "C": "brain, small intestine, ribs",
+        "D": "muscle, heart, stomach"
+      },
+      "correct_answer": "A",
+      "explanation": "The heart, blood vessels, and blood are parts of the circulatory system and work together to transport materials.",
+      "identifier_tags": [
+        "circulatory_system",
+        "organs_to_organ_systems"
+      ],
+      "remediation_tags": [
+        "circulatory_system",
+        "organs_to_organ_systems"
+      ],
+      "model_id": "BODY_MODEL_04"
+    },
+    {
+      "question_id": "Q_MSLS1_3_B_015",
+      "standard_id": "MS-LS1-3",
+      "objective_id": "MS-LS1-3B",
+      "difficulty": "Reasoning",
+      "question_type": "multiple_choice",
+      "prompt": "A student claims, \"The small intestine is part of the digestive system because it helps absorb nutrients from broken-down food.\" Which evidence best supports the claim?",
+      "answer_choices": {
+        "A": "The small intestine connects to organs involved in processing food.",
+        "B": "The small intestine is protected by bones.",
+        "C": "The small intestine sends signals to the brain.",
+        "D": "The small intestine pumps blood to the lungs."
+      },
+      "correct_answer": "A",
+      "explanation": "Evidence that the small intestine connects to food-processing organs supports the idea that it belongs to the digestive system.",
+      "identifier_tags": [
+        "digestive_system",
+        "organs_to_organ_systems",
+        "evidence_based_reasoning"
+      ],
+      "remediation_tags": [
+        "digestive_system",
+        "organs_to_organ_systems",
+        "evidence_based_reasoning"
+      ],
+      "model_id": "BODY_MODEL_03"
+    },
+    {
+      "question_id": "Q_MSLS1_3_B_016",
+      "standard_id": "MS-LS1-3",
+      "objective_id": "MS-LS1-3B",
+      "difficulty": "Reasoning",
+      "question_type": "multiple_choice",
+      "prompt": "A body model shows lungs next to many blood vessels. Why is it useful to study the respiratory and circulatory systems together?",
+      "answer_choices": {
+        "A": "Both systems break down food before nutrients can be absorbed.",
+        "B": "Gas exchange in the lungs connects with blood transport through the body.",
+        "C": "Bones must contract to move air into the lungs.",
+        "D": "Nerves store oxygen until the body needs it."
+      },
+      "correct_answer": "B",
+      "explanation": "The respiratory system exchanges gases in the lungs, and the circulatory system transports those gases through the blood.",
+      "identifier_tags": [
+        "respiratory_system",
+        "circulatory_system",
+        "model_interpretation",
+        "evidence_based_reasoning"
+      ],
+      "remediation_tags": [
+        "respiratory_system",
+        "circulatory_system",
+        "model_interpretation",
+        "evidence_based_reasoning"
+      ],
+      "model_id": "BODY_MODEL_05"
+    },
+    {
+      "question_id": "Q_MSLS1_3_B_017",
+      "standard_id": "MS-LS1-3",
+      "objective_id": "MS-LS1-3B",
+      "difficulty": "Reasoning",
+      "question_type": "multiple_choice",
+      "prompt": "A student says the heart is an organ, not an organ system. Which explanation best supports the student’s idea?",
+      "answer_choices": {
+        "A": "The heart is made of many organs that all do different jobs.",
+        "B": "The heart is one structure that helps pump blood, while the circulatory system includes the heart, blood, and vessels.",
+        "C": "The heart belongs to the respiratory system because it is near the lungs.",
+        "D": "The heart is a tissue because it is larger than a cell."
+      },
+      "correct_answer": "B",
+      "explanation": "An organ is one body structure with a specific function. An organ system includes multiple organs or parts working together.",
+      "identifier_tags": [
+        "circulatory_system",
+        "organs_to_organ_systems",
+        "evidence_based_reasoning"
+      ],
+      "remediation_tags": [
+        "circulatory_system",
+        "organs_to_organ_systems",
+        "evidence_based_reasoning"
+      ],
+      "model_id": "BODY_MODEL_04"
+    },
+    {
+      "question_id": "Q_MSLS1_3_B_018",
+      "standard_id": "MS-LS1-3",
+      "objective_id": "MS-LS1-3B",
+      "difficulty": "Reasoning",
+      "question_type": "multiple_choice",
+      "prompt": "A person quickly pulls a hand away from something hot. Which reasoning best explains how organ systems are involved?",
+      "answer_choices": {
+        "A": "The digestive system absorbs heat and the skeletal system removes it.",
+        "B": "The nervous system detects and signals danger, while muscles move the hand.",
+        "C": "The respiratory system pumps blood to the fingers.",
+        "D": "The skeletal system breaks down food for energy."
+      },
+      "correct_answer": "B",
+      "explanation": "The nervous system helps detect the stimulus and send signals, and the muscular system produces movement to pull the hand away.",
+      "identifier_tags": [
+        "nervous_system",
+        "muscular_system",
+        "evidence_based_reasoning"
+      ],
+      "remediation_tags": [
+        "nervous_system",
+        "muscular_system",
+        "evidence_based_reasoning"
+      ],
+      "model_id": "BODY_MODEL_06"
+    },
+    {
+      "question_id": "Q_MSLS1_3_B_019",
+      "standard_id": "MS-LS1-3",
+      "objective_id": "MS-LS1-3B",
+      "difficulty": "Reasoning",
+      "question_type": "multiple_choice",
+      "prompt": "A model shows ribs surrounding the lungs. Which conclusion is best supported by the model?",
+      "answer_choices": {
+        "A": "The skeletal system can protect organs in another organ system.",
+        "B": "The respiratory system controls all bones in the body.",
+        "C": "The circulatory system breaks ribs into nutrients.",
+        "D": "The muscular system is made only of lungs."
+      },
+      "correct_answer": "A",
+      "explanation": "The ribs are part of the skeletal system, and their position around the lungs shows that bones can protect organs from another system.",
+      "identifier_tags": [
+        "skeletal_system",
+        "respiratory_system",
+        "model_interpretation",
+        "evidence_based_reasoning"
+      ],
+      "remediation_tags": [
+        "skeletal_system",
+        "respiratory_system",
+        "model_interpretation",
+        "evidence_based_reasoning"
+      ],
+      "model_id": "BODY_MODEL_08"
+    },
+    {
+      "question_id": "Q_MSLS1_3_B_020",
+      "standard_id": "MS-LS1-3",
+      "objective_id": "MS-LS1-3B",
+      "difficulty": "Reasoning",
+      "question_type": "multiple_choice",
+      "prompt": "A student is comparing the muscular and skeletal systems. Which statement best explains their relationship?",
+      "answer_choices": {
+        "A": "The skeletal system sends signals, and the muscular system absorbs nutrients.",
+        "B": "The muscular system pulls on bones, and the skeletal system provides structure for movement.",
+        "C": "The muscular system pumps air, and the skeletal system removes carbon dioxide.",
+        "D": "The skeletal system digests food, and the muscular system stores oxygen."
+      },
+      "correct_answer": "B",
+      "explanation": "Muscles create force by contracting, and bones provide structure and attachment points that allow body parts to move.",
+      "identifier_tags": [
+        "muscular_system",
+        "skeletal_system",
+        "organs_to_organ_systems",
+        "evidence_based_reasoning"
+      ],
+      "remediation_tags": [
+        "muscular_system",
+        "skeletal_system",
+        "organs_to_organ_systems",
+        "evidence_based_reasoning"
+      ],
+      "model_id": "BODY_MODEL_07"
+    },
+    {
+      "question_id": "Q_MSLS1_3_B_021",
+      "standard_id": "MS-LS1-3",
+      "objective_id": "MS-LS1-3B",
+      "difficulty": "Reasoning",
+      "question_type": "multiple_choice",
+      "prompt": "A student uses a body model to argue that organs are grouped into systems based on shared functions. Which example best supports this argument?",
+      "answer_choices": {
+        "A": "The stomach and intestines are grouped because they both help process food.",
+        "B": "The lungs and skull are grouped because they are both in the upper body.",
+        "C": "The heart and stomach are grouped because they are both soft organs.",
+        "D": "The ribs and nerves are grouped because they are both long structures."
+      },
+      "correct_answer": "A",
+      "explanation": "Organs are grouped into systems because they work together on related functions. The stomach and intestines both help process food as part of digestion.",
+      "identifier_tags": [
+        "digestive_system",
+        "organs_to_organ_systems",
+        "model_interpretation",
+        "evidence_based_reasoning"
+      ],
+      "remediation_tags": [
+        "digestive_system",
+        "organs_to_organ_systems",
+        "model_interpretation",
+        "evidence_based_reasoning"
+      ],
+      "model_id": "BODY_MODEL_03"
+    }
+  ]
+}

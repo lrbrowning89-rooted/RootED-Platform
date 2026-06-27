@@ -3039,7 +3039,7 @@ LIMIT 1
 
                     if (
                         isinstance(engine_decision, dict)
-                        and engine_decision.get("action") == "next_standard_found"
+                        and engine_decision.get("action") in ("next_standard_found", "standard_complete")
                     ):
                         next_objective = get_next_objective_for_standard(
                             std_id,
