@@ -2959,11 +2959,16 @@ LIMIT 1
         session["locked_payload"] = None
         return redirect(url_for("student_view"))
 
-    # ---------- Handle Continue Learning from student home ----------
     if request.method == "POST" and request.form.get("action") == "continue_learning":
-        session["current_mode"] = "question"
-        session["locked_payload"] = None
-        return redirect(url_for("student_view"))
+       session["current_mode"] = "question"
+       session["locked_payload"] = None
+       return redirect(url_for("student_view"))
+    
+    if request.method == "POST" and request.form.get("action") == "return_dashboard":
+       session["current_mode"] = "home"
+       session["locked_payload"] = None
+       session.pop("terminal_completion_payload", None)
+       return redirect(url_for("student_view"))
 
     # ---------- Handle answer submission ----------
     if request.method == "POST" and request.form.get("action") == "answer":
@@ -3083,12 +3088,17 @@ LIMIT 1
                 if isinstance(engine_decision, dict) and engine_decision.get("status") == "locked":
                     session["current_mode"] = "locked"
                     session["locked_payload"] = engine_decision
-                elif isinstance(engine_decision, dict) and engine_decision.get("status") == "completed":
+                elif (
+                    isinstance(engine_decision, dict)
+                    and engine_decision.get("status") in ("completed", "complete")
+                ):
                     session["current_mode"] = "completed"
+                    session["terminal_completion_payload"] = engine_decision
                     session["locked_payload"] = None
                 else:
                     session["current_mode"] = "question"
                     session["locked_payload"] = None
+                    session.pop("terminal_completion_payload", None)
 
             feedback = {
                 "correct": bool(correct),
@@ -3102,7 +3112,37 @@ LIMIT 1
             feedback = {"error": "No question found for this objective."}
 
     if session.get("current_mode") == "completed":
-        return redirect(url_for("student_view"))
+        terminal_payload = session.get("terminal_completion_payload") or {}
+        completed_standard = terminal_payload.get("standard", current_std)
+        completed_reason = terminal_payload.get("reason", "standard_complete")
+
+        html_done = """
+<!doctype html>
+<title>Standard Complete</title>
+<style>
+  body{font-family:Arial, Helvetica, sans-serif;margin:24px;background:#f3f4f6}
+  .card{max-width:720px;margin:0 auto;background:#fff;border-radius:10px;padding:20px 24px;border:1px solid #e5e7eb}
+  .btn{background:#2563eb;color:#fff;border:none;padding:10px 14px;border-radius:8px;cursor:pointer;text-decoration:none;display:inline-block}
+  .muted{font-size:13px;color:#555}
+</style>
+<div class="card">
+  <h2>🎉 Standard Complete!</h2>
+  <p>Congratulations! You have completed all objectives for this standard.</p>
+  <p>There are no additional learning pathways assigned at this time.</p>
+  <p class="muted">Completed standard: <strong>{{ completed_standard }}</strong></p>
+  <p class="muted">Reason: {{ completed_reason }}</p>
+
+  <form method="post" style="margin-top:16px;">
+    <input type="hidden" name="action" value="return_dashboard">
+    <button class="btn" type="submit">Return to Student Dashboard</button>
+  </form>
+</div>
+        """
+        return render_template_string(
+            html_done,
+            completed_standard=completed_standard,
+            completed_reason=completed_reason,
+        )
 
     available_standards = get_available_standards(conn)
     progress_by_standard = get_progress_by_standard(conn, student_id)
