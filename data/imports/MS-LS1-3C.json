@@ -1,0 +1,401 @@
+[
+  {
+    "question_id": "MS-LS1-3C-001",
+    "standard_id": "MS-LS1-3",
+    "objective_id": "MS-LS1-3C",
+    "difficulty": "Recall",
+    "question_type": "multiple_choice",
+    "prompt": "Which statement best describes a body-system interaction?",
+    "answer_choices": [
+      "One body system working alone to complete all life functions",
+      "Two or more body systems working together to support the body",
+      "A single organ changing into a different organ system",
+      "A body system replacing another body system when it is not needed"
+    ],
+    "correct_answer": "Two or more body systems working together to support the body",
+    "explanation": "A body-system interaction occurs when two or more systems work together. For example, the respiratory system brings oxygen into the body, and the circulatory system transports that oxygen to body cells.",
+    "identifier_tags": ["system_interactions"],
+    "remediation_tags": ["system_interactions"],
+    "model_id": null
+  },
+  {
+    "question_id": "MS-LS1-3C-002",
+    "standard_id": "MS-LS1-3",
+    "objective_id": "MS-LS1-3C",
+    "difficulty": "Recall",
+    "question_type": "multiple_choice",
+    "prompt": "Which two systems work together to move oxygen from the lungs to body cells?",
+    "answer_choices": [
+      "Respiratory and circulatory systems",
+      "Digestive and skeletal systems",
+      "Nervous and digestive systems",
+      "Muscular and respiratory systems only"
+    ],
+    "correct_answer": "Respiratory and circulatory systems",
+    "explanation": "The respiratory system moves oxygen into the lungs, and the circulatory system carries oxygen-rich blood to body cells.",
+    "identifier_tags": ["respiratory_system", "circulatory_system", "system_interactions"],
+    "remediation_tags": ["respiratory_system", "circulatory_system", "system_interactions"],
+    "model_id": null
+  },
+  {
+    "question_id": "MS-LS1-3C-003",
+    "standard_id": "MS-LS1-3",
+    "objective_id": "MS-LS1-3C",
+    "difficulty": "Recall",
+    "question_type": "multiple_choice",
+    "prompt": "Which two systems work together to move the body when a person walks?",
+    "answer_choices": [
+      "Digestive and respiratory systems",
+      "Skeletal and muscular systems",
+      "Circulatory and digestive systems",
+      "Respiratory and nervous systems only"
+    ],
+    "correct_answer": "Skeletal and muscular systems",
+    "explanation": "Muscles contract and pull on bones. The skeletal system provides support and structure, while the muscular system produces movement.",
+    "identifier_tags": ["skeletal_system", "muscular_system", "system_interactions"],
+    "remediation_tags": ["skeletal_system", "muscular_system", "system_interactions"],
+    "model_id": null
+  },
+  {
+    "question_id": "MS-LS1-3C-004",
+    "standard_id": "MS-LS1-3",
+    "objective_id": "MS-LS1-3C",
+    "difficulty": "Recall",
+    "question_type": "multiple_choice",
+    "prompt": "Which body system sends signals that help control muscle movement?",
+    "answer_choices": [
+      "Nervous system",
+      "Digestive system",
+      "Skeletal system",
+      "Respiratory system"
+    ],
+    "correct_answer": "Nervous system",
+    "explanation": "The nervous system sends signals between the brain, spinal cord, and body. These signals help muscles know when to contract and relax.",
+    "identifier_tags": ["nervous_system", "muscular_system", "system_interactions"],
+    "remediation_tags": ["nervous_system", "muscular_system", "system_interactions"],
+    "model_id": null
+  },
+  {
+    "question_id": "MS-LS1-3C-005",
+    "standard_id": "MS-LS1-3",
+    "objective_id": "MS-LS1-3C",
+    "difficulty": "Recall",
+    "question_type": "multiple_choice",
+    "prompt": "Which two systems work together to deliver nutrients from digested food to body cells?",
+    "answer_choices": [
+      "Digestive and circulatory systems",
+      "Respiratory and skeletal systems",
+      "Nervous and skeletal systems",
+      "Muscular and respiratory systems"
+    ],
+    "correct_answer": "Digestive and circulatory systems",
+    "explanation": "The digestive system breaks food into nutrients. The circulatory system transports those nutrients through the blood to body cells.",
+    "identifier_tags": ["digestive_system", "circulatory_system", "system_interactions"],
+    "remediation_tags": ["digestive_system", "circulatory_system", "system_interactions"],
+    "model_id": null
+  },
+  {
+    "question_id": "MS-LS1-3C-006",
+    "standard_id": "MS-LS1-3",
+    "objective_id": "MS-LS1-3C",
+    "difficulty": "Recall",
+    "question_type": "multiple_choice",
+    "prompt": "A model shows air entering the lungs and oxygen moving into blood vessels. Which system interaction is shown?",
+    "answer_choices": [
+      "Respiratory system interacting with the circulatory system",
+      "Digestive system interacting with the skeletal system",
+      "Muscular system interacting with the digestive system",
+      "Nervous system interacting with the skeletal system"
+    ],
+    "correct_answer": "Respiratory system interacting with the circulatory system",
+    "explanation": "The model shows oxygen entering through the respiratory system and moving into the blood, which is part of the circulatory system.",
+    "identifier_tags": ["respiratory_system", "circulatory_system", "system_interactions", "model_interpretation"],
+    "remediation_tags": ["respiratory_system", "circulatory_system", "system_interactions", "model_interpretation"],
+    "model_id": "BODY_MODEL_09"
+  },
+  {
+    "question_id": "MS-LS1-3C-007",
+    "standard_id": "MS-LS1-3",
+    "objective_id": "MS-LS1-3C",
+    "difficulty": "Recall",
+    "question_type": "multiple_choice",
+    "prompt": "Why do body systems need to interact instead of working completely separately?",
+    "answer_choices": [
+      "Most body functions require materials, signals, support, or movement from more than one system.",
+      "Each body system has the exact same organs and function.",
+      "Body systems only interact when the body stops functioning.",
+      "One body system can permanently do the job of every other body system."
+    ],
+    "correct_answer": "Most body functions require materials, signals, support, or movement from more than one system.",
+    "explanation": "Body functions usually require several systems to work together. For example, movement requires muscles, bones, nerve signals, oxygen, and nutrients.",
+    "identifier_tags": ["system_interactions"],
+    "remediation_tags": ["system_interactions"],
+    "model_id": null
+  },
+  {
+    "question_id": "MS-LS1-3C-008",
+    "standard_id": "MS-LS1-3",
+    "objective_id": "MS-LS1-3C",
+    "difficulty": "Application",
+    "question_type": "multiple_choice",
+    "prompt": "A student runs across a field. Which explanation best describes how body systems work together during running?",
+    "answer_choices": [
+      "The muscular and skeletal systems move the body, while the respiratory and circulatory systems help supply oxygen to cells.",
+      "The digestive system moves the bones, while the nervous system carries oxygen to the lungs.",
+      "The skeletal system digests food, while the respiratory system sends signals to muscles.",
+      "The circulatory system replaces the muscular system during movement."
+    ],
+    "correct_answer": "The muscular and skeletal systems move the body, while the respiratory and circulatory systems help supply oxygen to cells.",
+    "explanation": "Running requires muscles pulling on bones. At the same time, the respiratory system brings in oxygen and the circulatory system transports oxygen to active muscle cells.",
+    "identifier_tags": ["muscular_system", "skeletal_system", "respiratory_system", "circulatory_system", "system_interactions"],
+    "remediation_tags": ["muscular_system", "skeletal_system", "respiratory_system", "circulatory_system", "system_interactions"],
+    "model_id": null
+  },
+  {
+    "question_id": "MS-LS1-3C-009",
+    "standard_id": "MS-LS1-3",
+    "objective_id": "MS-LS1-3C",
+    "difficulty": "Application",
+    "question_type": "multiple_choice",
+    "prompt": "After a person eats lunch, nutrients from the food eventually reach cells throughout the body. Which explanation best describes this interaction?",
+    "answer_choices": [
+      "The digestive system breaks food into nutrients, and the circulatory system transports the nutrients in the blood.",
+      "The respiratory system breaks food into nutrients, and the skeletal system transports the nutrients.",
+      "The nervous system digests the food, and the muscular system carries nutrients in the blood.",
+      "The skeletal system changes food directly into oxygen for cells."
+    ],
+    "correct_answer": "The digestive system breaks food into nutrients, and the circulatory system transports the nutrients in the blood.",
+    "explanation": "The digestive system breaks down food into smaller nutrient molecules. These nutrients enter the blood and are transported by the circulatory system to cells.",
+    "identifier_tags": ["digestive_system", "circulatory_system", "system_interactions"],
+    "remediation_tags": ["digestive_system", "circulatory_system", "system_interactions"],
+    "model_id": null
+  },
+  {
+    "question_id": "MS-LS1-3C-010",
+    "standard_id": "MS-LS1-3",
+    "objective_id": "MS-LS1-3C",
+    "difficulty": "Application",
+    "question_type": "multiple_choice",
+    "prompt": "A model shows arrows from the brain to the leg muscles and arrows from the muscles to bones in the leg. What body-system interaction does the model best represent?",
+    "answer_choices": [
+      "The nervous system sends signals to muscles, and muscles pull on bones to produce movement.",
+      "The digestive system sends nutrients directly to bones to produce movement.",
+      "The respiratory system pulls on bones, and the skeletal system sends signals to muscles.",
+      "The circulatory system replaces the nervous system during movement."
+    ],
+    "correct_answer": "The nervous system sends signals to muscles, and muscles pull on bones to produce movement.",
+    "explanation": "The arrows from the brain to muscles represent nervous system signals. The arrows from muscles to bones show that muscles interact with the skeletal system to move the body.",
+    "identifier_tags": ["nervous_system", "muscular_system", "skeletal_system", "system_interactions", "model_interpretation"],
+    "remediation_tags": ["nervous_system", "muscular_system", "skeletal_system", "system_interactions", "model_interpretation"],
+    "model_id": "BODY_MODEL_10"
+  },
+  {
+    "question_id": "MS-LS1-3C-011",
+    "standard_id": "MS-LS1-3",
+    "objective_id": "MS-LS1-3C",
+    "difficulty": "Application",
+    "question_type": "multiple_choice",
+    "prompt": "A student says, 'The respiratory system helps the body by bringing oxygen into the lungs, but another system is needed to move that oxygen to cells.' Which system is the student describing?",
+    "answer_choices": [
+      "Circulatory system",
+      "Skeletal system",
+      "Digestive system",
+      "Muscular system"
+    ],
+    "correct_answer": "Circulatory system",
+    "explanation": "The circulatory system moves blood through the body. Blood carries oxygen from the lungs to cells throughout the organism.",
+    "identifier_tags": ["respiratory_system", "circulatory_system", "system_interactions", "evidence_based_reasoning"],
+    "remediation_tags": ["respiratory_system", "circulatory_system", "system_interactions", "evidence_based_reasoning"],
+    "model_id": null
+  },
+  {
+    "question_id": "MS-LS1-3C-012",
+    "standard_id": "MS-LS1-3",
+    "objective_id": "MS-LS1-3C",
+    "difficulty": "Application",
+    "question_type": "multiple_choice",
+    "prompt": "A person lifts a backpack. Which set of systems is most directly involved in sensing the backpack, deciding to lift it, and moving the arm?",
+    "answer_choices": [
+      "Nervous, muscular, and skeletal systems",
+      "Digestive, respiratory, and skeletal systems",
+      "Circulatory, digestive, and respiratory systems",
+      "Respiratory, digestive, and nervous systems only"
+    ],
+    "correct_answer": "Nervous, muscular, and skeletal systems",
+    "explanation": "The nervous system processes information and sends signals. Muscles contract, and bones provide the structure muscles pull on to lift the backpack.",
+    "identifier_tags": ["nervous_system", "muscular_system", "skeletal_system", "system_interactions"],
+    "remediation_tags": ["nervous_system", "muscular_system", "skeletal_system", "system_interactions"],
+    "model_id": null
+  },
+  {
+    "question_id": "MS-LS1-3C-013",
+    "standard_id": "MS-LS1-3",
+    "objective_id": "MS-LS1-3C",
+    "difficulty": "Application",
+    "question_type": "multiple_choice",
+    "prompt": "A model shows food moving through the digestive system, nutrients entering the blood, and blood moving to leg muscles. What does this model show?",
+    "answer_choices": [
+      "The digestive and circulatory systems help supply materials used by muscle cells.",
+      "The skeletal system breaks food into nutrients for muscle cells.",
+      "The respiratory system moves solid food directly to the muscles.",
+      "The nervous system changes nutrients into bones."
+    ],
+    "correct_answer": "The digestive and circulatory systems help supply materials used by muscle cells.",
+    "explanation": "The model shows nutrients coming from digestion and entering the blood. The circulatory system then transports those nutrients to muscles and other body cells.",
+    "identifier_tags": ["digestive_system", "circulatory_system", "muscular_system", "system_interactions", "model_interpretation"],
+    "remediation_tags": ["digestive_system", "circulatory_system", "muscular_system", "system_interactions", "model_interpretation"],
+    "model_id": "BODY_MODEL_09"
+  },
+  {
+    "question_id": "MS-LS1-3C-014",
+    "standard_id": "MS-LS1-3",
+    "objective_id": "MS-LS1-3C",
+    "difficulty": "Application",
+    "question_type": "multiple_choice",
+    "prompt": "Which example best shows multiple body systems interacting rather than one system working alone?",
+    "answer_choices": [
+      "Oxygen enters the lungs, moves into the blood, and is delivered to muscle cells.",
+      "The stomach is part of the digestive system.",
+      "Bones are organs in the skeletal system.",
+      "The brain is part of the nervous system."
+    ],
+    "correct_answer": "Oxygen enters the lungs, moves into the blood, and is delivered to muscle cells.",
+    "explanation": "This example includes the respiratory system, circulatory system, and muscular system working together. The other choices describe isolated structures or single systems.",
+    "identifier_tags": ["respiratory_system", "circulatory_system", "muscular_system", "system_interactions"],
+    "remediation_tags": ["respiratory_system", "circulatory_system", "muscular_system", "system_interactions"],
+    "model_id": null
+  },
+  {
+    "question_id": "MS-LS1-3C-015",
+    "standard_id": "MS-LS1-3",
+    "objective_id": "MS-LS1-3C",
+    "difficulty": "Reasoning",
+    "question_type": "multiple_choice",
+    "prompt": "A student claims, 'The muscular system can make the body move without help from other systems.' Which evidence best challenges this claim?",
+    "answer_choices": [
+      "Muscles need signals from the nervous system and pull on bones of the skeletal system to produce movement.",
+      "Muscles are found only in the digestive system.",
+      "Bones move by themselves without muscles.",
+      "The respiratory system is the only system involved in movement."
+    ],
+    "correct_answer": "Muscles need signals from the nervous system and pull on bones of the skeletal system to produce movement.",
+    "explanation": "Movement requires system interaction. The nervous system sends signals to muscles, and muscles pull on bones to move body parts.",
+    "identifier_tags": ["muscular_system", "nervous_system", "skeletal_system", "system_interactions", "evidence_based_reasoning"],
+    "remediation_tags": ["muscular_system", "nervous_system", "skeletal_system", "system_interactions", "evidence_based_reasoning"],
+    "model_id": null
+  },
+  {
+    "question_id": "MS-LS1-3C-016",
+    "standard_id": "MS-LS1-3",
+    "objective_id": "MS-LS1-3C",
+    "difficulty": "Reasoning",
+    "question_type": "multiple_choice",
+    "prompt": "A model shows oxygen entering the lungs, moving into the blood, and then being delivered to body cells. Which conclusion is best supported by the model?",
+    "answer_choices": [
+      "The respiratory and circulatory systems interact to help cells receive oxygen.",
+      "The digestive system is the only system needed to move oxygen.",
+      "The skeletal system transports oxygen through bones to every cell.",
+      "The nervous system changes oxygen into blood before it reaches cells."
+    ],
+    "correct_answer": "The respiratory and circulatory systems interact to help cells receive oxygen.",
+    "explanation": "The model supports the conclusion that oxygen enters through the respiratory system and is transported by the circulatory system to cells.",
+    "identifier_tags": ["respiratory_system", "circulatory_system", "system_interactions", "model_interpretation", "evidence_based_reasoning"],
+    "remediation_tags": ["respiratory_system", "circulatory_system", "system_interactions", "model_interpretation", "evidence_based_reasoning"],
+    "model_id": "BODY_MODEL_09"
+  },
+  {
+    "question_id": "MS-LS1-3C-017",
+    "standard_id": "MS-LS1-3",
+    "objective_id": "MS-LS1-3C",
+    "difficulty": "Reasoning",
+    "question_type": "multiple_choice",
+    "prompt": "During exercise, muscle cells use more oxygen and nutrients. Which explanation best connects the body systems involved?",
+    "answer_choices": [
+      "The respiratory system brings in oxygen, the digestive system provides nutrients, and the circulatory system transports these materials to muscle cells.",
+      "The skeletal system digests nutrients and sends oxygen directly to the lungs.",
+      "The nervous system replaces the circulatory system when muscles are active.",
+      "The muscular system creates oxygen and nutrients without help from other systems."
+    ],
+    "correct_answer": "The respiratory system brings in oxygen, the digestive system provides nutrients, and the circulatory system transports these materials to muscle cells.",
+    "explanation": "Active muscle cells need materials from multiple systems. Oxygen comes from the respiratory system, nutrients come from the digestive system, and the circulatory system transports both to cells.",
+    "identifier_tags": ["respiratory_system", "digestive_system", "circulatory_system", "muscular_system", "system_interactions", "evidence_based_reasoning"],
+    "remediation_tags": ["respiratory_system", "digestive_system", "circulatory_system", "muscular_system", "system_interactions", "evidence_based_reasoning"],
+    "model_id": null
+  },
+  {
+    "question_id": "MS-LS1-3C-018",
+    "standard_id": "MS-LS1-3",
+    "objective_id": "MS-LS1-3C",
+    "difficulty": "Reasoning",
+    "question_type": "multiple_choice",
+    "prompt": "A student studies a model of a person kicking a ball. The model labels the brain, nerves, leg muscles, and leg bones. Which explanation best uses the model as evidence?",
+    "answer_choices": [
+      "The nervous system sends signals to the muscles, and the muscles interact with bones to move the leg.",
+      "The digestive system controls the bones and pushes the ball directly.",
+      "The skeletal system sends electrical signals to the brain to digest food.",
+      "The respiratory system pulls on bones to move the leg."
+    ],
+    "correct_answer": "The nervous system sends signals to the muscles, and the muscles interact with bones to move the leg.",
+    "explanation": "The labeled brain and nerves provide evidence for nervous system control. The labeled muscles and bones provide evidence that the muscular and skeletal systems interact to produce movement.",
+    "identifier_tags": ["nervous_system", "muscular_system", "skeletal_system", "system_interactions", "model_interpretation", "evidence_based_reasoning"],
+    "remediation_tags": ["nervous_system", "muscular_system", "skeletal_system", "system_interactions", "model_interpretation", "evidence_based_reasoning"],
+    "model_id": "BODY_MODEL_10"
+  },
+  {
+    "question_id": "MS-LS1-3C-019",
+    "standard_id": "MS-LS1-3",
+    "objective_id": "MS-LS1-3C",
+    "difficulty": "Reasoning",
+    "question_type": "multiple_choice",
+    "prompt": "Which claim is best supported by evidence that blood carries both oxygen from the lungs and nutrients from digested food?",
+    "answer_choices": [
+      "The circulatory system interacts with both the respiratory and digestive systems to supply materials to cells.",
+      "The circulatory system works only with the skeletal system.",
+      "The digestive system and respiratory system have the same organs.",
+      "The muscular system transports blood through the lungs and intestines."
+    ],
+    "correct_answer": "The circulatory system interacts with both the respiratory and digestive systems to supply materials to cells.",
+    "explanation": "Blood carrying oxygen from the lungs shows interaction with the respiratory system. Blood carrying nutrients from digested food shows interaction with the digestive system.",
+    "identifier_tags": ["circulatory_system", "respiratory_system", "digestive_system", "system_interactions", "evidence_based_reasoning"],
+    "remediation_tags": ["circulatory_system", "respiratory_system", "digestive_system", "system_interactions", "evidence_based_reasoning"],
+    "model_id": null
+  },
+  {
+    "question_id": "MS-LS1-3C-020",
+    "standard_id": "MS-LS1-3",
+    "objective_id": "MS-LS1-3C",
+    "difficulty": "Reasoning",
+    "question_type": "multiple_choice",
+    "prompt": "A model shows three arrows: oxygen from lungs to blood, nutrients from intestines to blood, and blood to muscles. Which explanation best describes the system interactions shown?",
+    "answer_choices": [
+      "The respiratory and digestive systems provide materials that the circulatory system transports to the muscular system.",
+      "The muscular system provides oxygen and nutrients directly to the lungs and intestines.",
+      "The skeletal system breaks down oxygen and nutrients before they enter blood.",
+      "The nervous system is the only system shown because all arrows represent nerve signals."
+    ],
+    "correct_answer": "The respiratory and digestive systems provide materials that the circulatory system transports to the muscular system.",
+    "explanation": "The arrows show oxygen coming from the respiratory system and nutrients coming from the digestive system. Blood then transports those materials through the circulatory system to muscles.",
+    "identifier_tags": ["respiratory_system", "digestive_system", "circulatory_system", "muscular_system", "system_interactions", "model_interpretation"],
+    "remediation_tags": ["respiratory_system", "digestive_system", "circulatory_system", "muscular_system", "system_interactions", "model_interpretation"],
+    "model_id": "BODY_MODEL_09"
+  },
+  {
+    "question_id": "MS-LS1-3C-021",
+    "standard_id": "MS-LS1-3",
+    "objective_id": "MS-LS1-3C",
+    "difficulty": "Reasoning",
+    "question_type": "multiple_choice",
+    "prompt": "A student writes, 'Body systems are organized separately, so they do not need to interact.' Which response best corrects the student's thinking?",
+    "answer_choices": [
+      "Body systems have different roles, but many organism functions require systems to exchange materials, send signals, or work together physically.",
+      "Body systems are all the same, so interaction is not possible.",
+      "Only the skeletal system is needed for all organism functions.",
+      "Body systems interact only when cells stop needing oxygen and nutrients."
+    ],
+    "correct_answer": "Body systems have different roles, but many organism functions require systems to exchange materials, send signals, or work together physically.",
+    "explanation": "Body systems are distinct, but they interact to support organism function. Examples include oxygen transport, nutrient delivery, movement, and nervous system control of muscles.",
+    "identifier_tags": ["system_interactions", "evidence_based_reasoning"],
+    "remediation_tags": ["system_interactions", "evidence_based_reasoning"],
+    "model_id": null
+  }
+]
