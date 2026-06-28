@@ -470,6 +470,173 @@ def get_conn() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     return conn
 
+
+def table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM sqlite_master
+        WHERE type = 'table'
+          AND name = ?
+        LIMIT 1
+        """,
+        (table_name,),
+    ).fetchone()
+    return row is not None
+
+
+def table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
+    if not table_exists(conn, table_name):
+        return set()
+    try:
+        return {row["name"] for row in conn.execute(f"PRAGMA table_info({table_name})")}
+    except sqlite3.OperationalError:
+        return set()
+
+
+def get_question_model_id(conn: sqlite3.Connection, question_id: str | None) -> str | None:
+    """
+    Return the model_id attached to a question, when production metadata exists.
+    Missing metadata is non-blocking so question delivery can continue unchanged.
+    """
+    if (
+        not question_id
+        or not table_exists(conn, "question_metadata")
+        or "model_id" not in table_columns(conn, "question_metadata")
+    ):
+        return None
+
+    row = conn.execute(
+        """
+        SELECT model_id
+        FROM question_metadata
+        WHERE question_id = ?
+        LIMIT 1
+        """,
+        (question_id,),
+    ).fetchone()
+    if not row:
+        return None
+
+    model_id = (row["model_id"] or "").strip()
+    return model_id or None
+
+
+def get_model_asset(conn: sqlite3.Connection, model_id: str | None) -> dict | None:
+    """
+    Look up a future model_assets row without assuming the table is already present.
+    Expected columns are intentionally flexible for Phase 2 planning:
+    model_id plus optional asset_type/type, path/url/src, alt_text/alt, title,
+    mime_type, and data_json/spec_json/content_json.
+    """
+    if not model_id or not table_exists(conn, "model_assets"):
+        return None
+
+    columns = table_columns(conn, "model_assets")
+    if "model_id" not in columns:
+        return None
+
+    candidate_columns = [
+        "model_id",
+        "asset_type",
+        "type",
+        "path",
+        "url",
+        "src",
+        "alt_text",
+        "alt",
+        "title",
+        "mime_type",
+        "data_json",
+        "spec_json",
+        "content_json",
+    ]
+    selected_columns = [column for column in candidate_columns if column in columns]
+    if selected_columns == ["model_id"]:
+        return {"model_id": model_id}
+
+    sql = f"""
+        SELECT {", ".join(selected_columns)}
+        FROM model_assets
+        WHERE model_id = ?
+        LIMIT 1
+    """
+    row = conn.execute(sql, (model_id,)).fetchone()
+    if not row:
+        return None
+
+    asset = {column: row[column] for column in selected_columns}
+    asset["asset_type"] = asset.get("asset_type") or asset.get("type")
+    asset["src"] = asset.get("url") or asset.get("path") or asset.get("src")
+    asset["alt_text"] = asset.get("alt_text") or asset.get("alt") or ""
+    return asset
+
+
+def resolve_model_asset_for_question(conn: sqlite3.Connection, question_id: str | None) -> dict:
+    """
+    Resolve model metadata for a question. Rendering stays opt-in at the route/template
+    layer so missing metadata or assets never interrupt question delivery.
+    """
+    model_id = get_question_model_id(conn, question_id)
+    if not model_id:
+        return {"model_id": None, "asset": None, "missing_reason": "no_model_id"}
+
+    asset = get_model_asset(conn, model_id)
+    if not asset:
+        return {
+            "model_id": model_id,
+            "asset": None,
+            "missing_reason": "asset_not_found",
+        }
+
+    return {"model_id": model_id, "asset": asset, "missing_reason": None}
+
+
+def static_image_asset_for_render(resolved_asset: dict | None) -> dict | None:
+    """
+    Convert a resolved model asset into a static PNG/SVG payload for the student UI.
+    Non-image, missing, or nonexistent files return None so the question renders normally.
+    """
+    asset = (resolved_asset or {}).get("asset")
+    if not asset:
+        return None
+
+    src = (asset.get("src") or "").strip().replace("\\", "/")
+    if not src or src.startswith(("http://", "https://", "//")):
+        return None
+
+    if src.startswith("/static/"):
+        static_filename = src[len("/static/") :]
+    elif src.startswith("static/"):
+        static_filename = src[len("static/") :]
+    elif src.startswith("app_core/static/"):
+        static_filename = src[len("app_core/static/") :]
+    else:
+        static_filename = src.lstrip("/")
+
+    static_filename = os.path.normpath(static_filename).replace("\\", "/")
+    if static_filename.startswith("../") or static_filename == "..":
+        return None
+
+    extension = os.path.splitext(static_filename)[1].lower()
+    if extension not in {".png", ".svg"}:
+        return None
+
+    static_root = os.path.abspath(app.static_folder)
+    asset_path = os.path.abspath(os.path.join(static_root, static_filename))
+    static_root_check = os.path.normcase(static_root + os.sep)
+    asset_path_check = os.path.normcase(asset_path)
+    if not asset_path_check.startswith(static_root_check) or not os.path.isfile(asset_path):
+        return None
+
+    alt_text = (asset.get("alt_text") or "").strip()
+    return {
+        "filename": static_filename,
+        "title": (asset.get("title") or "").strip(),
+        "alt_text": alt_text,
+    }
+
+
 def locked_student_id_for_session(conn):
     """
     Returns the student_id this session is allowed to act as.
@@ -3396,6 +3563,7 @@ LIMIT 1
 
     locked_review = session.get("locked_payload") if session.get("current_mode") == "locked" else None
     current_question = None
+    current_model_asset = None
 
     if not locked_review and objective_id:
         qrows = get_questions_for_objective(conn, objective_id)
@@ -3440,6 +3608,11 @@ LIMIT 1
                 attempt_count = attempt_row["n"] if attempt_row else 0
                 question_index = attempt_count % len(level_qrows)
                 current_question = level_qrows[question_index]
+                resolved_asset = resolve_model_asset_for_question(
+                    conn,
+                    current_question["question_id"],
+                )
+                current_model_asset = static_image_asset_for_render(resolved_asset)
 
     student_html = """
 <!doctype html>
@@ -3455,6 +3628,10 @@ LIMIT 1
   .bad{color:#dc2626}
   input,select{padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px}
   .toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+  .model-asset{margin:14px 0 16px 0;padding:12px;border:1px solid #d7dee8;border-radius:8px;background:#f8fafc}
+  .model-asset-title{margin:0 0 8px 0;font-weight:700;color:#1f2937}
+  .model-asset img{display:block;max-width:100%;height:auto;margin:0 auto;border-radius:6px}
+  .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 </style>
 
 <div class="card">
@@ -3561,6 +3738,17 @@ LIMIT 1
       {% endif %}
     </h3>
     <p>{{current_question['stem']}}</p>
+    {% if current_model_asset %}
+      <figure class="model-asset">
+        {% if current_model_asset.title %}
+          <figcaption class="model-asset-title">{{ current_model_asset.title }}</figcaption>
+        {% endif %}
+        <img src="{{ url_for('static', filename=current_model_asset.filename) }}" alt="{{ current_model_asset.alt_text }}">
+        {% if current_model_asset.alt_text %}
+          <span class="sr-only">Image description: {{ current_model_asset.alt_text }}</span>
+        {% endif %}
+      </figure>
+    {% endif %}
     <form method="post">
       <input type="hidden" name="action" value="answer">
       <input type="hidden" name="student_id" value="{{student_id}}">
@@ -3586,6 +3774,7 @@ LIMIT 1
         student_id=student_id,
         objective_id=objective_id,
         current_question=current_question,
+        current_model_asset=current_model_asset,
         feedback=feedback,
         locked_review=locked_review,
         current_level=current_level,
