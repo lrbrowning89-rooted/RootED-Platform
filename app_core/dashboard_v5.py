@@ -1042,6 +1042,219 @@ def get_progress_by_standard(conn, student_id):
     return {row["standard_id"]: row for row in rows}
 
 
+def get_student_activity_counts(conn, student_id):
+    attempts = conn.execute(
+        "SELECT COUNT(*) AS n, MAX(timestamp) AS last_ts FROM attempts WHERE student_id=?",
+        (student_id,),
+    ).fetchone()
+    responses = conn.execute(
+        "SELECT COUNT(*) AS n, MAX(ts) AS last_ts FROM responses WHERE student_id=?",
+        (student_id,),
+    ).fetchone()
+    progress = conn.execute(
+        "SELECT COUNT(*) AS n, MAX(last_update) AS last_ts FROM progress_state WHERE student_id=?",
+        (student_id,),
+    ).fetchone()
+
+    last_values = [
+        row_get(attempts, "last_ts", None),
+        row_get(responses, "last_ts", None),
+        row_get(progress, "last_ts", None),
+    ]
+    last_values = [v for v in last_values if v is not None]
+    return {
+        "attempts": int(row_get(attempts, "n", 0)),
+        "responses": int(row_get(responses, "n", 0)),
+        "progress_rows": int(row_get(progress, "n", 0)),
+        "last_activity": max(last_values) if last_values else None,
+    }
+
+
+def get_latest_student_progress(conn, student_id):
+    return conn.execute(
+        """
+        SELECT ps.student_id,
+               ps.standard_id,
+               ps.current_level,
+               ps.status,
+               ps.rolling_avg,
+               ps.locked,
+               ps.locked_reason,
+               ps.last_update,
+               s.core_idea,
+               s.grade_band
+        FROM progress_state ps
+        LEFT JOIN standards s ON s.standard_id = ps.standard_id
+        WHERE ps.student_id = ?
+        ORDER BY ps.last_update DESC
+        LIMIT 1
+        """,
+        (student_id,),
+    ).fetchone()
+
+
+def get_active_objective_for_student(conn, student_id, standard_id):
+    if not student_id or not standard_id:
+        return None
+    try:
+        return conn.execute(
+            """
+            SELECT sos.current_objective_id AS objective_id,
+                   o.objective_text
+            FROM student_objective_state sos
+            LEFT JOIN objectives o ON o.objective_id = sos.current_objective_id
+            WHERE sos.student_id = ?
+              AND sos.standard_id = ?
+              AND sos.status = 'active'
+            LIMIT 1
+            """,
+            (student_id, standard_id),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return None
+
+
+def get_dashboard_student_rows(conn, students, mastery, practice):
+    rows = []
+    for student in students:
+        sid = student["student_id"]
+        counts = get_student_activity_counts(conn, sid)
+        progress = get_latest_student_progress(conn, sid)
+        standard_id = row_get(progress, "standard_id", "")
+        objective = get_active_objective_for_student(conn, sid, standard_id)
+        objective_id = row_get(objective, "objective_id", "")
+        response_count = get_response_count_for_level(
+            conn,
+            sid,
+            standard_id,
+            row_get(progress, "current_level", None),
+        )
+        avg = float(row_get(progress, "rolling_avg", 0.0))
+        status = (row_get(progress, "status", "") or "").lower()
+        locked = bool(row_get(progress, "locked", 0))
+        frustrated = frustration_active(conn, sid, objective_id) if objective_id else False
+
+        not_started = (
+            counts["attempts"] == 0
+            and counts["responses"] == 0
+            and counts["progress_rows"] == 0
+        )
+        mastered = status in ("mastered", "completed", "complete") or (
+            response_count >= 7 and avg >= mastery
+        )
+        low_average = counts["responses"] > 0 and avg < practice
+        no_recent_progress = counts["progress_rows"] > 0 and response_count == 0
+        needs_help = bool(locked or frustrated or low_average or no_recent_progress)
+        progressing = bool(progress and not mastered and not needs_help)
+
+        reasons = []
+        if locked:
+            reasons.append(row_get(progress, "locked_reason", "locked") or "locked")
+        if frustrated:
+            reasons.append("frustration signal")
+        if low_average:
+            reasons.append(f"rolling avg {round(avg * 100)}%")
+        if no_recent_progress:
+            reasons.append("no responses at current level")
+        if not reasons and progressing:
+            reasons.append("active practice")
+        if not reasons and mastered:
+            reasons.append("at or above mastery")
+
+        if not_started:
+            category = "not_started"
+            label = "Not Started"
+        elif mastered:
+            category = "mastered"
+            label = "Mastered/Completed"
+        elif needs_help:
+            category = "needs_help"
+            label = "Needs Help"
+        elif progressing:
+            category = "progressing"
+            label = "Progressing"
+        else:
+            category = "unknown"
+            label = "No Current Signal"
+
+        rows.append(
+            {
+                "student_id": sid,
+                "name": display_name(student),
+                "grade": student["grade"],
+                "period": student["class_period"],
+                "category": category,
+                "status_label": label,
+                "standard_id": standard_id,
+                "level": row_get(progress, "current_level", ""),
+                "objective_id": objective_id,
+                "objective_text": row_get(objective, "objective_text", ""),
+                "rolling_avg": avg,
+                "response_count": response_count,
+                "last_activity": counts["last_activity"],
+                "reason": "; ".join(reasons),
+                "locked": locked,
+            }
+        )
+    return rows
+
+
+def build_dashboard_snapshot(student_rows):
+    return {
+        "needs_help": sum(1 for row in student_rows if row["category"] == "needs_help"),
+        "not_started": sum(1 for row in student_rows if row["category"] == "not_started"),
+        "progressing": sum(1 for row in student_rows if row["category"] == "progressing"),
+        "mastered": sum(1 for row in student_rows if row["category"] == "mastered"),
+        "active_standards": len(
+            {
+                row["standard_id"]
+                for row in student_rows
+                if row["standard_id"] and row["category"] != "not_started"
+            }
+        ),
+    }
+
+
+def get_active_standard_summary(conn, selected_period=None):
+    period_filter = ""
+    params = []
+    if selected_period and selected_period != "ALL":
+        period_filter = "WHERE st.class_period = ?"
+        params.append(selected_period)
+
+    return conn.execute(
+        f"""
+        SELECT ps.standard_id,
+               COALESCE(s.core_idea, '') AS core_idea,
+               COALESCE(s.grade_band, '') AS grade_band,
+               COUNT(DISTINCT ps.student_id) AS student_count,
+               SUM(CASE WHEN ps.locked = 1 THEN 1 ELSE 0 END) AS locked_count,
+               SUM(CASE WHEN ps.status IN ('mastered', 'completed', 'complete') THEN 1 ELSE 0 END) AS completed_count,
+               ROUND(AVG(ps.rolling_avg), 2) AS avg_progress,
+               COUNT(DISTINCT o.objective_id) AS objective_count,
+               COUNT(DISTINCT q.question_id) AS question_count
+        FROM progress_state ps
+        JOIN students st ON st.student_id = ps.student_id
+        LEFT JOIN standards s ON s.standard_id = ps.standard_id
+        LEFT JOIN objectives o ON o.standard_id = ps.standard_id
+        LEFT JOIN questions q ON q.objective_id = o.objective_id
+        {period_filter}
+        GROUP BY ps.standard_id, s.core_idea, s.grade_band
+        ORDER BY student_count DESC, ps.standard_id
+        """,
+        params,
+    ).fetchall()
+
+
+def format_ts(ts):
+    if not ts:
+        return ""
+    try:
+        return time.strftime("%Y-%m-%d %H:%M", time.localtime(int(ts)))
+    except Exception:
+        return ""
+
+
 def row_get(row, key, default=None):
     if not row or key not in row.keys():
         return default
@@ -2316,6 +2529,22 @@ def index():
 
     class_agg_rows = []
     mastery, practice = get_config(conn)
+    dashboard_student_rows = get_dashboard_student_rows(conn, students, mastery, practice)
+    dashboard_snapshot = build_dashboard_snapshot(dashboard_student_rows)
+    needs_attention_rows = [
+        row for row in dashboard_student_rows if row["category"] == "needs_help"
+    ]
+    not_started_rows = [
+        row for row in dashboard_student_rows if row["category"] == "not_started"
+    ]
+    progressing_rows = [
+        row for row in dashboard_student_rows if row["category"] == "progressing"
+    ]
+    mastered_rows = [
+        row for row in dashboard_student_rows if row["category"] == "mastered"
+    ]
+    active_standard_rows = get_active_standard_summary(conn, selected_period)
+
     for o in objs:
         per_student = (
             [
@@ -2409,6 +2638,29 @@ def index():
   .pill-rem{background:#fdecea;border-color:#f5c2c0;color:#7f1d1d}
   .pill-prom{background:#efe5ff;border-color:#c4b5fd;color:#553c9a}
   .pill-fr{background:#fee2e2;border-color:#fecaca;color:#991b1b;margin-left:6px}
+  .snapshot-grid{display:grid;grid-template-columns:repeat(5,minmax(130px,1fr));gap:10px;margin-top:12px}
+  .snapshot-card{border:1px solid #d7dee8;border-radius:10px;padding:14px;background:#f8fafc}
+  .snapshot-card strong{display:block;font-size:30px;line-height:1;color:#111827;margin-bottom:5px}
+  .snapshot-card span{font-size:13px;color:#4b5563;font-weight:700}
+  .snapshot-help{background:#fff1f2;border-color:#fecdd3}
+  .snapshot-ready{background:#ecfdf5;border-color:#a7f3d0}
+  .pilot-grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(280px,.65fr);gap:16px}
+  .subgrid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .section-note{font-size:13px;color:#6b7280;margin:4px 0 12px}
+  .empty-state{border:1px dashed #cbd5e1;border-radius:8px;padding:14px;background:#f8fafc;color:#64748b}
+  .priority-list{display:flex;flex-direction:column;gap:10px}
+  .priority-item{border:1px solid #e5e7eb;border-radius:8px;padding:12px;background:#fff}
+  .priority-top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+  .priority-name{font-weight:800;color:#111827}
+  .priority-meta{font-size:13px;color:#4b5563;margin-top:4px}
+  .priority-reason{font-size:13px;color:#7f1d1d;margin-top:6px}
+  .status-pill{display:inline-block;padding:3px 8px;border-radius:999px;font-size:12px;font-weight:800}
+  .status-help{background:#fee2e2;color:#991b1b}
+  .status-start{background:#e0f2fe;color:#075985}
+  .status-progress{background:#fef3c7;color:#92400e}
+  .status-mastered{background:#dcfce7;color:#166534}
+  .tool-section{border-top:3px solid #e5e7eb;margin-top:20px;padding-top:4px}
+  @media(max-width:900px){.snapshot-grid{grid-template-columns:repeat(2,minmax(130px,1fr))}.pilot-grid,.subgrid{grid-template-columns:1fr}}
 </style>
 
 {% with msgs = get_flashed_messages() %}
@@ -2441,6 +2693,166 @@ def index():
     </div>
   </div>
 {% endif %}
+
+<div class="card" style="background:#f8fafc;">
+  <div class="headerbar">
+    <div>
+      <h2 style="margin:0;">Class Snapshot</h2>
+      <p class="section-note">Period {{ selected_period }} - first look at who needs attention and what is active.</p>
+    </div>
+    <form method="get" class="toolbar" style="margin:0;">
+      <input type="hidden" name="student_id" value="{{active_student}}">
+      <input type="hidden" name="class_objective" value="{{class_obj}}">
+      <label>Period
+        <select name="period" onchange="this.form.submit()">
+          {% for p in period_opts %}
+            <option value="{{p}}" {% if p==selected_period %}selected{% endif %}>{{p}}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </form>
+  </div>
+
+  <div class="snapshot-grid">
+    <div class="snapshot-card snapshot-help">
+      <strong>{{ dashboard_snapshot.needs_help }}</strong>
+      <span>Needs Help</span>
+    </div>
+    <div class="snapshot-card">
+      <strong>{{ dashboard_snapshot.not_started }}</strong>
+      <span>Not Started</span>
+    </div>
+    <div class="snapshot-card">
+      <strong>{{ dashboard_snapshot.progressing }}</strong>
+      <span>Progressing</span>
+    </div>
+    <div class="snapshot-card snapshot-ready">
+      <strong>{{ dashboard_snapshot.mastered }}</strong>
+      <span>Mastered/Completed</span>
+    </div>
+    <div class="snapshot-card">
+      <strong>{{ dashboard_snapshot.active_standards }}</strong>
+      <span>Active Standards</span>
+    </div>
+  </div>
+</div>
+
+<div class="pilot-grid">
+  <div class="card">
+    <h2>Needs Attention</h2>
+    <p class="section-note">Uses existing locked status, frustration signal, low Rolling-7 average, and missing current-level responses.</p>
+    {% if needs_attention_rows %}
+      <div class="priority-list">
+        {% for row in needs_attention_rows %}
+          <div class="priority-item">
+            <div class="priority-top">
+              <div>
+                <div class="priority-name">{{ row.name }} <span style="font-weight:500;color:#6b7280;">({{ row.student_id }})</span></div>
+                <div class="priority-meta">
+                  {{ row.standard_id or "No active standard" }}
+                  {% if row.level %} | Level {{ row.level }}{% endif %}
+                  {% if row.response_count is not none %} | {{ row.response_count }} response(s) at level{% endif %}
+                </div>
+              </div>
+              <span class="status-pill status-help">{{ row.status_label }}</span>
+            </div>
+            <div class="priority-reason">{{ row.reason or "Review current progress." }}</div>
+            <div class="priority-meta">
+              Rolling avg: {{ (row.rolling_avg * 100)|round|int }}%
+              {% if row.objective_id %} | Objective {{ row.objective_id }}{% endif %}
+              {% if row.last_activity %} | Last activity {{ format_ts(row.last_activity) }}{% endif %}
+            </div>
+            {% if row.standard_id %}
+              <p style="margin:10px 0 0;">
+                <a class="btn-mini" style="background:#4b5563;color:#fff;text-decoration:none;"
+                   href="{{ url_for('engine_debug', student_id=row.student_id, standard_id=row.standard_id) }}"
+                   target="_blank">View Details</a>
+              </p>
+            {% endif %}
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="empty-state">No students are currently flagged for immediate attention.</div>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>Active Standards</h2>
+    <p class="section-note">Standards with current progress rows for this period.</p>
+    {% if active_standard_rows %}
+      <table>
+        <tr><th>Standard</th><th>Students</th><th>Avg</th><th>Content</th></tr>
+        {% for row in active_standard_rows %}
+          <tr>
+            <td>
+              <strong>{{ row["standard_id"] }}</strong><br>
+              <span style="font-size:12px;color:#6b7280;">{{ row["core_idea"] }} {{ row["grade_band"] }}</span>
+            </td>
+            <td>{{ row["student_count"] }}{% if row["locked_count"] %}<br><span class="bad">{{ row["locked_count"] }} locked</span>{% endif %}</td>
+            <td>{{ ((row["avg_progress"] or 0) * 100)|round|int }}%</td>
+            <td>{{ row["objective_count"] }} obj<br>{{ row["question_count"] }} q</td>
+          </tr>
+        {% endfor %}
+      </table>
+    {% else %}
+      <div class="empty-state">No active standards yet for this period.</div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="subgrid">
+  <div class="card">
+    <h2>Not Started</h2>
+    <p class="section-note">Students with no attempts, responses, or progress state.</p>
+    {% if not_started_rows %}
+      <table>
+        <tr><th>Student</th><th>Grade</th><th>Period</th><th>Next Click</th></tr>
+        {% for row in not_started_rows %}
+          <tr>
+            <td><strong>{{ row.name }}</strong><br><span style="font-size:12px;color:#6b7280;">{{ row.student_id }}</span></td>
+            <td>{{ row.grade or "" }}</td>
+            <td>{{ row.period or "" }}</td>
+            <td><a class="btn-mini" style="background:#2563eb;color:#fff;text-decoration:none;" href="{{ url_for('student_view', student_id=row.student_id) }}" target="_blank">Open Student View</a></td>
+          </tr>
+        {% endfor %}
+      </table>
+    {% else %}
+      <div class="empty-state">Every student in this view has started or has a progress state.</div>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>Progressing / Mastered</h2>
+    <p class="section-note">Students with active progress or current mastery signals.</p>
+    {% if progressing_rows or mastered_rows %}
+      <table>
+        <tr><th>Student</th><th>Status</th><th>Standard</th><th>Rolling Avg</th></tr>
+        {% for row in progressing_rows + mastered_rows %}
+          <tr>
+            <td><strong>{{ row.name }}</strong><br><span style="font-size:12px;color:#6b7280;">{{ row.student_id }}</span></td>
+            <td>
+              {% if row.category == "mastered" %}
+                <span class="status-pill status-mastered">{{ row.status_label }}</span>
+              {% else %}
+                <span class="status-pill status-progress">{{ row.status_label }}</span>
+              {% endif %}
+            </td>
+            <td>{{ row.standard_id or "" }}{% if row.level %}<br><span style="font-size:12px;color:#6b7280;">Level {{ row.level }}</span>{% endif %}</td>
+            <td>{{ (row.rolling_avg * 100)|round|int }}%</td>
+          </tr>
+        {% endfor %}
+      </table>
+    {% else %}
+      <div class="empty-state">No progressing or mastered students yet.</div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="tool-section">
+  <h2 style="margin-bottom:0;">Management and Setup Tools</h2>
+  <p class="section-note">Existing configuration, roster, account, import, maintenance, and detailed progress tools remain available below.</p>
+</div>
 
 <div class="card" style="background:#f9fafb;">
   <h2>{{ APP_NAME }}</h2>
@@ -2889,11 +3301,18 @@ def index():
         class_obj=class_obj,
         class_rows=class_rows,
         class_agg_rows=class_agg_rows,
+        dashboard_snapshot=dashboard_snapshot,
+        needs_attention_rows=needs_attention_rows,
+        not_started_rows=not_started_rows,
+        progressing_rows=progressing_rows,
+        mastered_rows=mastered_rows,
+        active_standard_rows=active_standard_rows,
         qrows=qrows,
         period_opts=period_opts,
         selected_period=selected_period,
         pii_mode=pii_mode,
         display_name=display_name,
+        format_ts=format_ts,
         mastery=mastery,
         practice=practice,
         APP_NAME=APP_NAME,
