@@ -2586,46 +2586,53 @@ def index():
 
     html = """
 <!doctype html>
-<title>Adaptive NGSS - Teacher Dashboard</title>
-<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+<title>RootED - Teacher Dashboard</title>
+<div class="topbar">
   <div>
-    <h1 style="margin:0;">Adaptive NGSS Teacher Dashboard</h1>
-    <p style="font-size:13px;color:#555;margin:2px 0 0 0;">
-      🧑‍🏫 Logged in as <strong>{{ session.get('username', 'teacher') }}</strong>
+    <h1 style="margin:0;">RootED Teacher Dashboard</h1>
+    <p class="dashboard-subtitle">Here's what's happening in your classroom today.</p>
+    <p style="font-size:13px;color:#555;margin:4px 0 0 0;">
+      Logged in as <strong>{{ session.get('username', 'teacher') }}</strong>
     </p>
   </div>
-  <div style="display:flex;gap:8px;align-items:center;">
-    <a href="{{ url_for('error_list') }}"
-       class="btn"
-       style="text-decoration:none;background:#4b5563;">
-      View Error Log
-    </a>
+  <div class="top-actions">
+    <form action="{{ url_for('student_view') }}" method="get" target="_blank" style="margin:0;">
+      <button type="submit" class="btn btn-primary">Student Mode</button>
+    </form>
 
     <a href="{{ url_for('diagnostic_home') }}"
-       class="btn"
-       style="text-decoration:none;background:#7c3aed;">
+       class="btn btn-accent"
+       style="text-decoration:none;">
       Diagnostic Arena
     </a>
 
+    <a href="{{ url_for('error_list') }}"
+       class="btn btn-secondary"
+       style="text-decoration:none;">
+      View Error Log
+    </a>
+
     <form action="{{ url_for('logout') }}" method="get" style="margin:0;">
-      <button type="submit" class="btn" style="background:#dc2626;">Logout</button>
+      <button type="submit" class="btn btn-ghost">Logout</button>
     </form>
-
-<form action="{{ url_for('student_view') }}" method="get" target="_blank" style="margin:0;margin-left:8px;">
-  <button type="submit" class="btn" style="background:#4b5563;">Student Mode</button>
-</form>
-
   </div>
 </div>
 <style>
-  body{font-family:Arial, Helvetica, sans-serif;margin:24px}
+  body{font-family:Arial, Helvetica, sans-serif;margin:24px;background:#fbfaf4;color:#1f2937}
   table{border-collapse:collapse;width:100%}
-  th,td{border:1px solid #ddd;padding:8px;vertical-align:top}
-  th{background:#f4f6f8;text-align:left}
-  .ok{color:#0a0}.warn{color:#b58900}.bad{color:#c00}
-  .card{border:1px solid #e5e7eb;border-radius:10px;padding:16px;margin:16px 0;background:#fff}
+  th,td{border:1px solid #e5e0d2;padding:8px;vertical-align:top}
+  th{background:#f5f1e8;text-align:left;color:#374151}
+  .ok{color:#0f7a46}.warn{color:#a66f00}.bad{color:#b42318}
+  .topbar{display:flex;justify-content:space-between;align-items:center;gap:18px;margin-bottom:16px;padding:16px 18px;border:1px solid #dfe8d9;border-radius:12px;background:linear-gradient(135deg,#fffdf7,#eef7ed)}
+  .dashboard-subtitle{margin:8px 0 0;color:#3f5f48;font-size:16px}
+  .top-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+  .card{border:1px solid #e2decf;border-radius:10px;padding:16px;margin:16px 0;background:#fffefa;box-shadow:0 8px 18px rgba(47,111,78,.06)}
   .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
-  .btn{background:#2563eb;color:#fff;border:none;padding:8px 12px;border-radius:8px;cursor:pointer}
+  .btn{background:#2f6f4e;color:#fff;border:none;padding:8px 12px;border-radius:8px;cursor:pointer}
+  .btn-primary{background:#2f6f4e}
+  .btn-accent{background:#8a6234}
+  .btn-secondary{background:#eef4ec;color:#2f5138;border:1px solid #c8d9c4}
+  .btn-ghost{background:transparent;color:#6b4f3a;border:1px solid #dacdbb}
   input,select{padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px}
   .toolbar{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
   .headerbar{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px}
@@ -2639,7 +2646,7 @@ def index():
   .pill-prom{background:#efe5ff;border-color:#c4b5fd;color:#553c9a}
   .pill-fr{background:#fee2e2;border-color:#fecaca;color:#991b1b;margin-left:6px}
   .snapshot-grid{display:grid;grid-template-columns:repeat(5,minmax(130px,1fr));gap:10px;margin-top:12px}
-  .snapshot-card{border:1px solid #d7dee8;border-radius:10px;padding:14px;background:#f8fafc}
+  .snapshot-card{border:1px solid #d7dee8;border-radius:10px;padding:14px;background:#fffdf7}
   .snapshot-card strong{display:block;font-size:30px;line-height:1;color:#111827;margin-bottom:5px}
   .snapshot-card span{font-size:13px;color:#4b5563;font-weight:700}
   .snapshot-help{background:#fff1f2;border-color:#fecdd3}
@@ -2647,7 +2654,7 @@ def index():
   .pilot-grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(280px,.65fr);gap:16px}
   .subgrid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
   .section-note{font-size:13px;color:#6b7280;margin:4px 0 12px}
-  .empty-state{border:1px dashed #cbd5e1;border-radius:8px;padding:14px;background:#f8fafc;color:#64748b}
+  .empty-state{border:1px dashed #c8d9c4;border-radius:8px;padding:14px;background:#fbf8ef;color:#53665a}
   .priority-list{display:flex;flex-direction:column;gap:10px}
   .priority-item{border:1px solid #e5e7eb;border-radius:8px;padding:12px;background:#fff}
   .priority-top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
@@ -2659,7 +2666,11 @@ def index():
   .status-start{background:#e0f2fe;color:#075985}
   .status-progress{background:#fef3c7;color:#92400e}
   .status-mastered{background:#dcfce7;color:#166534}
-  .tool-section{border-top:3px solid #e5e7eb;margin-top:20px;padding-top:4px}
+  .tool-section{border-top:3px solid #dfe8d9;margin-top:20px;padding-top:4px}
+  .tool-details{margin-top:10px}
+  .tool-details > summary{cursor:pointer;list-style:none;border:1px solid #dfe8d9;border-radius:10px;background:#f5f8f1;padding:12px 14px;font-weight:800;color:#2f5138}
+  .tool-details > summary::-webkit-details-marker{display:none}
+  .tool-details > summary::after{content:"Show/hide setup tools";float:right;font-weight:600;color:#6b7280;font-size:12px}
   @media(max-width:900px){.snapshot-grid{grid-template-columns:repeat(2,minmax(130px,1fr))}.pilot-grid,.subgrid{grid-template-columns:1fr}}
 </style>
 
@@ -2694,7 +2705,7 @@ def index():
   </div>
 {% endif %}
 
-<div class="card" style="background:#f8fafc;">
+<div class="card" style="background:#f7fbf3;">
   <div class="headerbar">
     <div>
       <h2 style="margin:0;">Class Snapshot</h2>
@@ -2773,7 +2784,7 @@ def index():
         {% endfor %}
       </div>
     {% else %}
-      <div class="empty-state">No students are currently flagged for immediate attention.</div>
+      <div class="empty-state">Great news - no students currently need immediate attention.</div>
     {% endif %}
   </div>
 
@@ -2796,7 +2807,7 @@ def index():
         {% endfor %}
       </table>
     {% else %}
-      <div class="empty-state">No active standards yet for this period.</div>
+      <div class="empty-state">No active standards yet for this period. Once students begin practice, standards will appear here.</div>
     {% endif %}
   </div>
 </div>
@@ -2813,12 +2824,12 @@ def index():
             <td><strong>{{ row.name }}</strong><br><span style="font-size:12px;color:#6b7280;">{{ row.student_id }}</span></td>
             <td>{{ row.grade or "" }}</td>
             <td>{{ row.period or "" }}</td>
-            <td><a class="btn-mini" style="background:#2563eb;color:#fff;text-decoration:none;" href="{{ url_for('student_view', student_id=row.student_id) }}" target="_blank">Open Student View</a></td>
+            <td><a class="btn-mini" style="background:#2f6f4e;color:#fff;text-decoration:none;" href="{{ url_for('student_view', student_id=row.student_id) }}" target="_blank">View Student</a></td>
           </tr>
         {% endfor %}
       </table>
     {% else %}
-      <div class="empty-state">Every student in this view has started or has a progress state.</div>
+      <div class="empty-state">Everyone in this view has started or has a progress signal.</div>
     {% endif %}
   </div>
 
@@ -2844,7 +2855,7 @@ def index():
         {% endfor %}
       </table>
     {% else %}
-      <div class="empty-state">No progressing or mastered students yet.</div>
+      <div class="empty-state">Progress and mastery signals will appear here as students answer questions.</div>
     {% endif %}
   </div>
 </div>
@@ -2853,6 +2864,9 @@ def index():
   <h2 style="margin-bottom:0;">Management and Setup Tools</h2>
   <p class="section-note">Existing configuration, roster, account, import, maintenance, and detailed progress tools remain available below.</p>
 </div>
+
+<details class="tool-details" open>
+  <summary>Management and setup panels</summary>
 
 <div class="card" style="background:#f9fafb;">
   <h2>{{ APP_NAME }}</h2>
@@ -3289,6 +3303,7 @@ def index():
     </table>
   {% endif %}
 </div>
+</details>
     """
 
     return render_template_string(
