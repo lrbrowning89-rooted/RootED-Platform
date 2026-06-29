@@ -63,6 +63,20 @@ CREATE TABLE IF NOT EXISTS question_skills (
 );
 
 -- -------------------------
+-- Model Assets
+-- -------------------------
+CREATE TABLE IF NOT EXISTS model_assets (
+  model_id   TEXT PRIMARY KEY CHECK (TRIM(model_id) <> ''),
+  asset_type TEXT NOT NULL CHECK (asset_type IN ('image')),
+  src        TEXT NOT NULL CHECK (TRIM(src) <> ''),
+  alt_text   TEXT NOT NULL,
+  title      TEXT,
+  caption    TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+-- -------------------------
 -- Students & Attempts
 -- -------------------------
 CREATE TABLE IF NOT EXISTS students (

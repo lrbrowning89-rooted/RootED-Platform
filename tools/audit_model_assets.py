@@ -20,6 +20,16 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DB = ROOT / "data" / "ngss.db"
 DEFAULT_STATIC_ROOT = ROOT / "app_core" / "static"
 SUPPORTED_EXTENSIONS = {".png", ".svg"}
+EXPECTED_MODEL_ASSET_COLUMNS = {
+    "model_id",
+    "asset_type",
+    "src",
+    "alt_text",
+    "title",
+    "caption",
+    "created_at",
+    "updated_at",
+}
 
 
 def connect_readonly(db_path: Path) -> sqlite3.Connection:
@@ -147,6 +157,13 @@ def get_assets_by_model_id(
         return {}, ["missing model_assets table"]
 
     columns = table_columns(conn, "model_assets")
+    missing_expected = sorted(EXPECTED_MODEL_ASSET_COLUMNS - columns)
+    if missing_expected:
+        warnings.append(
+            "model_assets missing approved column(s): "
+            + ", ".join(missing_expected)
+        )
+
     if "model_id" not in columns:
         return {}, ["model_assets missing required column: model_id"]
 
@@ -209,6 +226,8 @@ def print_report(db_path: Path, static_root: Path) -> int:
 
     with connect_readonly(db_path) as conn:
         model_rows, metadata_warnings = get_model_id_rows(conn)
+        has_model_assets = table_exists(conn, "model_assets")
+        model_asset_columns = table_columns(conn, "model_assets")
         assets_by_model_id, asset_table_warnings = get_assets_by_model_id(conn)
 
     warnings: list[str] = []
@@ -218,6 +237,14 @@ def print_report(db_path: Path, static_root: Path) -> int:
     print("Summary")
     print("-------")
     print(f"Distinct model_id values: {len(model_rows)}")
+    print(f"model_assets table present: {'yes' if has_model_assets else 'no'}")
+    if has_model_assets:
+        expected = sorted(EXPECTED_MODEL_ASSET_COLUMNS)
+        present = sorted(EXPECTED_MODEL_ASSET_COLUMNS & model_asset_columns)
+        missing = sorted(EXPECTED_MODEL_ASSET_COLUMNS - model_asset_columns)
+        print(f"approved columns present: {len(present)} / {len(expected)}")
+        if missing:
+            print(f"approved columns missing: {', '.join(missing)}")
     print(f"model_assets rows available for audit: {len(assets_by_model_id)}")
     print()
 
