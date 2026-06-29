@@ -527,7 +527,7 @@ def get_model_asset(conn: sqlite3.Connection, model_id: str | None) -> dict | No
     Look up a future model_assets row without assuming the table is already present.
     Expected columns are intentionally flexible for Phase 2 planning:
     model_id plus optional asset_type/type, path/url/src, alt_text/alt, title,
-    mime_type, and data_json/spec_json/content_json.
+    caption, mime_type, and data_json/spec_json/content_json.
     """
     if not model_id or not table_exists(conn, "model_assets"):
         return None
@@ -546,6 +546,7 @@ def get_model_asset(conn: sqlite3.Connection, model_id: str | None) -> dict | No
         "alt_text",
         "alt",
         "title",
+        "caption",
         "mime_type",
         "data_json",
         "spec_json",
@@ -601,6 +602,10 @@ def static_image_asset_for_render(resolved_asset: dict | None) -> dict | None:
     if not asset:
         return None
 
+    asset_type = (asset.get("asset_type") or "").strip().lower()
+    if asset_type and asset_type != "image":
+        return None
+
     src = (asset.get("src") or "").strip().replace("\\", "/")
     if not src or src.startswith(("http://", "https://", "//")):
         return None
@@ -633,6 +638,7 @@ def static_image_asset_for_render(resolved_asset: dict | None) -> dict | None:
     return {
         "filename": static_filename,
         "title": (asset.get("title") or "").strip(),
+        "caption": (asset.get("caption") or "").strip(),
         "alt_text": alt_text,
     }
 
@@ -4097,6 +4103,7 @@ LIMIT 1
   .toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
   .model-asset{margin:14px 0 16px 0;padding:12px;border:1px solid #d7dee8;border-radius:8px;background:#f8fafc}
   .model-asset-title{margin:0 0 8px 0;font-weight:700;color:#1f2937}
+  .model-asset-caption{margin:8px 0 0 0;font-size:13px;color:#555;line-height:1.4}
   .model-asset img{display:block;max-width:100%;height:auto;margin:0 auto;border-radius:6px}
   .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 </style>
@@ -4211,6 +4218,9 @@ LIMIT 1
           <figcaption class="model-asset-title">{{ current_model_asset.title }}</figcaption>
         {% endif %}
         <img src="{{ url_for('static', filename=current_model_asset.filename) }}" alt="{{ current_model_asset.alt_text }}">
+        {% if current_model_asset.caption %}
+          <p class="model-asset-caption">{{ current_model_asset.caption }}</p>
+        {% endif %}
         {% if current_model_asset.alt_text %}
           <span class="sr-only">Image description: {{ current_model_asset.alt_text }}</span>
         {% endif %}
