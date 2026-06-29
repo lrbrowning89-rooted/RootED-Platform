@@ -1169,7 +1169,7 @@ def get_dashboard_student_rows(conn, students, mastery, practice):
             label = "Mastered/Completed"
         elif needs_help:
             category = "needs_help"
-            label = "Needs Help"
+            label = "Needs Attention"
         elif progressing:
             category = "progressing"
             label = "Progressing"
@@ -2646,7 +2646,8 @@ def index():
   .pill-prom{background:#efe5ff;border-color:#c4b5fd;color:#553c9a}
   .pill-fr{background:#fee2e2;border-color:#fecaca;color:#991b1b;margin-left:6px}
   .snapshot-grid{display:grid;grid-template-columns:repeat(5,minmax(130px,1fr));gap:10px;margin-top:12px}
-  .snapshot-card{border:1px solid #d7dee8;border-radius:10px;padding:14px;background:#fffdf7}
+  .snapshot-card{display:block;border:1px solid #d7dee8;border-radius:10px;padding:14px;background:#fffdf7;text-decoration:none}
+  .snapshot-card:hover{border-color:#9fbe9a;box-shadow:0 8px 16px rgba(47,111,78,.1)}
   .snapshot-card strong{display:block;font-size:30px;line-height:1;color:#111827;margin-bottom:5px}
   .snapshot-card span{font-size:13px;color:#4b5563;font-weight:700}
   .snapshot-help{background:#fff1f2;border-color:#fecdd3}
@@ -2671,6 +2672,9 @@ def index():
   .tool-details > summary{cursor:pointer;list-style:none;border:1px solid #dfe8d9;border-radius:10px;background:#f5f8f1;padding:12px 14px;font-weight:800;color:#2f5138}
   .tool-details > summary::-webkit-details-marker{display:none}
   .tool-details > summary::after{content:"Show/hide setup tools";float:right;font-weight:600;color:#6b7280;font-size:12px}
+  .tool-group{margin:16px 0 8px;padding:10px 12px;border-left:4px solid #9fbe9a;background:#f7fbf3;border-radius:8px;color:#2f5138}
+  .tool-group h3{margin:0;font-size:16px}
+  .tool-group p{margin:4px 0 0;color:#6b7280;font-size:13px}
   @media(max-width:900px){.snapshot-grid{grid-template-columns:repeat(2,minmax(130px,1fr))}.pilot-grid,.subgrid{grid-template-columns:1fr}}
 </style>
 
@@ -2725,31 +2729,31 @@ def index():
   </div>
 
   <div class="snapshot-grid">
-    <div class="snapshot-card snapshot-help">
+    <a class="snapshot-card snapshot-help" href="#needs-attention">
       <strong>{{ dashboard_snapshot.needs_help }}</strong>
-      <span>Needs Help</span>
-    </div>
-    <div class="snapshot-card">
+      <span>Needs Attention</span>
+    </a>
+    <a class="snapshot-card" href="#not-started">
       <strong>{{ dashboard_snapshot.not_started }}</strong>
       <span>Not Started</span>
-    </div>
-    <div class="snapshot-card">
+    </a>
+    <a class="snapshot-card" href="#progressing-mastered">
       <strong>{{ dashboard_snapshot.progressing }}</strong>
       <span>Progressing</span>
-    </div>
-    <div class="snapshot-card snapshot-ready">
+    </a>
+    <a class="snapshot-card snapshot-ready" href="#progressing-mastered">
       <strong>{{ dashboard_snapshot.mastered }}</strong>
       <span>Mastered/Completed</span>
-    </div>
-    <div class="snapshot-card">
+    </a>
+    <a class="snapshot-card" href="#active-standards">
       <strong>{{ dashboard_snapshot.active_standards }}</strong>
       <span>Active Standards</span>
-    </div>
+    </a>
   </div>
 </div>
 
 <div class="pilot-grid">
-  <div class="card">
+  <div class="card" id="needs-attention">
     <h2>Needs Attention</h2>
     <p class="section-note">Uses existing locked status, frustration signal, low Rolling-7 average, and missing current-level responses.</p>
     {% if needs_attention_rows %}
@@ -2788,7 +2792,7 @@ def index():
     {% endif %}
   </div>
 
-  <div class="card">
+  <div class="card" id="active-standards">
     <h2>Active Standards</h2>
     <p class="section-note">Standards with current progress rows for this period.</p>
     {% if active_standard_rows %}
@@ -2813,7 +2817,7 @@ def index():
 </div>
 
 <div class="subgrid">
-  <div class="card">
+  <div class="card" id="not-started">
     <h2>Not Started</h2>
     <p class="section-note">Students with no attempts, responses, or progress state.</p>
     {% if not_started_rows %}
@@ -2833,7 +2837,7 @@ def index():
     {% endif %}
   </div>
 
-  <div class="card">
+  <div class="card" id="progressing-mastered">
     <h2>Progressing / Mastered</h2>
     <p class="section-note">Students with active progress or current mastery signals.</p>
     {% if progressing_rows or mastered_rows %}
@@ -2865,143 +2869,15 @@ def index():
   <p class="section-note">Existing configuration, roster, account, import, maintenance, and detailed progress tools remain available below.</p>
 </div>
 
-<details class="tool-details" open>
+<details class="tool-details">
   <summary>Management and setup panels</summary>
 
-<div class="card" style="background:#f9fafb;">
-  <h2>{{ APP_NAME }}</h2>
-  <p><strong>Version:</strong> {{ APP_VERSION }}</p>
-  <p><strong>Database:</strong> {{ db_name }}</p>
-  <p><strong>Last Modified:</strong> {{ db_time }}</p>
-</div>
-
-<div class="card" style="background:#eff6ff;">
-  <h2>Adaptive Engine Status</h2>
-  {% if engine_ok %}
-    <p>✅ Rolling-7 engine tables are ready.</p>
-  {% else %}
-    <p>⚠️ Some engine tables are missing or not initialized:</p>
-    <ul>
-      {% for name, ok in engine_checks.items() %}
-        {% if not ok %}
-          <li>{{ name }}</li>
-        {% endif %}
-      {% endfor %}
-    </ul>
-    <p style="font-size:12px;color:#555;">
-      If this keeps showing, re-run <code>migrate_schema.py</code>.
-    </p>
-  {% endif %}
+<div class="tool-group">
+  <h3>Teacher Tools</h3>
+  <p>Practice support tools teachers may use during a pilot.</p>
 </div>
 
 <div class="grid">
-  <div class="card">
-    <h2>Configuration</h2>
-    <form method="post" action="/update_config">
-      <label>Mastery Threshold (0–1)
-        <input type="number" name="mastery_threshold" step="0.05" min="0" max="1" value="{{ mastery }}">
-      </label>
-      <label>Practice Threshold (0–1)
-        <input type="number" name="practice_lower" step="0.05" min="0" max="1" value="{{ practice }}">
-      </label>
-      <p><button class="btn" type="submit">Save Settings</button></p>
-    </form>
-  </div>
-
-  <div class="card">
-    <h2>Add / Update Student</h2>
-    <form method="post">
-      <input type="hidden" name="action" value="save_student">
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-        <label>Student ID <input name="student_id" placeholder="S1"></label>
-        <label>Grade <input name="grade" type="number" min="3" max="12" placeholder="6"></label>
-        <label>First name <input name="first_name" placeholder="Avery"></label>
-        <label>Last name <input name="last_name" placeholder="Lee"></label>
-        <label>Class period <input name="class_period" placeholder="1"></label>
-      </div>
-      <p><button class="btn" type="submit">Save Student</button></p>
-    </form>
-    {% if students %}
-      <p><em>{{students|length}} student(s) in roster (period {{selected_period}}).</em></p>
-    {% endif %}
-  </div>
-
-  <div class="card">
-    <h2>User Accounts</h2>
-    <p style="font-size:14px;color:#555;">
-      Create login accounts and manage who can sign in.
-    </p>
-
-    <form method="post" style="margin-bottom:12px;">
-      <input type="hidden" name="action" value="create_user">
-      <div style="display:grid;grid-template-columns:1.2fr 1.2fr 1fr 1.2fr;gap:8px;align-items:end">
-        <label>Username
-          <input name="username" placeholder="student123">
-        </label>
-        <label>Temp password
-          <input name="password" placeholder="changeme">
-        </label>
-        <label>Role
-          <select name="role">
-            <option value="student">student</option>
-            <option value="teacher">teacher</option>
-          </select>
-        </label>
-        <label>Linked student ID (optional)
-          <input name="linked_student_id" placeholder="S1">
-        </label>
-      </div>
-      <p style="margin-top:8px;">
-        <button class="btn" type="submit">Create User</button>
-      </p>
-    </form>
-
-    {% if all_users %}
-      <table>
-        <tr>
-          <th>ID</th>
-          <th>Username</th>
-          <th>Role</th>
-          <th>Linked Student</th>
-          <th>Status</th>
-          <th>Actions</th>
-        </tr>
-        {% for u in all_users %}
-          <tr>
-            <td>{{u["id"]}}</td>
-            <td>{{u["username"]}}</td>
-            <td>{{u["role"]}}</td>
-            <td>{{u["linked_student_id"] or ""}}</td>
-            <td>
-              {% if u["is_active"] %}
-                <span class="pill pill-adv">active</span>
-              {% else %}
-                <span class="pill pill-rem">inactive</span>
-              {% endif %}
-            </td>
-            <td>
-              <form method="post" action="/user_admin" style="display:inline">
-                <input type="hidden" name="user_id" value="{{u['id']}}">
-                <input type="hidden" name="action" value="reset_pw">
-                <input type="password" name="new_password" placeholder="new password" style="width:120px;font-size:12px;">
-                <button class="btn-mini" type="submit">Reset</button>
-              </form>
-              <form method="post" action="/user_admin" style="display:inline;margin-left:4px;">
-                <input type="hidden" name="user_id" value="{{u['id']}}">
-                <input type="hidden" name="action" value="toggle_active">
-                <button class="btn-mini" type="submit">
-                  {% if u["is_active"] %}Deactivate{% else %}Activate{% endif %}
-                </button>
-              </form>
-            </td>
-          </tr>
-        {% endfor %}
-      </table>
-    {% else %}
-      <p><em>No users in the system yet.</em></p>
-    {% endif %}
-  </div>
-
   <div class="card">
     <h2>Record an Attempt</h2>
     {% if not objs %}
@@ -3062,101 +2938,10 @@ def index():
       </form>
     {% endif %}
   </div>
-</div> <!-- end grid -->
+</div> <!-- end teacher tools grid -->
 
-<div class="card">
-  <h2>Import Data from CSV</h2>
-  <form method="post" action="/import_csv" enctype="multipart/form-data">
-    <div style="display:flex;flex-direction:column;gap:8px;max-width:420px;">
-      <label>Dataset
-        <select name="dataset">
-          <option value="standards">Standards</option>
-          <option value="objectives">Objectives</option>
-          <option value="questions">Questions</option>
-        </select>
-      </label>
-      <label>CSV File
-        <input type="file" name="file" accept=".csv">
-      </label>
-      <p style="font-size:12px;color:#555;margin:0;">
-        Expected headers:<br>
-        <strong>Standards:</strong> standard_id, core_idea, grade_band<br>
-        <strong>Objectives:</strong> objective_id, standard_id, objective_text, order_in_band<br>
-        <strong>Questions:</strong> question_id, objective_id, stem, choice_a, choice_b, choice_c, choice_d, answer_key
-      </p>
-      <button class="btn" type="submit">Import CSV</button>
-    </div>
-  </form>
-</div>
-
-<div class="card">
-  <h2>Maintenance / Data Tools</h2>
-  <p style="font-size:14px; color:#555;">
-    Use these tools to back up, reset, or restore practice data.
-  </p>
-
-  <form method="post" action="/admin_action" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
-    <button class="btn" type="submit" name="action" value="export_attempts">
-      ⬇ Download attempts backup (CSV)
-    </button>
-    <button class="btn" type="submit" name="action" value="reset_practice"
-            onclick="return confirm('This will delete ALL attempts and responses. Students and content will stay. Are you sure?');">
-      🧹 Clear all attempts/responses
-    </button>
-  </form>
-
-  <hr style="border:none;border-top:1px solid #e5e7eb;margin:10px 0;">
-
-  <form method="post" action="/restore_attempts" enctype="multipart/form-data" style="display:flex;flex-direction:column;gap:8px;max-width:420px;">
-    <label>Restore attempts from backup CSV
-      <input type="file" name="file" accept=".csv">
-    </label>
-    <p style="font-size:12px;color:#555;margin:0;">
-      Use a file previously downloaded with
-      <em>"Download attempts backup (CSV)"</em>.
-    </p>
-    <button class="btn" type="submit"
-            onclick="return confirm('This will clear current attempts/responses and replace them with the backup. Continue?');">
-      🔁 Restore attempts from CSV
-    </button>
-  </form>
-</div>
-
-<div class="card">
-  <div class="headerbar">
-    <h2 style="margin:0">Objectives — Rolling Avg & Next Node</h2>
-    <form method="get" style="margin:0">
-      <input type="hidden" name="class_objective" value="{{class_obj}}">
-      <input type="hidden" name="period" value="{{selected_period}}">
-      <label>Student
-        <select name="student_id" onchange="this.form.submit()">
-          {% for s in students %}
-            <option value="{{s['student_id']}}" {% if s['student_id']==active_student %}selected{% endif %}>
-              {{ s['student_id'] }} — {{ display_name(s) }}
-            </option>
-          {% endfor %}
-        </select>
-      </label>
-    </form>
-  </div>
-
-  <table>
-    <tr>
-      <th>Objective</th><th>Standard</th><th>Objective Text</th>
-      <th>Rolling Avg (last 7)</th><th>Next Node</th><th>Reason</th>
-    </tr>
-    {% for oid, sid, core, band, text, avg, nxt, reason, fr in single_table %}
-    <tr>
-      <td>{{oid}}</td><td>{{sid}}</td><td>{{text}}</td>
-      <td>{% if avg>=0.9 %}<span class="ok">{{avg}}</span>{% elif avg>=0.7 %}<span class="warn">{{avg}}</span>{% else %}<span class="bad">{{avg}}</span>{% endif %}</td>
-      <td>{{nxt}}</td><td>{{reason}}</td>
-    </tr>
-    {% endfor %}
-  </table>
-</div>
-
-<div class="card">
-  <h2>Class Aggregate — Rolling Avg & Next Node (Period: {{selected_period}})</h2>
+<details class="card">
+  <summary>Class Aggregate — Rolling Avg & Next Node (Period: {{selected_period}})</summary>
   <table>
     <tr>
       <th>Objective</th>
@@ -3184,10 +2969,10 @@ def index():
     </tr>
     {% endfor %}
   </table>
-</div>
+</details>
 
-<div class="card">
-  <h2>Class View</h2>
+<details class="card">
+  <summary>Class View</summary>
   {% if not objs %}
     <p>No objectives found. Run the importer first.</p>
   {% else %}
@@ -3302,7 +3087,255 @@ def index():
       {% endfor %}
     </table>
   {% endif %}
+</details>
+
+<div class="tool-group">
+  <h3>Admin Setup</h3>
+  <p>Roster, account, configuration, and content import tools.</p>
 </div>
+
+<div class="grid">
+  <div class="card">
+    <h2>Configuration</h2>
+    <form method="post" action="/update_config">
+      <label>Mastery Threshold (0–1)
+        <input type="number" name="mastery_threshold" step="0.05" min="0" max="1" value="{{ mastery }}">
+      </label>
+      <label>Practice Threshold (0–1)
+        <input type="number" name="practice_lower" step="0.05" min="0" max="1" value="{{ practice }}">
+      </label>
+      <p><button class="btn" type="submit">Save Settings</button></p>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>Add / Update Student</h2>
+    <form method="post">
+      <input type="hidden" name="action" value="save_student">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <label>Student ID <input name="student_id" placeholder="S1"></label>
+        <label>Grade <input name="grade" type="number" min="3" max="12" placeholder="6"></label>
+        <label>First name <input name="first_name" placeholder="Avery"></label>
+        <label>Last name <input name="last_name" placeholder="Lee"></label>
+        <label>Class period <input name="class_period" placeholder="1"></label>
+      </div>
+      <p><button class="btn" type="submit">Save Student</button></p>
+    </form>
+    {% if students %}
+      <p><em>{{students|length}} student(s) in roster (period {{selected_period}}).</em></p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>User Accounts</h2>
+    <p style="font-size:14px;color:#555;">
+      Create login accounts and manage who can sign in.
+    </p>
+
+    <form method="post" style="margin-bottom:12px;">
+      <input type="hidden" name="action" value="create_user">
+      <div style="display:grid;grid-template-columns:1.2fr 1.2fr 1fr 1.2fr;gap:8px;align-items:end">
+        <label>Username
+          <input name="username" placeholder="student123">
+        </label>
+        <label>Temp password
+          <input name="password" placeholder="changeme">
+        </label>
+        <label>Role
+          <select name="role">
+            <option value="student">student</option>
+            <option value="teacher">teacher</option>
+          </select>
+        </label>
+        <label>Linked student ID (optional)
+          <input name="linked_student_id" placeholder="S1">
+        </label>
+      </div>
+      <p style="margin-top:8px;">
+        <button class="btn" type="submit">Create User</button>
+      </p>
+    </form>
+
+    {% if all_users %}
+      <table>
+        <tr>
+          <th>ID</th>
+          <th>Username</th>
+          <th>Role</th>
+          <th>Linked Student</th>
+          <th>Status</th>
+          <th>Actions</th>
+        </tr>
+        {% for u in all_users %}
+          <tr>
+            <td>{{u["id"]}}</td>
+            <td>{{u["username"]}}</td>
+            <td>{{u["role"]}}</td>
+            <td>{{u["linked_student_id"] or ""}}</td>
+            <td>
+              {% if u["is_active"] %}
+                <span class="pill pill-adv">active</span>
+              {% else %}
+                <span class="pill pill-rem">inactive</span>
+              {% endif %}
+            </td>
+            <td>
+              <form method="post" action="/user_admin" style="display:inline">
+                <input type="hidden" name="user_id" value="{{u['id']}}">
+                <input type="hidden" name="action" value="reset_pw">
+                <input type="password" name="new_password" placeholder="new password" style="width:120px;font-size:12px;">
+                <button class="btn-mini" type="submit">Reset</button>
+              </form>
+              <form method="post" action="/user_admin" style="display:inline;margin-left:4px;">
+                <input type="hidden" name="user_id" value="{{u['id']}}">
+                <input type="hidden" name="action" value="toggle_active">
+                <button class="btn-mini" type="submit">
+                  {% if u["is_active"] %}Deactivate{% else %}Activate{% endif %}
+                </button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+      </table>
+    {% else %}
+      <p><em>No users in the system yet.</em></p>
+    {% endif %}
+  </div>
+
+</div> <!-- end admin setup grid -->
+
+<div class="tool-group">
+  <h3>Admin Setup</h3>
+  <p>Content import tools for setup and maintenance.</p>
+</div>
+
+<div class="card">
+  <h2>Import Data from CSV</h2>
+  <form method="post" action="/import_csv" enctype="multipart/form-data">
+    <div style="display:flex;flex-direction:column;gap:8px;max-width:420px;">
+      <label>Dataset
+        <select name="dataset">
+          <option value="standards">Standards</option>
+          <option value="objectives">Objectives</option>
+          <option value="questions">Questions</option>
+        </select>
+      </label>
+      <label>CSV File
+        <input type="file" name="file" accept=".csv">
+      </label>
+      <p style="font-size:12px;color:#555;margin:0;">
+        Expected headers:<br>
+        <strong>Standards:</strong> standard_id, core_idea, grade_band<br>
+        <strong>Objectives:</strong> objective_id, standard_id, objective_text, order_in_band<br>
+        <strong>Questions:</strong> question_id, objective_id, stem, choice_a, choice_b, choice_c, choice_d, answer_key
+      </p>
+      <button class="btn" type="submit">Import CSV</button>
+    </div>
+  </form>
+</div>
+
+<div class="tool-group">
+  <h3>Owner / Maintenance</h3>
+  <p>Backup, reset, and restore actions for practice data.</p>
+</div>
+
+<div class="card">
+  <h2>Maintenance / Data Tools</h2>
+  <p style="font-size:14px; color:#555;">
+    Use these tools to back up, reset, or restore practice data.
+  </p>
+
+  <form method="post" action="/admin_action" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
+    <button class="btn" type="submit" name="action" value="export_attempts">
+      ⬇ Download attempts backup (CSV)
+    </button>
+    <button class="btn" type="submit" name="action" value="reset_practice"
+            onclick="return confirm('This will delete ALL attempts and responses. Students and content will stay. Are you sure?');">
+      🧹 Clear all attempts/responses
+    </button>
+  </form>
+
+  <hr style="border:none;border-top:1px solid #e5e7eb;margin:10px 0;">
+
+  <form method="post" action="/restore_attempts" enctype="multipart/form-data" style="display:flex;flex-direction:column;gap:8px;max-width:420px;">
+    <label>Restore attempts from backup CSV
+      <input type="file" name="file" accept=".csv">
+    </label>
+    <p style="font-size:12px;color:#555;margin:0;">
+      Use a file previously downloaded with
+      <em>"Download attempts backup (CSV)"</em>.
+    </p>
+    <button class="btn" type="submit"
+            onclick="return confirm('This will clear current attempts/responses and replace them with the backup. Continue?');">
+      🔁 Restore attempts from CSV
+    </button>
+  </form>
+</div>
+
+<div class="tool-group">
+  <h3>Developer / Debug</h3>
+  <p>Detailed internal progress calculations and engine traces.</p>
+</div>
+
+<div class="card" style="background:#f9fafb;">
+  <h2>{{ APP_NAME }}</h2>
+  <p><strong>Version:</strong> {{ APP_VERSION }}</p>
+  <p><strong>Database:</strong> {{ db_name }}</p>
+  <p><strong>Last Modified:</strong> {{ db_time }}</p>
+</div>
+
+<div class="card" style="background:#eff6ff;">
+  <h2>Adaptive Engine Status</h2>
+  {% if engine_ok %}
+    <p>✅ Rolling-7 engine tables are ready.</p>
+  {% else %}
+    <p>⚠️ Some engine tables are missing or not initialized:</p>
+    <ul>
+      {% for name, ok in engine_checks.items() %}
+        {% if not ok %}
+          <li>{{ name }}</li>
+        {% endif %}
+      {% endfor %}
+    </ul>
+    <p style="font-size:12px;color:#555;">
+      If this keeps showing, re-run <code>migrate_schema.py</code>.
+    </p>
+  {% endif %}
+</div>
+
+<details class="card">
+  <summary>Objectives — Rolling Avg & Next Node</summary>
+  <div class="headerbar">
+    <form method="get" style="margin:0">
+      <input type="hidden" name="class_objective" value="{{class_obj}}">
+      <input type="hidden" name="period" value="{{selected_period}}">
+      <label>Student
+        <select name="student_id" onchange="this.form.submit()">
+          {% for s in students %}
+            <option value="{{s['student_id']}}" {% if s['student_id']==active_student %}selected{% endif %}>
+              {{ s['student_id'] }} — {{ display_name(s) }}
+            </option>
+          {% endfor %}
+        </select>
+      </label>
+    </form>
+  </div>
+
+  <table>
+    <tr>
+      <th>Objective</th><th>Standard</th><th>Objective Text</th>
+      <th>Rolling Avg (last 7)</th><th>Next Node</th><th>Reason</th>
+    </tr>
+    {% for oid, sid, core, band, text, avg, nxt, reason, fr in single_table %}
+    <tr>
+      <td>{{oid}}</td><td>{{sid}}</td><td>{{text}}</td>
+      <td>{% if avg>=0.9 %}<span class="ok">{{avg}}</span>{% elif avg>=0.7 %}<span class="warn">{{avg}}</span>{% else %}<span class="bad">{{avg}}</span>{% endif %}</td>
+      <td>{{nxt}}</td><td>{{reason}}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</details>
+
 </details>
     """
 
