@@ -1,8 +1,28 @@
 # RootED Model Asset Style Guide
 
+## Production Standard
+
+A RootED model asset must be something a teacher would feel comfortable projecting during instruction.
+
+RootED model assets should not default to simple generated SVG clip-art. The goal is to provide clear, credible science evidence that helps a middle school student interpret the question. Simple SVG diagrams are allowed, but only when they genuinely teach the concept better than a real image or higher-quality scientific illustration.
+
+Generated placeholder SVGs are not production-ready unless they have been reviewed and explicitly approved for instructional quality, scientific accuracy, accessibility, and visual clarity.
+
+## Preferred Asset Hierarchy
+
+Choose the most instructionally useful asset type in this order:
+
+1. Real photographs when instructionally appropriate.
+2. Real microscope images when the question depends on cell-level evidence or observation.
+3. High-quality scientific illustrations when real images would be too noisy, too complex, or unavailable.
+4. Accurate labeled diagrams when students need to identify parts, relationships, or flows.
+5. Simplified SVG diagrams only when simplification genuinely improves understanding or assessment alignment.
+
+Use simplified SVGs for concepts like levels of organization, system interaction arrows, or intentionally abstract comparison models. Do not use simplified SVGs as a shortcut for assets that should be real microscope images, real organism photographs, or polished scientific illustrations.
+
 ## 1. Canvas Sizes
 
-Use a consistent SVG viewBox so assets scale cleanly.
+For SVG assets, use a consistent viewBox so assets scale cleanly.
 
 Primary:
 
@@ -116,15 +136,20 @@ Rules:
 
 ## 8. Accessibility
 
-Each SVG should support:
+Each asset should support:
 
-- A clear `<title>` matching the asset title.
-- A concise `<desc>` explaining the model for screen readers.
+- A clear title matching the asset title.
+- A concise description explaining the model for screen readers.
 - Meaningful `alt_text` in `model_assets`.
 - High contrast between text and background.
 - No color-only meaning.
 - Readable labels at small screen sizes.
 - Simple visual hierarchy for students with processing or attention needs.
+
+For SVG assets, include:
+
+- A clear `<title>` matching the asset title.
+- A concise `<desc>` explaining the model for screen readers.
 
 Avoid:
 
@@ -150,6 +175,8 @@ For grades 6-8:
 A good RootED model should let a student say: "I know what I'm supposed to notice."
 
 ## 10. SVG Conventions
+
+Use SVG only when it is the right instructional format: a simplified relationship, process, comparison, or labeled model that would be clearer than a photograph or microscope image.
 
 Each SVG should include:
 
@@ -220,13 +247,15 @@ model_assets/<filename>.svg
 
 Across all future assets:
 
-- Use the same canvas proportions unless a diagram truly needs a different layout.
-- Use the same palette and font scale.
-- Use consistent arrow meanings.
+- Use the highest-quality asset type that fits the instructional goal.
+- Do not substitute generated clip-art for real science evidence when a real photograph, microscope image, or high-quality illustration would teach the concept better.
+- Use the same SVG canvas proportions unless a diagram truly needs a different layout.
+- Use the same SVG palette and font scale.
+- Use consistent arrow meanings in diagrams.
 - Keep labels direct and student-friendly.
 - Prefer reusable visual metaphors: arrows for flow, grouping boxes for levels, highlighted outlines for focus.
 - Keep asset titles aligned with `model_assets.title`.
-- Ensure `alt_text`, SVG `<title>`, and SVG `<desc>` agree.
+- Ensure `alt_text`, asset title, and asset description agree.
 - Do not add decorative elements that do not support the science idea.
 
 ## Example Diagram Descriptions
