@@ -1205,6 +1205,522 @@ def get_dashboard_student_rows(conn, students, mastery, practice):
     return rows
 
 
+def get_student_linked_accounts(conn, student_id):
+    if not student_id:
+        return []
+    return conn.execute(
+        """
+        SELECT id, username, role, is_active, linked_student_id, sso_provider, sso_email, last_login_ts
+        FROM users
+        WHERE role = 'student'
+          AND (linked_student_id = ? OR username = ?)
+        ORDER BY
+          CASE WHEN linked_student_id = ? THEN 0 ELSE 1 END,
+          username
+        """,
+        (student_id, student_id, student_id),
+    ).fetchall()
+
+
+def get_student_learning_history(conn, student_id):
+    empty = {
+        "summary": {
+            "standards_worked_on": 0,
+            "objectives_attempted": 0,
+            "current_objective": None,
+            "latest_activity": None,
+        },
+        "standards": [],
+    }
+    if not student_id or not table_exists(conn, "objectives"):
+        return empty
+
+    mastery, practice = get_config(conn)
+
+    current_progress = None
+    if table_exists(conn, "progress_state"):
+        current_progress = conn.execute(
+            """
+            SELECT standard_id, status, last_update
+            FROM progress_state
+            WHERE student_id = ?
+            ORDER BY last_update DESC
+            LIMIT 1
+            """,
+            (student_id,),
+        ).fetchone()
+
+    current_standard_id = row_get(current_progress, "standard_id", None)
+    current_objective_id = None
+    if current_standard_id:
+        active_objective = get_active_objective_for_student(
+            conn, student_id, current_standard_id
+        )
+        current_objective_id = row_get(active_objective, "objective_id", None)
+
+    standard_ids = set()
+    if current_standard_id:
+        standard_ids.add(current_standard_id)
+
+    if table_exists(conn, "attempts") and table_exists(conn, "questions"):
+        for row in conn.execute(
+            """
+            SELECT DISTINCT o.standard_id
+            FROM attempts a
+            JOIN questions q ON q.question_id = a.question_id
+            JOIN objectives o ON o.objective_id = q.objective_id
+            WHERE a.student_id = ?
+              AND o.standard_id IS NOT NULL
+            """,
+            (student_id,),
+        ).fetchall():
+            standard_ids.add(row["standard_id"])
+
+    if table_exists(conn, "responses"):
+        for row in conn.execute(
+            """
+            SELECT DISTINCT standard_id
+            FROM responses
+            WHERE student_id = ?
+              AND standard_id IS NOT NULL
+            """,
+            (student_id,),
+        ).fetchall():
+            standard_ids.add(row["standard_id"])
+
+    if table_exists(conn, "progress_state"):
+        for row in conn.execute(
+            """
+            SELECT DISTINCT standard_id
+            FROM progress_state
+            WHERE student_id = ?
+              AND standard_id IS NOT NULL
+            """,
+            (student_id,),
+        ).fetchall():
+            standard_ids.add(row["standard_id"])
+
+    if not standard_ids:
+        return empty
+
+    placeholders = ",".join("?" for _ in standard_ids)
+    objective_rows = conn.execute(
+        f"""
+        SELECT o.objective_id,
+               o.standard_id,
+               o.objective_text,
+               o.order_in_band,
+               s.core_idea,
+               s.grade_band
+        FROM objectives o
+        LEFT JOIN standards s ON s.standard_id = o.standard_id
+        WHERE o.standard_id IN ({placeholders})
+        ORDER BY s.core_idea, s.grade_band, o.standard_id, o.order_in_band, o.objective_id
+        """,
+        tuple(sorted(standard_ids)),
+    ).fetchall()
+
+    objective_metrics = {}
+    if table_exists(conn, "attempts") and table_exists(conn, "questions"):
+        for row in conn.execute(
+            f"""
+            SELECT q.objective_id,
+                   COUNT(*) AS attempt_count,
+                   SUM(CASE WHEN a.is_correct = 1 THEN 1 ELSE 0 END) AS correct_count,
+                   MIN(a.timestamp) AS first_activity,
+                   MAX(a.timestamp) AS last_activity,
+                   COUNT(DISTINCT a.question_id) AS questions_attempted
+            FROM attempts a
+            JOIN questions q ON q.question_id = a.question_id
+            JOIN objectives o ON o.objective_id = q.objective_id
+            WHERE a.student_id = ?
+              AND o.standard_id IN ({placeholders})
+            GROUP BY q.objective_id
+            """,
+            (student_id, *tuple(sorted(standard_ids))),
+        ).fetchall():
+            objective_metrics[row["objective_id"]] = {
+                "attempt_count": int(row_get(row, "attempt_count", 0)),
+                "correct_count": int(row_get(row, "correct_count", 0)),
+                "first_activity": row_get(row, "first_activity", None),
+                "last_activity": row_get(row, "last_activity", None),
+                "questions_attempted": int(row_get(row, "questions_attempted", 0)),
+                "recent_count": 0,
+                "recent_correct": 0,
+                "recent_avg": None,
+                "last_five": [],
+            }
+
+        for objective_id in list(objective_metrics.keys()):
+            recent_rows = conn.execute(
+                """
+                SELECT a.is_correct
+                FROM attempts a
+                JOIN questions q ON q.question_id = a.question_id
+                WHERE a.student_id = ?
+                  AND q.objective_id = ?
+                ORDER BY a.timestamp DESC
+                LIMIT 7
+                """,
+                (student_id, objective_id),
+            ).fetchall()
+            recent_values = [int(r["is_correct"]) for r in recent_rows]
+            recent_count = len(recent_values)
+            recent_correct = sum(recent_values)
+            objective_metrics[objective_id]["recent_count"] = recent_count
+            objective_metrics[objective_id]["recent_correct"] = recent_correct
+            objective_metrics[objective_id]["recent_avg"] = (
+                recent_correct / recent_count if recent_count else None
+            )
+            objective_metrics[objective_id]["last_five"] = recent_values[:5]
+
+    standards = {}
+    latest_activity = row_get(current_progress, "last_update", None)
+    objectives_attempted = 0
+
+    for row in objective_rows:
+        objective_id = row["objective_id"]
+        metrics = objective_metrics.get(
+            objective_id,
+            {
+                "attempt_count": 0,
+                "correct_count": 0,
+                "first_activity": None,
+                "last_activity": None,
+                "questions_attempted": 0,
+                "recent_count": 0,
+                "recent_correct": 0,
+                "recent_avg": None,
+                "last_five": [],
+            },
+        )
+
+        attempt_count = metrics["attempt_count"]
+        if attempt_count:
+            objectives_attempted += 1
+        if metrics["last_activity"] is not None:
+            latest_activity = max(latest_activity or 0, metrics["last_activity"])
+
+        is_current = objective_id == current_objective_id
+        recent_count = metrics["recent_count"]
+        recent_avg = metrics["recent_avg"]
+        last_five = metrics["last_five"]
+
+        if is_current:
+            status = "Current"
+            status_class = "pill-current"
+        elif attempt_count == 0:
+            status = "Not Started"
+            status_class = "pill-muted"
+        elif len(last_five) == 5 and all(v == 0 for v in last_five):
+            status = "Needs Attention"
+            status_class = "pill-alert"
+        elif recent_count >= 7 and recent_avg is not None and recent_avg >= mastery:
+            status = "Completed"
+            status_class = "pill-ok"
+        elif recent_count >= 7 and recent_avg is not None and recent_avg < practice:
+            status = "Needs Attention"
+            status_class = "pill-alert"
+        elif attempt_count > 0:
+            status = "Progressing"
+            status_class = "pill-warn"
+        else:
+            status = "No Current Signal"
+            status_class = "pill-muted"
+
+        standard_id = row["standard_id"]
+        standards.setdefault(
+            standard_id,
+            {
+                "standard_id": standard_id,
+                "core_idea": row_get(row, "core_idea", ""),
+                "grade_band": row_get(row, "grade_band", ""),
+                "status": row_get(current_progress, "status", "")
+                if standard_id == current_standard_id
+                else "",
+                "is_current": standard_id == current_standard_id,
+                "objectives": [],
+            },
+        )
+        standards[standard_id]["objectives"].append(
+            {
+                "objective_id": objective_id,
+                "objective_text": row_get(row, "objective_text", "") or "",
+                "status": status,
+                "status_class": status_class,
+                "attempt_count": attempt_count,
+                "correct_count": metrics["correct_count"],
+                "recent_count": recent_count,
+                "recent_correct": metrics["recent_correct"],
+                "recent_avg": recent_avg,
+                "last_activity": metrics["last_activity"],
+                "questions_attempted": metrics["questions_attempted"],
+            }
+        )
+
+    return {
+        "summary": {
+            "standards_worked_on": len(standards),
+            "objectives_attempted": objectives_attempted,
+            "current_objective": current_objective_id,
+            "latest_activity": latest_activity,
+        },
+        "standards": list(standards.values()),
+    }
+
+
+def get_student_overview(conn, student_id):
+    student = conn.execute(
+        """
+        SELECT student_id, first_name, last_name, grade, class_period
+        FROM students
+        WHERE student_id = ?
+        """,
+        (student_id,),
+    ).fetchone()
+    if not student:
+        return None
+
+    progress_columns = table_columns(conn, "progress_state")
+    optional_progress_cols = []
+    if "active_route_type" in progress_columns:
+        optional_progress_cols.append("ps.active_route_type")
+    else:
+        optional_progress_cols.append("NULL AS active_route_type")
+    if "origin_standard_id" in progress_columns:
+        optional_progress_cols.append("ps.origin_standard_id")
+    else:
+        optional_progress_cols.append("NULL AS origin_standard_id")
+
+    latest_progress = conn.execute(
+        f"""
+        SELECT ps.student_id,
+               ps.standard_id,
+               ps.current_level,
+               ps.status,
+               ps.rolling_avg,
+               ps.locked,
+               ps.locked_reason,
+               ps.last_update,
+               {", ".join(optional_progress_cols)},
+               s.core_idea,
+               s.grade_band
+        FROM progress_state ps
+        LEFT JOIN standards s ON s.standard_id = ps.standard_id
+        WHERE ps.student_id = ?
+        ORDER BY ps.last_update DESC
+        LIMIT 1
+        """,
+        (student_id,),
+    ).fetchone()
+
+    standard_id = row_get(latest_progress, "standard_id", None)
+    current_level = row_get(latest_progress, "current_level", None)
+    objective = get_active_objective_for_student(conn, student_id, standard_id)
+    objective_id = row_get(objective, "objective_id", None)
+
+    rolling_responses = []
+    rolling_count = 0
+    rolling_correct = 0
+    rolling_avg = row_get(latest_progress, "rolling_avg", None)
+    if standard_id and current_level:
+        rolling_responses = conn.execute(
+            """
+            SELECT correct, ts, question_id
+            FROM responses
+            WHERE student_id = ? AND standard_id = ? AND level = ?
+            ORDER BY ts DESC
+            LIMIT 7
+            """,
+            (student_id, standard_id, current_level),
+        ).fetchall()
+        rolling_count = len(rolling_responses)
+        rolling_correct = sum(1 for r in rolling_responses if int(r["correct"]) == 1)
+        if rolling_count:
+            rolling_avg = rolling_correct / rolling_count
+
+    total_responses = conn.execute(
+        "SELECT COUNT(*) AS n, MAX(ts) AS last_ts FROM responses WHERE student_id = ?",
+        (student_id,),
+    ).fetchone()
+    total_attempts = conn.execute(
+        "SELECT COUNT(*) AS n, MAX(timestamp) AS last_ts FROM attempts WHERE student_id = ?",
+        (student_id,),
+    ).fetchone()
+
+    if standard_id:
+        recent_attempts = conn.execute(
+            """
+            SELECT a.timestamp, a.question_id, a.is_correct, q.objective_id
+            FROM attempts a
+            LEFT JOIN questions q ON q.question_id = a.question_id
+            WHERE a.student_id = ?
+              AND q.objective_id IN (
+                  SELECT objective_id FROM objectives WHERE standard_id = ?
+              )
+            ORDER BY a.timestamp DESC
+            LIMIT 10
+            """,
+            (student_id, standard_id),
+        ).fetchall()
+    else:
+        recent_attempts = conn.execute(
+            """
+            SELECT a.timestamp, a.question_id, a.is_correct, q.objective_id
+            FROM attempts a
+            LEFT JOIN questions q ON q.question_id = a.question_id
+            WHERE a.student_id = ?
+            ORDER BY a.timestamp DESC
+            LIMIT 10
+            """,
+            (student_id,),
+        ).fetchall()
+
+    recent_responses = []
+    if standard_id:
+        recent_responses = conn.execute(
+            """
+            SELECT r.ts, r.level, r.question_id, r.correct, q.objective_id
+            FROM responses r
+            LEFT JOIN questions q ON q.question_id = r.question_id
+            WHERE r.student_id = ? AND r.standard_id = ?
+            ORDER BY r.ts DESC
+            LIMIT 10
+            """,
+            (student_id, standard_id),
+        ).fetchall()
+
+    recent_activity = []
+    seen_activity = set()
+    for row in recent_attempts:
+        item = {
+            "time": row_get(row, "timestamp", None),
+            "objective_id": row_get(row, "objective_id", None),
+            "question_id": row_get(row, "question_id", None),
+            "is_correct": row_get(row, "is_correct", 0),
+        }
+        key = (
+            item["time"],
+            item["objective_id"],
+            item["question_id"],
+            int(item["is_correct"] or 0),
+        )
+        if key not in seen_activity:
+            recent_activity.append(item)
+            seen_activity.add(key)
+
+    for row in recent_responses:
+        item = {
+            "time": row_get(row, "ts", None),
+            "objective_id": row_get(row, "objective_id", None),
+            "question_id": row_get(row, "question_id", None),
+            "is_correct": row_get(row, "correct", 0),
+        }
+        key = (
+            item["time"],
+            item["objective_id"],
+            item["question_id"],
+            int(item["is_correct"] or 0),
+        )
+        if key not in seen_activity:
+            recent_activity.append(item)
+            seen_activity.add(key)
+
+    recent_activity = sorted(
+        recent_activity,
+        key=lambda item: item["time"] or 0,
+        reverse=True,
+    )[:15]
+
+    origin_links = []
+    if standard_id:
+        origin_links = conn.execute(
+            """
+            SELECT rem_standard_id, from_standard_id, from_level, ts
+            FROM origin_links
+            WHERE student_id = ? AND rem_standard_id = ?
+            ORDER BY ts DESC
+            LIMIT 3
+            """,
+            (student_id, standard_id),
+        ).fetchall()
+
+    linked_accounts = get_student_linked_accounts(conn, student_id)
+    frustration = frustration_active(conn, student_id, objective_id) if objective_id else False
+
+    latest_activity = max(
+        [
+            ts
+            for ts in [
+                row_get(total_responses, "last_ts", None),
+                row_get(total_attempts, "last_ts", None),
+                row_get(latest_progress, "last_update", None),
+            ]
+            if ts is not None
+        ],
+        default=None,
+    )
+
+    focus = []
+    if objective_id:
+        focus.append(f"Current objective: {objective_id}")
+    elif standard_id:
+        focus.append("Current objective: not recorded yet")
+    else:
+        focus.append("Current objective: no active learning record yet")
+
+    if rolling_count:
+        focus.append(
+            f"Recent check-ins: {rolling_correct}/{rolling_count} correct at Level {current_level}"
+        )
+    elif standard_id and current_level:
+        focus.append(f"Recent check-ins: no responses yet at Level {current_level}")
+    else:
+        focus.append("Recent check-ins: not available yet")
+
+    if row_get(latest_progress, "locked", 0):
+        reason = row_get(latest_progress, "locked_reason", "locked") or "locked"
+        focus.append(f"Locked/intervention state: {reason}")
+    elif frustration:
+        focus.append("Locked/intervention state: frustration signal active")
+    else:
+        focus.append("Locked/intervention state: none recorded")
+
+    notes = []
+    if not latest_progress:
+        notes.append("No progress state has been recorded for this student yet.")
+    if latest_progress and not objective_id:
+        notes.append("A current standard exists, but no active objective is recorded.")
+    if rolling_count and rolling_count < 7:
+        notes.append(f"Recent check-ins are still collecting data: {rolling_count}/7 responses available.")
+    if linked_accounts and not any(row_get(a, "linked_student_id", None) == student_id for a in linked_accounts):
+        notes.append("Account match is based on username fallback, not linked_student_id.")
+    if not linked_accounts:
+        notes.append("No linked student login account was found for this roster record.")
+
+    return {
+        "student": student,
+        "display_name": display_name(student),
+        "latest_progress": latest_progress,
+        "objective": objective,
+        "rolling_count": rolling_count,
+        "rolling_correct": rolling_correct,
+        "rolling_avg": rolling_avg,
+        "total_responses": int(row_get(total_responses, "n", 0)),
+        "total_attempts": int(row_get(total_attempts, "n", 0)),
+        "recent_attempts": recent_attempts,
+        "recent_responses": recent_responses,
+        "recent_activity": recent_activity,
+        "origin_links": origin_links,
+        "linked_accounts": linked_accounts,
+        "frustration": frustration,
+        "latest_activity": latest_activity,
+        "learning_history": get_student_learning_history(conn, student_id),
+        "focus": focus,
+        "notes": notes,
+    }
+
+
 def build_dashboard_snapshot(student_rows):
     return {
         "needs_help": sum(1 for row in student_rows if row["category"] == "needs_help"),
@@ -2982,13 +3498,11 @@ def index():
               {% if row.objective_id %} | Objective {{ row.objective_id }}{% endif %}
               {% if row.last_activity %} | Last activity {{ format_ts(row.last_activity) }}{% endif %}
             </div>
-            {% if row.standard_id %}
-              <p style="margin:10px 0 0;">
-                <a class="btn-mini" style="background:#4b5563;color:#fff;text-decoration:none;"
-                   href="{{ url_for('engine_debug', student_id=row.student_id, standard_id=row.standard_id) }}"
-                   target="_blank">View Details</a>
-              </p>
-            {% endif %}
+            <p style="margin:10px 0 0;">
+              <a class="btn-mini" style="background:#4b5563;color:#fff;text-decoration:none;"
+                 href="{{ url_for('student_overview', student_id=row.student_id) }}"
+                 target="_blank">Overview</a>
+            </p>
           </div>
         {% endfor %}
       </div>
@@ -3033,7 +3547,7 @@ def index():
             <td><strong>{{ row.name }}</strong><br><span style="font-size:12px;color:#6b7280;">{{ row.student_id }}</span></td>
             <td>{{ row.grade or "" }}</td>
             <td>{{ row.period or "" }}</td>
-            <td><a class="btn-mini" style="background:#2f6f4e;color:#fff;text-decoration:none;" href="{{ url_for('student_view', student_id=row.student_id) }}" target="_blank">View Student</a></td>
+            <td><a class="btn-mini" style="background:#2f6f4e;color:#fff;text-decoration:none;" href="{{ url_for('student_overview', student_id=row.student_id) }}" target="_blank">Overview</a></td>
           </tr>
         {% endfor %}
       </table>
@@ -3047,7 +3561,7 @@ def index():
     <p class="section-note">Students with active progress or current mastery signals.</p>
     {% if progressing_rows or mastered_rows %}
       <table>
-        <tr><th>Student</th><th>Status</th><th>Standard</th><th>Rolling Avg</th></tr>
+        <tr><th>Student</th><th>Status</th><th>Standard</th><th>Rolling Avg</th><th>Action</th></tr>
         {% for row in progressing_rows + mastered_rows %}
           <tr>
             <td><strong>{{ row.name }}</strong><br><span style="font-size:12px;color:#6b7280;">{{ row.student_id }}</span></td>
@@ -3060,6 +3574,7 @@ def index():
             </td>
             <td>{{ row.standard_id or "" }}{% if row.level %}<br><span style="font-size:12px;color:#6b7280;">Level {{ row.level }}</span>{% endif %}</td>
             <td>{{ (row.rolling_avg * 100)|round|int }}%</td>
+            <td><a class="btn-mini" style="background:#2f6f4e;color:#fff;text-decoration:none;" href="{{ url_for('student_overview', student_id=row.student_id) }}" target="_blank">Overview</a></td>
           </tr>
         {% endfor %}
       </table>
@@ -3292,7 +3807,7 @@ def index():
         <th>Next Node</th>
         <th>Reason</th>
         <th>Quick Score</th>
-        <th>Engine</th>
+        <th>Overview</th>
       </tr>
       {% for sid, name, grade, period, avg, nxt, reason, fr, std_id in class_rows %}
         <tr>
@@ -3345,18 +3860,14 @@ def index():
             </form>
           </td>
           <td>
-            {% if std_id %}
-              <a
-                href="{{ url_for('engine_debug', student_id=sid, standard_id=std_id) }}"
-                target="_blank"
-                class="btn-mini"
-                style="background:#4b5563;color:#fff;text-decoration:none;"
-              >
-                🧪
-              </a>
-            {% else %}
-              <span style="font-size:11px;color:#9ca3af;">n/a</span>
-            {% endif %}
+            <a
+              href="{{ url_for('student_overview', student_id=sid) }}"
+              target="_blank"
+              class="btn-mini"
+              style="background:#4b5563;color:#fff;text-decoration:none;"
+            >
+              Overview
+            </a>
           </td>
         </tr>
       {% endfor %}
@@ -3468,6 +3979,14 @@ def index():
                   {% if u["is_active"] %}Deactivate{% else %}Activate{% endif %}
                 </button>
               </form>
+              {% if u["role"] == "student" %}
+                <a
+                  class="btn-mini"
+                  style="background:#2f6f4e;color:#fff;text-decoration:none;margin-left:4px;"
+                  href="{{ url_for('student_overview', student_id=(u['linked_student_id'] or u['username'])) }}"
+                  target="_blank"
+                >Overview</a>
+              {% endif %}
             </td>
           </tr>
         {% endfor %}
@@ -4654,7 +5173,7 @@ def diagnostic_session(session_id):
     <!doctype html>
     <title>Diagnostic Session</title>
     <div style="font-family:Arial;margin:24px;max-width:760px;">
-      <h2>🧪 Diagnostic Session</h2>
+      <h2>View Diagnostic Session</h2>
       <p><strong>Student:</strong> {{ student_id }} | <strong>Domain:</strong> {{ item['domain'] }}</p>
       <hr>
       <h3>{{ item['stem'] }}</h3>
@@ -4721,7 +5240,7 @@ def diagnostic_home():
     </style>
 
     <div class="card">
-      <h2 style="margin-top:0;">🧪 Diagnostic Arena (MVP)</h2>
+      <h2 style="margin-top:0;">View Diagnostic Arena (MVP)</h2>
       <p style="color:#555;font-size:13px;margin-top:0;">
         Start a diagnostic session and record results.
       </p>
@@ -4864,7 +5383,7 @@ def diagnostic_session_v2(session_id):
     </style>
 
     <div class="card">
-      <h2 style="margin-top:0;">🧪 Diagnostic Session</h2>
+      <h2 style="margin-top:0;">View Diagnostic Session</h2>
       <p class="muted">Session: {{ session_id }} | Answered: {{ answered_count }}</p>
 
       <h3 style="margin-bottom:6px;">{{ next_item['question_id'] }}</h3>
@@ -5130,6 +5649,340 @@ def export_csv():
         "Content-Disposition"
     ] = f'attachment; filename=class_progress_period_{selected_period}.csv'
     return resp
+
+
+# ---------- Student Overview ----------
+@app.route("/teacher/student/<student_id>")
+@require_teacher
+def student_overview(student_id):
+    conn = get_conn()
+    overview = get_student_overview(conn, student_id)
+    if not overview:
+        abort(404)
+
+    html = """
+<!doctype html>
+<title>Student Overview - {{ overview.display_name }}</title>
+<style>
+  body{font-family:Arial, Helvetica, sans-serif;margin:24px;background:#fbfaf4;color:#1f2937}
+  .page{max-width:1120px;margin:0 auto}
+  .topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:18px;margin-bottom:16px;padding:16px 18px;border:1px solid #dfe8d9;border-radius:12px;background:#fffdf7}
+  .topbar h1{margin:0 0 6px;font-size:30px}
+  .subtitle{margin:0;color:#4b5563;font-size:14px}
+  .btn{display:inline-block;background:#2f6f4e;color:#fff;text-decoration:none;border:none;padding:8px 12px;border-radius:8px;cursor:pointer;font-size:13px}
+  .btn-secondary{background:#eef4ec;color:#2f5138;border:1px solid #c8d9c4}
+  .card{border:1px solid #e2decf;border-radius:10px;padding:16px;margin:16px 0;background:#fffefa;box-shadow:0 8px 18px rgba(47,111,78,.05)}
+  details.card > summary{cursor:pointer;font-size:24px;font-weight:700;margin:-4px 0 0;list-style:none}
+  details.card > summary::-webkit-details-marker{display:none}
+  details.card > summary::after{content:"Expand";float:right;font-size:13px;font-weight:700;color:#2f5138;background:#eef4ec;border:1px solid #c8d9c4;border-radius:999px;padding:4px 10px}
+  details.card[open] > summary::after{content:"Collapse"}
+  .focus{background:#f7fbf3;border-color:#c8d9c4}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .stat-grid{display:grid;grid-template-columns:repeat(4,minmax(130px,1fr));gap:10px}
+  .stat{border:1px solid #e5e0d2;border-radius:8px;padding:12px;background:#fff}
+  .label{font-size:12px;text-transform:uppercase;color:#6b7280;font-weight:700;letter-spacing:.02em}
+  .value{font-size:18px;font-weight:800;color:#111827;margin-top:4px}
+  table{border-collapse:collapse;width:100%}
+  th,td{border:1px solid #e5e0d2;padding:8px;vertical-align:top;font-size:13px}
+  th{background:#f5f1e8;text-align:left;color:#374151}
+  h2{margin:0 0 8px}
+  h3{margin:14px 0 8px}
+  .note{font-size:13px;color:#6b7280;margin:4px 0 12px}
+  .empty{border:1px dashed #c8d9c4;border-radius:8px;padding:12px;background:#fbf8ef;color:#53665a}
+  .pill{display:inline-block;padding:3px 8px;border-radius:999px;font-size:12px;font-weight:800}
+  .pill-ok{background:#dcfce7;color:#166534}
+  .pill-warn{background:#fef3c7;color:#92400e}
+  .pill-alert{background:#fee2e2;color:#991b1b}
+  .pill-current{background:#e0f2fe;color:#075985}
+  .pill-muted{background:#f3f4f6;color:#4b5563}
+  .history-standard{border-top:1px solid #e5e0d2;padding-top:14px;margin-top:14px}
+  .history-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:8px}
+  .history-title{font-weight:800;color:#111827}
+  .objective-title{font-weight:800;color:#111827}
+  .objective-id{font-size:12px;color:#6b7280;margin-top:3px}
+  .muted{color:#6b7280}
+  ul.clean{margin:8px 0 0 18px;padding:0}
+  li{margin:4px 0}
+  @media(max-width:850px){.grid,.stat-grid{grid-template-columns:1fr}.topbar{display:block}.topbar .actions{margin-top:12px}}
+</style>
+<div class="page">
+  <div class="topbar">
+    <div>
+      <h1>Student Overview</h1>
+      <p class="subtitle">Read-only classroom view for existing RootED progress data.</p>
+    </div>
+    <div class="actions">
+      <a class="btn btn-secondary" href="{{ url_for('index') }}">Back to dashboard</a>
+    </div>
+  </div>
+
+  <div class="card focus">
+    <h2>Current Focus</h2>
+    <p class="note">Generated from existing factual data only.</p>
+    <ul class="clean">
+      {% for item in overview.focus %}
+        <li>{{ item }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>Student</h2>
+    <div class="stat-grid">
+      <div class="stat">
+        <div class="label">Name</div>
+        <div class="value">{{ overview.display_name }}</div>
+      </div>
+      <div class="stat">
+        <div class="label">Student ID</div>
+        <div class="value">{{ overview.student['student_id'] }}</div>
+      </div>
+      <div class="stat">
+        <div class="label">Grade</div>
+        <div class="value">{{ overview.student['grade'] or 'Not set' }}</div>
+      </div>
+      <div class="stat">
+        <div class="label">Class Period</div>
+        <div class="value">{{ overview.student['class_period'] or 'Not set' }}</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Current Progress</h2>
+    {% if overview.latest_progress %}
+      <div class="grid">
+        <div>
+          <table>
+            <tr><th>Current standard</th><td>{{ overview.latest_progress['standard_id'] }}</td></tr>
+            <tr><th>Current objective</th><td>{{ overview.objective['objective_id'] if overview.objective else 'Not recorded yet' }}</td></tr>
+            <tr><th>Objective text</th><td>{{ overview.objective['objective_text'] if overview.objective else 'Not available' }}</td></tr>
+            <tr><th>Current level</th><td>{{ overview.latest_progress['current_level'] }}</td></tr>
+          </table>
+        </div>
+        <div>
+          <table>
+            <tr><th>Status</th><td>{{ overview.latest_progress['status'] }}</td></tr>
+            <tr><th>Recent accuracy</th><td>{% if overview.rolling_avg is not none %}{{ (overview.rolling_avg * 100)|round|int }}%{% else %}Not available{% endif %}</td></tr>
+            <tr><th>Last update</th><td>{{ format_ts(overview.latest_progress['last_update']) or 'Not available' }}</td></tr>
+            <tr><th>Latest activity</th><td>{{ format_ts(overview.latest_activity) or 'Not available' }}</td></tr>
+          </table>
+        </div>
+      </div>
+    {% else %}
+      <div class="empty">No current progress record exists for this student yet.</div>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>Learning History</h2>
+    <p class="note">Objective-level evidence from existing attempts. This is not an official grade.</p>
+    <div class="stat-grid">
+      <div class="stat">
+        <div class="label">Standards Worked On</div>
+        <div class="value">{{ overview.learning_history.summary.standards_worked_on }}</div>
+      </div>
+      <div class="stat">
+        <div class="label">Objectives Attempted</div>
+        <div class="value">{{ overview.learning_history.summary.objectives_attempted }}</div>
+      </div>
+      <div class="stat">
+        <div class="label">Current Objective</div>
+        <div class="value">{{ overview.learning_history.summary.current_objective or 'Not recorded' }}</div>
+      </div>
+      <div class="stat">
+        <div class="label">Latest History Activity</div>
+        <div class="value">{{ format_ts(overview.learning_history.summary.latest_activity) or 'Not available' }}</div>
+      </div>
+    </div>
+
+    {% if overview.learning_history.standards %}
+      {% for standard in overview.learning_history.standards %}
+        <div class="history-standard">
+          <div class="history-head">
+            <div>
+              <div class="history-title">{{ standard.standard_id }}</div>
+              <div class="note">
+                {{ standard.core_idea or '' }} {{ standard.grade_band or '' }}
+                {% if standard.is_current %} | Current standard{% endif %}
+                {% if standard.status %} | {{ standard.status }}{% endif %}
+              </div>
+            </div>
+          </div>
+          <table>
+            <tr>
+              <th>Status</th>
+              <th>Objective</th>
+              <th>Attempts</th>
+              <th>Correct/Total</th>
+              <th>Recent Check-ins</th>
+              <th>Last Activity</th>
+            </tr>
+            {% for objective in standard.objectives %}
+              <tr>
+                <td><span class="pill {{ objective.status_class }}">{{ objective.status }}</span></td>
+                <td>
+                  <div class="objective-title">{{ objective.objective_text or 'Not available' }}</div>
+                  <div class="objective-id">{{ objective.objective_id }}</div>
+                </td>
+                <td>{{ objective.attempt_count }}</td>
+                <td>
+                  {% if objective.attempt_count %}
+                    {{ objective.correct_count }}/{{ objective.attempt_count }}
+                  {% else %}
+                    Not available
+                  {% endif %}
+                </td>
+                <td>
+                  {% if objective.recent_count %}
+                    {{ objective.recent_correct }}/{{ objective.recent_count }}
+                  {% else %}
+                    Not available
+                  {% endif %}
+                </td>
+                <td>{{ format_ts(objective.last_activity) or 'Not available' }}</td>
+              </tr>
+            {% endfor %}
+          </table>
+        </div>
+      {% endfor %}
+    {% else %}
+      <div class="empty">No learning history evidence is available yet.</div>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>Recent Activity</h2>
+    <div class="stat-grid">
+      <div class="stat">
+        <div class="label">Recent Check-ins</div>
+        <div class="value">{{ overview.rolling_count }}/7</div>
+      </div>
+      <div class="stat">
+        <div class="label">Recent Correct</div>
+        <div class="value">{{ overview.rolling_correct }}/{{ overview.rolling_count }}</div>
+      </div>
+      <div class="stat">
+        <div class="label">Total Responses</div>
+        <div class="value">{{ overview.total_responses }}</div>
+      </div>
+      <div class="stat">
+        <div class="label">Total Attempts</div>
+        <div class="value">{{ overview.total_attempts }}</div>
+      </div>
+    </div>
+
+    {% if overview.recent_activity %}
+      <table>
+        <tr><th>Time</th><th>Objective</th><th>Question ID</th><th>Result</th></tr>
+        {% for item in overview.recent_activity %}
+          <tr>
+            <td>{{ format_ts(item.time) }}</td>
+            <td>{{ item.objective_id or 'Not recorded' }}</td>
+            <td>{{ item.question_id }}</td>
+            <td>{{ 'Correct' if item.is_correct else 'Incorrect' }}</td>
+          </tr>
+        {% endfor %}
+      </table>
+    {% else %}
+      <div class="empty">No recent activity is available yet.</div>
+    {% endif %}
+  </div>
+
+  <details class="card">
+    <summary>Adaptive Details</summary>
+    <p class="note">Technical adaptive details from existing progress records.</p>
+    {% if overview.latest_progress %}
+      <div class="grid">
+        <div>
+          <table>
+            <tr>
+              <th>Locked/intervention state</th>
+              <td>
+                {% if overview.latest_progress['locked'] %}
+                  <span class="pill pill-alert">Locked</span>
+                  {{ overview.latest_progress['locked_reason'] or '' }}
+                {% elif overview.frustration %}
+                  <span class="pill pill-warn">Frustration signal active</span>
+                {% else %}
+                  <span class="pill pill-ok">None recorded</span>
+                {% endif %}
+              </td>
+            </tr>
+            <tr><th>Active route type</th><td>{{ overview.latest_progress['active_route_type'] or 'Not recorded' }}</td></tr>
+            <tr><th>Origin standard</th><td>{{ overview.latest_progress['origin_standard_id'] or 'Not recorded' }}</td></tr>
+          </table>
+        </div>
+        <div>
+          <h3 style="margin-top:0;">Progress notes</h3>
+          {% if overview.notes %}
+            <ul class="clean">
+              {% for note in overview.notes %}
+                <li>{{ note }}</li>
+              {% endfor %}
+            </ul>
+          {% else %}
+            <p class="note">No additional consistency notes are present.</p>
+          {% endif %}
+        </div>
+      </div>
+
+      <h3>Recent route origin</h3>
+      {% if overview.origin_links %}
+        <table>
+          <tr><th>Time</th><th>From standard</th><th>From level</th><th>Current remediation standard</th></tr>
+          {% for o in overview.origin_links %}
+            <tr>
+              <td>{{ format_ts(o['ts']) }}</td>
+              <td>{{ o['from_standard_id'] }}</td>
+              <td>{{ o['from_level'] }}</td>
+              <td>{{ o['rem_standard_id'] }}</td>
+            </tr>
+          {% endfor %}
+        </table>
+      {% else %}
+        <div class="empty">No route origin record is available for the current standard.</div>
+      {% endif %}
+    {% else %}
+      <div class="empty">Adaptive details will appear after progress is recorded.</div>
+    {% endif %}
+  </details>
+
+  <details class="card">
+    <summary>Login Information</summary>
+    <p class="note">Roster and login-link details.</p>
+    {% if overview.linked_accounts %}
+      <table>
+        <tr><th>Username</th><th>Link type</th><th>Status</th><th>SSO</th><th>Last login</th></tr>
+        {% for account in overview.linked_accounts %}
+          <tr>
+            <td>{{ account['username'] }}</td>
+            <td>
+              {% if account['linked_student_id'] == overview.student['student_id'] %}
+                linked_student_id
+              {% else %}
+                username fallback
+              {% endif %}
+            </td>
+            <td>{{ 'Active' if account['is_active'] else 'Inactive' }}</td>
+            <td>{{ account['sso_provider'] or 'Not recorded' }}</td>
+            <td>{{ format_ts(account['last_login_ts']) or 'Not recorded' }}</td>
+          </tr>
+        {% endfor %}
+      </table>
+    {% else %}
+      <div class="empty">No student login account is linked to this roster record.</div>
+    {% endif %}
+  </details>
+</div>
+    """
+
+    return render_template_string(
+        html,
+        overview=overview,
+        format_ts=format_ts,
+    )
+
 
 # ---------- Engine debug viewer ----------
 @app.route("/engine_debug/<student_id>/<standard_id>")
