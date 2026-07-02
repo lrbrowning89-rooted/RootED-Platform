@@ -1432,6 +1432,55 @@ def get_questions_for_objective(conn, oid):
     ).fetchall()
 
 
+def get_preview_question(conn, question_id):
+    if not question_id:
+        return None
+    return conn.execute(
+        """
+        SELECT q.question_id,
+               q.objective_id,
+               q.stem,
+               q.choice_a,
+               q.choice_b,
+               q.choice_c,
+               q.choice_d,
+               COALESCE(o.standard_id, '') AS standard_id,
+               COALESCE(o.objective_text, '') AS objective_text
+        FROM questions q
+        LEFT JOIN objectives o ON o.objective_id = q.objective_id
+        WHERE q.question_id = ?
+        LIMIT 1
+        """,
+        (question_id,),
+    ).fetchone()
+
+
+def get_first_preview_question_id(conn, objective_id=None):
+    if objective_id:
+        row = conn.execute(
+            """
+            SELECT question_id
+            FROM questions
+            WHERE TRIM(UPPER(objective_id)) = TRIM(UPPER(?))
+            ORDER BY question_id
+            LIMIT 1
+            """,
+            (objective_id,),
+        ).fetchone()
+        if row:
+            return row["question_id"]
+
+    row = conn.execute(
+        """
+        SELECT question_id
+        FROM questions
+        ORDER BY question_id
+        LIMIT 1
+        """
+    ).fetchone()
+    return row["question_id"] if row else None
+
+
 def check_engine_tables(conn):
     tables = [
         "responses",
@@ -1493,6 +1542,144 @@ def toggle_names():
     if mode in ("masked", "full"):
         session["pii_mode"] = mode
     return redirect(url_for("index"))
+
+
+@app.route("/teacher/question_preview", methods=["GET"])
+@require_teacher
+def teacher_question_preview():
+    conn = get_conn()
+    objs = get_objectives(conn)
+
+    selected_objective_id = request.args.get("objective_id")
+    selected_question_id = request.args.get("question_id")
+
+    if not selected_question_id:
+        selected_question_id = get_first_preview_question_id(
+            conn,
+            selected_objective_id,
+        )
+
+    current_question = get_preview_question(conn, selected_question_id)
+    if current_question:
+        selected_objective_id = current_question["objective_id"]
+
+    qrows = (
+        get_questions_for_objective(conn, selected_objective_id)
+        if selected_objective_id
+        else []
+    )
+
+    current_model_asset = None
+    if current_question:
+        resolved_asset = resolve_model_asset_for_question(
+            conn,
+            current_question["question_id"],
+        )
+        current_model_asset = static_image_asset_for_render(resolved_asset)
+
+    html = """
+<!doctype html>
+<title>Teacher Question Preview</title>
+<style>
+  body{font-family:Arial, Helvetica, sans-serif;margin:24px;background:#f3f4f6;color:#1f2937}
+  .card{max-width:760px;margin:0 auto 16px auto;background:#fff;border-radius:10px;padding:16px 20px;border:1px solid #e5e7eb}
+  .header{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px}
+  .btn{background:#2563eb;color:#fff;border:none;padding:8px 12px;border-radius:8px;cursor:pointer;text-decoration:none;display:inline-block}
+  .btn-muted{background:#4b5563}
+  .toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 12px 0}
+  .banner{background:#fff7d6;border:1px solid #f2d27e;color:#6f4f00;border-radius:8px;padding:10px 12px;margin:12px 0}
+  .banner strong,.banner span{display:block}
+  .banner strong{margin-bottom:4px}
+  .choice{margin:4px 0}
+  .choice input{margin-right:8px}
+  input,select{padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px}
+  .muted{font-size:13px;color:#555}
+  .model-asset{margin:14px 0 16px 0;padding:12px;border:1px solid #d7dee8;border-radius:8px;background:#f8fafc}
+  .model-asset-title{margin:0 0 8px 0;font-weight:700;color:#1f2937}
+  .model-asset-caption{margin:8px 0 0 0;font-size:13px;color:#555;line-height:1.4}
+  .model-asset img{display:block;max-width:100%;height:auto;margin:0 auto;border-radius:6px}
+  .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+</style>
+
+<div class="card">
+  <div class="header">
+    <div>
+      <h2 style="margin:0;">Question Preview</h2>
+      <p class="muted" style="margin:2px 0 0 0;">Read-only student rendering for teacher review.</p>
+    </div>
+    <a class="btn btn-muted" href="{{ url_for('index') }}">Back to Dashboard</a>
+  </div>
+
+  <form method="get" class="toolbar">
+    <label>Objective
+      <select name="objective_id" onchange="this.form.submit()">
+        {% for o in objs %}
+          <option value="{{ o['objective_id'] }}" {% if o['objective_id'] == selected_objective_id %}selected{% endif %}>
+            {{ o['objective_id'] }}
+          </option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Question
+      <select name="question_id" onchange="this.form.submit()">
+        {% for q in qrows %}
+          <option value="{{ q['question_id'] }}" {% if q['question_id'] == selected_question_id %}selected{% endif %}>
+            {{ (q['stem'][:80] if q['stem'] else q['question_id']) }}{{ ('...' if q['stem'] and (q['stem']|length)>80 else '') }} ({{ q['question_id'] }})
+          </option>
+        {% endfor %}
+      </select>
+    </label>
+    <noscript><button class="btn" type="submit">Preview</button></noscript>
+  </form>
+
+  <div class="banner">
+    <strong>Teacher Preview</strong>
+    <span>This question is displayed as students see it.</span>
+    <span>Responses are disabled.</span>
+    <span>Student progress, adaptive routing, and Rolling-7 are not affected.</span>
+  </div>
+
+  {% if current_question %}
+    <h3>
+      Objective: {{ current_question['objective_id'] }}
+      <span class="muted">({{ current_question['standard_id'] }})</span>
+    </h3>
+    <p>{{ current_question['stem'] }}</p>
+    {% if current_model_asset %}
+      <figure class="model-asset">
+        {% if current_model_asset.title %}
+          <figcaption class="model-asset-title">{{ current_model_asset.title }}</figcaption>
+        {% endif %}
+        <img src="{{ url_for('static', filename=current_model_asset.filename) }}" alt="{{ current_model_asset.alt_text }}">
+        {% if current_model_asset.caption %}
+          <p class="model-asset-caption">{{ current_model_asset.caption }}</p>
+        {% endif %}
+        {% if current_model_asset.alt_text %}
+          <span class="sr-only">Image description: {{ current_model_asset.alt_text }}</span>
+        {% endif %}
+      </figure>
+    {% endif %}
+
+    <div aria-label="Answer choices">
+      <div class="choice"><label><input type="radio" name="preview_response" value="A" disabled> A. {{ current_question['choice_a'] }}</label></div>
+      <div class="choice"><label><input type="radio" name="preview_response" value="B" disabled> B. {{ current_question['choice_b'] }}</label></div>
+      <div class="choice"><label><input type="radio" name="preview_response" value="C" disabled> C. {{ current_question['choice_c'] }}</label></div>
+      <div class="choice"><label><input type="radio" name="preview_response" value="D" disabled> D. {{ current_question['choice_d'] }}</label></div>
+    </div>
+  {% else %}
+    <p><em>No questions are available to preview yet.</em></p>
+  {% endif %}
+</div>
+    """
+    return render_template_string(
+        html,
+        objs=objs,
+        qrows=qrows,
+        selected_objective_id=selected_objective_id,
+        selected_question_id=selected_question_id,
+        current_question=current_question,
+        current_model_asset=current_model_asset,
+    )
 
 
 def get_any_question_id(conn, objective_id):
@@ -2478,6 +2665,18 @@ def index():
         if current_obj_for_questions
         else []
     )
+    preview_objective_id = request.values.get("preview_objective_id", class_obj)
+    preview_qrows = (
+        get_questions_for_objective(conn, preview_objective_id)
+        if preview_objective_id
+        else []
+    )
+    preview_question_id = request.values.get("preview_question_id")
+    preview_question_ids = {row["question_id"] for row in preview_qrows}
+    if preview_question_id not in preview_question_ids:
+        preview_question_id = (
+            preview_qrows[0]["question_id"] if preview_qrows else None
+        )
 
     pii_mode = current_pii_mode()
 
@@ -2870,6 +3069,68 @@ def index():
   </div>
 </div>
 
+<div class="tool-section" id="teacher-tools">
+  <h2 style="margin-bottom:0;">Teacher Tools</h2>
+  <p class="section-note">Quick classroom tools for previewing and supporting student practice.</p>
+</div>
+
+<div class="grid">
+  <div class="card" id="question-preview">
+    <div class="headerbar">
+      <div>
+        <h2 style="margin:0;">Question Preview</h2>
+        <p class="section-note">Open a read-only teacher preview without recording student work or changing adaptive state.</p>
+      </div>
+      {% if preview_question_id %}
+        <a class="btn"
+           href="{{ url_for('teacher_question_preview', question_id=preview_question_id) }}"
+           target="_blank">Open Preview</a>
+      {% endif %}
+    </div>
+
+    {% if not objs %}
+      <div class="empty-state">Objectives will appear here after learning content is available.</div>
+    {% else %}
+      <form method="get" action="{{ url_for('index') }}#question-preview" class="toolbar" style="margin:0 0 8px 0;">
+        <input type="hidden" name="student_id" value="{{active_student}}">
+        <input type="hidden" name="class_objective" value="{{class_obj}}">
+        <input type="hidden" name="period" value="{{selected_period}}">
+        <label>Objective
+          <select name="preview_objective_id" onchange="this.form.submit()">
+            {% for o in objs %}
+              <option value="{{o['objective_id']}}" {% if o['objective_id'] == preview_objective_id %}selected{% endif %}>
+                {{o['objective_id']}}
+              </option>
+            {% endfor %}
+          </select>
+        </label>
+        <noscript><button class="btn" type="submit">Load Questions</button></noscript>
+      </form>
+
+      {% if preview_qrows %}
+        <form method="get" action="{{ url_for('index') }}#question-preview" class="toolbar" style="margin:0;">
+          <input type="hidden" name="student_id" value="{{active_student}}">
+          <input type="hidden" name="class_objective" value="{{class_obj}}">
+          <input type="hidden" name="period" value="{{selected_period}}">
+          <input type="hidden" name="preview_objective_id" value="{{preview_objective_id}}">
+          <label>Question
+            <select name="preview_question_id" onchange="this.form.submit()">
+              {% for q in preview_qrows %}
+                <option value="{{q['question_id']}}" {% if q['question_id'] == preview_question_id %}selected{% endif %}>
+                  {{ (q['stem'][:90] if q['stem'] else q['question_id']) }}{{ ('...' if q['stem'] and (q['stem']|length)>90 else '') }} ({{q['question_id']}})
+                </option>
+              {% endfor %}
+            </select>
+          </label>
+          <noscript><button class="btn" type="submit">Select Question</button></noscript>
+        </form>
+      {% else %}
+        <div class="empty-state">No questions are available for this objective yet.</div>
+      {% endif %}
+    {% endif %}
+  </div>
+</div>
+
 <div class="tool-section">
   <h2 style="margin-bottom:0;">Management and Setup Tools</h2>
   <p class="section-note">Existing configuration, roster, account, import, maintenance, and detailed progress tools remain available below.</p>
@@ -2934,6 +3195,14 @@ def index():
               {% endfor %}
             </select>
           </label>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 10px 0;">
+            {% for q in qrows %}
+              <a class="btn-mini"
+                 style="background:#4b5563;color:#fff;text-decoration:none;"
+                 href="{{ url_for('teacher_question_preview', question_id=q['question_id']) }}"
+                 target="_blank">Preview {{ q['question_id'] }}</a>
+            {% endfor %}
+          </div>
           <label>Response
             <select name="response"><option>A</option><option>B</option><option>C</option><option>D</option></select>
           </label>
@@ -3362,6 +3631,9 @@ def index():
         mastered_rows=mastered_rows,
         active_standard_rows=active_standard_rows,
         qrows=qrows,
+        preview_objective_id=preview_objective_id,
+        preview_qrows=preview_qrows,
+        preview_question_id=preview_question_id,
         period_opts=period_opts,
         selected_period=selected_period,
         pii_mode=pii_mode,
