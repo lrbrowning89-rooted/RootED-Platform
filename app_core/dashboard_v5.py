@@ -3036,8 +3036,629 @@ def sso_callback(provider):
         return redirect(url_for("student_view"))
 
 
+# ---------- Public landing page ----------
+@app.get("/")
+@app.get("/landing")
+def public_landing():
+    landing_html = """
+    <!doctype html>
+    <html lang="en">
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1">
+      <title>RootED | Where learning takes root.</title>
+      <meta name="description" content="RootED is a science learning platform in development, designed to help learners build deep understanding through curiosity, discovery, and meaningful challenge.">
+      <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}">
+      <style>
+        :root {
+          --landing-ink: #213326;
+          --landing-muted: #52665a;
+          --landing-deep: #1f4d37;
+          --landing-leaf: #2f7a4f;
+          --landing-sprout: #d8ead1;
+          --landing-earth: #f6f2ea;
+          --landing-paper: #fffdf8;
+          --landing-line: #d9e3d6;
+          --landing-shadow: 0 20px 60px rgba(33, 51, 38, 0.12);
+        }
+
+        * {
+          box-sizing: border-box;
+        }
+
+        body.rooted-landing {
+          margin: 0;
+          color: var(--landing-ink);
+          background:
+            radial-gradient(circle at 15% 5%, rgba(216, 234, 209, 0.75), transparent 32rem),
+            linear-gradient(180deg, var(--landing-paper) 0%, var(--landing-earth) 100%);
+          font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          line-height: 1.6;
+        }
+
+        .rooted-landing a {
+          color: inherit;
+        }
+
+        .rooted-page {
+          min-height: 100vh;
+          overflow: hidden;
+        }
+
+        .rooted-shell {
+          width: min(1120px, calc(100% - 40px));
+          margin: 0 auto;
+        }
+
+        .rooted-nav {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 24px;
+          padding: 24px 0;
+        }
+
+        .rooted-brand {
+          display: inline-flex;
+          align-items: center;
+          gap: 12px;
+          font-weight: 800;
+          letter-spacing: 0;
+          color: var(--landing-deep);
+          text-decoration: none;
+        }
+
+        .rooted-brand-mark {
+          display: grid;
+          place-items: center;
+          width: 42px;
+          height: 42px;
+          border-radius: 50%;
+          background: var(--landing-sprout);
+          border: 1px solid var(--landing-line);
+          overflow: hidden;
+        }
+
+        .rooted-brand-mark img {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+        }
+
+        .rooted-brand-fallback {
+          color: var(--landing-deep);
+          font-size: 1.15rem;
+        }
+
+        .rooted-nav-links {
+          display: flex;
+          gap: 18px;
+          color: var(--landing-muted);
+          font-size: 0.95rem;
+        }
+
+        .rooted-nav-links a {
+          text-decoration: none;
+        }
+
+        .rooted-nav-links a:focus,
+        .rooted-nav-links a:hover {
+          color: var(--landing-deep);
+          text-decoration: underline;
+          text-underline-offset: 5px;
+        }
+
+        .rooted-hero {
+          display: grid;
+          grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
+          align-items: center;
+          gap: 56px;
+          min-height: 68vh;
+          padding: 44px 0 76px;
+        }
+
+        .rooted-kicker {
+          margin: 0 0 14px;
+          color: var(--landing-leaf);
+          font-size: 0.82rem;
+          font-weight: 800;
+          letter-spacing: 0.12em;
+          text-transform: uppercase;
+        }
+
+        .rooted-hero h1 {
+          margin: 0;
+          color: var(--landing-deep);
+          font-size: clamp(3.45rem, 7vw, 6.8rem);
+          line-height: 0.98;
+          letter-spacing: 0;
+        }
+
+        .rooted-hero h1 span {
+          display: block;
+        }
+
+        .rooted-tagline {
+          margin: 22px 0 0;
+          color: var(--landing-ink);
+          font-size: clamp(1.55rem, 3vw, 2.55rem);
+          font-weight: 750;
+          line-height: 1.15;
+        }
+
+        .rooted-hero-copy {
+          max-width: 660px;
+          margin: 24px 0 0;
+          color: var(--landing-muted);
+          font-size: 1.13rem;
+        }
+
+        .rooted-mission {
+          max-width: 660px;
+          margin: 18px 0 0;
+          padding-left: 18px;
+          border-left: 4px solid var(--landing-leaf);
+          color: var(--landing-ink);
+          font-size: 1.03rem;
+          font-weight: 650;
+        }
+
+        .rooted-hero-panel {
+          position: relative;
+          padding: 24px;
+          border: 1px solid var(--landing-line);
+          border-radius: 8px;
+          background: rgba(255, 253, 248, 0.86);
+          box-shadow: var(--landing-shadow);
+        }
+
+        .rooted-growth-art {
+          min-height: 280px;
+          border-radius: 8px;
+          background:
+            linear-gradient(160deg, rgba(47, 122, 79, 0.14), rgba(216, 234, 209, 0.8)),
+            var(--landing-paper);
+          border: 1px solid rgba(31, 77, 55, 0.16);
+          display: grid;
+          place-items: center;
+          padding: 28px;
+        }
+
+        .rooted-sprout {
+          position: relative;
+          width: min(204px, 62vw);
+          height: 222px;
+        }
+
+        .rooted-sprout::before {
+          content: "";
+          position: absolute;
+          left: 50%;
+          bottom: 39px;
+          width: 6px;
+          height: 132px;
+          border-radius: 999px;
+          background: var(--landing-deep);
+          transform: translateX(-50%);
+        }
+
+        .rooted-leaf {
+          position: absolute;
+          width: 86px;
+          height: 55px;
+          border-radius: 64px 64px 6px 64px;
+          background: var(--landing-leaf);
+          box-shadow: inset 0 -10px 18px rgba(31, 77, 55, 0.18);
+        }
+
+        .rooted-leaf-left {
+          left: 18px;
+          top: 58px;
+          transform: rotate(-30deg);
+        }
+
+        .rooted-leaf-right {
+          right: 16px;
+          top: 32px;
+          transform: scaleX(-1) rotate(-24deg);
+          background: #4b9665;
+        }
+
+        .rooted-soil {
+          position: absolute;
+          left: 11px;
+          right: 11px;
+          bottom: 21px;
+          height: 32px;
+          border-radius: 999px;
+          background: #6f5c45;
+        }
+
+        .rooted-roots {
+          position: absolute;
+          left: 50%;
+          bottom: 0;
+          width: 132px;
+          height: 71px;
+          transform: translateX(-50%);
+          border-bottom: 3px solid #6f5c45;
+          border-left: 3px solid #6f5c45;
+          border-right: 3px solid #6f5c45;
+          border-radius: 0 0 80px 80px;
+          opacity: 0.9;
+        }
+
+        .rooted-roots::before,
+        .rooted-roots::after {
+          content: "";
+          position: absolute;
+          top: 20px;
+          width: 55px;
+          height: 37px;
+          border-bottom: 3px solid #6f5c45;
+        }
+
+        .rooted-roots::before {
+          left: 7px;
+          border-left: 3px solid #6f5c45;
+          border-radius: 0 0 0 42px;
+        }
+
+        .rooted-roots::after {
+          right: 7px;
+          border-right: 3px solid #6f5c45;
+          border-radius: 0 0 42px 0;
+        }
+
+        .rooted-section {
+          padding: 68px 0;
+          border-top: 1px solid rgba(31, 77, 55, 0.12);
+        }
+
+        .rooted-section-header {
+          max-width: 720px;
+          margin-bottom: 28px;
+        }
+
+        .rooted-section h2 {
+          margin: 0 0 12px;
+          color: var(--landing-deep);
+          font-size: clamp(1.85rem, 4vw, 3rem);
+          line-height: 1.1;
+          letter-spacing: 0;
+        }
+
+        .rooted-section p {
+          margin: 0;
+          color: var(--landing-muted);
+          font-size: 1.06rem;
+        }
+
+        .rooted-feature-grid {
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          gap: 16px;
+        }
+
+        .rooted-feature {
+          min-height: 190px;
+          padding: 22px;
+          border: 1px solid var(--landing-line);
+          border-radius: 8px;
+          background: rgba(255, 253, 248, 0.78);
+        }
+
+        .rooted-feature-icon {
+          display: grid;
+          place-items: center;
+          width: 42px;
+          height: 42px;
+          margin-bottom: 18px;
+          border-radius: 50%;
+          color: var(--landing-deep);
+          background: var(--landing-sprout);
+          font-weight: 900;
+        }
+
+        .rooted-feature h3 {
+          margin: 0 0 10px;
+          color: var(--landing-ink);
+          font-size: 1.08rem;
+          line-height: 1.25;
+        }
+
+        .rooted-feature p {
+          font-size: 0.98rem;
+        }
+
+        .rooted-public-note {
+          display: grid;
+          grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+          gap: 28px;
+          align-items: start;
+          padding: 30px;
+          border-radius: 8px;
+          background: var(--landing-deep);
+          color: #fffdf8;
+        }
+
+        .rooted-public-note h2,
+        .rooted-public-note p {
+          color: inherit;
+        }
+
+        .rooted-public-note p {
+          opacity: 0.9;
+        }
+
+        .rooted-follow-list {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 12px;
+          margin-top: 26px;
+        }
+
+        .rooted-follow-item {
+          display: inline-flex;
+          align-items: center;
+          gap: 10px;
+          min-height: 48px;
+          padding: 12px 16px;
+          border: 1px solid var(--landing-line);
+          border-radius: 8px;
+          background: rgba(255, 253, 248, 0.82);
+          color: var(--landing-deep);
+          font-weight: 750;
+          text-decoration: none;
+        }
+
+        a.rooted-follow-item:focus,
+        a.rooted-follow-item:hover {
+          border-color: var(--landing-leaf);
+          background: var(--landing-sprout);
+          color: var(--landing-deep);
+          text-decoration: none;
+        }
+
+        .rooted-social-icon {
+          display: grid;
+          place-items: center;
+          width: 28px;
+          height: 28px;
+          flex: 0 0 28px;
+          border-radius: 50%;
+          color: #fffdf8;
+          line-height: 1;
+          margin-left: 0;
+        }
+
+        .rooted-social-icon svg {
+          display: block;
+          width: 28px;
+          height: 28px;
+        }
+
+        .rooted-follow-item span {
+          margin-left: 12px;
+          color: var(--landing-muted);
+          font-weight: 650;
+        }
+
+        .rooted-footer {
+          padding: 34px 0 44px;
+          color: var(--landing-muted);
+        }
+
+        .rooted-footer strong {
+          display: block;
+          color: var(--landing-deep);
+          font-size: 1.18rem;
+        }
+
+        .rooted-footer span {
+          display: block;
+          margin-top: 4px;
+        }
+
+        @media (max-width: 880px) {
+          .rooted-nav {
+            align-items: flex-start;
+            flex-direction: column;
+          }
+
+          .rooted-hero,
+          .rooted-public-note {
+            grid-template-columns: 1fr;
+          }
+
+          .rooted-hero {
+            gap: 34px;
+            min-height: 0;
+            padding-top: 28px;
+          }
+
+          .rooted-feature-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+        }
+
+        @media (max-width: 620px) {
+          .rooted-shell {
+            width: min(100% - 28px, 1120px);
+          }
+
+          .rooted-nav-links {
+            width: 100%;
+            justify-content: space-between;
+            gap: 10px;
+            font-size: 0.9rem;
+          }
+
+          .rooted-hero {
+            padding-bottom: 54px;
+          }
+
+          .rooted-hero-panel,
+          .rooted-public-note {
+            padding: 20px;
+          }
+
+          .rooted-growth-art {
+            min-height: 230px;
+          }
+
+          .rooted-feature-grid {
+            grid-template-columns: 1fr;
+          }
+
+          .rooted-section {
+            padding: 54px 0;
+          }
+
+          .rooted-follow-list {
+            flex-direction: column;
+          }
+
+          .rooted-follow-item {
+            width: 100%;
+          }
+        }
+      </style>
+    </head>
+    <body class="rooted-landing">
+      <div class="rooted-page">
+        <header class="rooted-shell rooted-nav" aria-label="RootED landing navigation">
+          <a class="rooted-brand" href="{{ url_for('public_landing') }}" aria-label="RootED landing page">
+            <span class="rooted-brand-mark" aria-hidden="true">
+              <img src="{{ url_for('static', filename='Logo.png') }}" alt="" onerror="this.style.display='none'; this.nextElementSibling.style.display='inline';">
+              <span class="rooted-brand-fallback" style="display:none;">R</span>
+            </span>
+            <span>RootED</span>
+          </a>
+          <nav class="rooted-nav-links" aria-label="Page sections">
+            <a href="#what-rooted-is">What it is</a>
+            <a href="#building-public">Building</a>
+            <a href="#follow-along">Follow</a>
+            <a href="{{ url_for('login') }}">Login</a>
+          </nav>
+        </header>
+
+        <main>
+          <section class="rooted-shell rooted-hero" aria-labelledby="rooted-hero-title">
+            <div>
+              <p class="rooted-kicker">Science learning platform</p>
+              <h1 id="rooted-hero-title"><span>Science Learning.</span><span>Built differently.</span></h1>
+              <p class="rooted-tagline">Where learning takes root.</p>
+              <p class="rooted-hero-copy">
+                RootED helps learners build deep understanding through curiosity, discovery, and meaningful challenge.
+              </p>
+              <p class="rooted-mission">
+                Mission: help students build deep understanding while giving teachers meaningful instructional support.
+              </p>
+            </div>
+            <!-- TODO: Replace this temporary illustration with an original RootED brand illustration in a future branding pass. -->
+            <div class="rooted-hero-panel" aria-hidden="true">
+              <div class="rooted-growth-art">
+                <div class="rooted-sprout">
+                  <span class="rooted-leaf rooted-leaf-left"></span>
+                  <span class="rooted-leaf rooted-leaf-right"></span>
+                  <span class="rooted-soil"></span>
+                  <span class="rooted-roots"></span>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="rooted-shell rooted-section" id="what-rooted-is" aria-labelledby="what-rooted-title">
+            <div class="rooted-section-header">
+              <h2 id="what-rooted-title">What RootED Is</h2>
+              <p>
+                RootED is being shaped around purposeful classroom learning: responsive practice, meaningful standards alignment, and tools that support teachers without replacing their judgment.
+              </p>
+            </div>
+            <div class="rooted-feature-grid">
+              <article class="rooted-feature">
+                <div class="rooted-feature-icon" aria-hidden="true">1</div>
+                <h3>Adaptive learning</h3>
+                <p>Learning experiences respond to student understanding and create room for productive challenge.</p>
+              </article>
+              <article class="rooted-feature">
+                <div class="rooted-feature-icon" aria-hidden="true">2</div>
+                <h3>Standards-based growth</h3>
+                <p>Progress is grounded in standards-aligned objectives that help make growth visible over time.</p>
+              </article>
+              <article class="rooted-feature">
+                <div class="rooted-feature-icon" aria-hidden="true">3</div>
+                <h3>Teacher-centered support</h3>
+                <p>RootED is designed to support classroom decision-making and keep teachers at the center of instruction.</p>
+              </article>
+              <article class="rooted-feature">
+                <div class="rooted-feature-icon" aria-hidden="true">4</div>
+                <h3>Science first</h3>
+                <p>RootED is being built first for science, with a long-term vision for cross-curricular learning.</p>
+              </article>
+            </div>
+          </section>
+
+          <section class="rooted-shell rooted-section" id="teacher-built" aria-labelledby="teacher-built-title">
+            <div class="rooted-section-header">
+              <h2 id="teacher-built-title">Designed by a middle school science teacher.</h2>
+              <p>
+                RootED is being designed from real classroom experience to support science learning, strengthen understanding, and give teachers meaningful instructional tools.
+              </p>
+            </div>
+          </section>
+
+          <section class="rooted-shell rooted-section" id="building-public" aria-labelledby="building-public-title">
+            <div class="rooted-public-note">
+              <h2 id="building-public-title">Building in Public</h2>
+              <p>
+                We are building RootED in public - sharing design decisions, instructional thinking, classroom milestones, and the journey of building RootED from the ground up.
+              </p>
+            </div>
+          </section>
+
+          <section class="rooted-shell rooted-section" id="follow-along" aria-labelledby="follow-along-title">
+            <div class="rooted-section-header">
+              <h2 id="follow-along-title">Follow Along</h2>
+              <p>RootED is currently in development. Follow the journey as the platform grows.</p>
+            </div>
+            <div class="rooted-follow-list" aria-label="RootED public social links">
+              <a class="rooted-follow-item" href="https://www.instagram.com/rooted.school/" target="_blank" rel="noopener noreferrer">
+                <span class="rooted-social-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" role="img" focusable="false">
+                    <rect x="3" y="3" width="18" height="18" rx="5.2" fill="none" stroke="currentColor" stroke-width="2"></rect>
+                    <circle cx="12" cy="12" r="4.2" fill="none" stroke="currentColor" stroke-width="2"></circle>
+                    <circle cx="17.2" cy="6.8" r="1.2" fill="currentColor"></circle>
+                  </svg>
+                </span>
+                Instagram
+              </a>
+              <a class="rooted-follow-item" href="https://www.facebook.com/people/Rootedschool/61591842830766/" target="_blank" rel="noopener noreferrer">
+                <span class="rooted-social-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" role="img" focusable="false">
+                    <path fill="currentColor" d="M14 8.5V6.8c0-.8.3-1.2 1.3-1.2H17V3h-2.6C11.8 3 10 4.7 10 7.2v1.3H7.8v3H10V21h3.1v-9.5h3.1l.5-3H13.1z"></path>
+                  </svg>
+                </span>
+                Facebook
+              </a>
+            </div>
+          </section>
+        </main>
+
+        <footer class="rooted-shell rooted-footer">
+          <strong>RootED</strong>
+          <span>Where learning takes root.</span>
+        </footer>
+      </div>
+    </body>
+    </html>
+    """
+    return render_template_string(landing_html)
+
+
 # ---------- Teacher dashboard ----------
-@app.route("/", methods=["GET", "POST"])
+@app.route("/dashboard", methods=["GET", "POST"])
 @require_teacher
 def index():
     conn = get_conn()
