@@ -23,7 +23,14 @@ from functools import wraps
 from werkzeug.security import generate_password_hash, check_password_hash
 from authlib.integrations.flask_client import OAuth
 
-from app_core.config import FERPA_ENFORCED, DEFAULT_PII_MODE, SECRET_KEY
+from app_core.config import (
+    ALLOW_SSO_AUTO_CREATE,
+    DEFAULT_PII_MODE,
+    ENABLE_GOOGLE_AUTH,
+    ENABLE_MICROSOFT_AUTH,
+    FERPA_ENFORCED,
+    SECRET_KEY,
+)
 from app_core import adaptive_engine as ae
 
 # ---------- App metadata ----------
@@ -75,6 +82,13 @@ oauth.register(
 )
 
 # ---------- Auth decorators ----------
+def is_sso_provider_enabled(provider: str) -> bool:
+    return (
+        (provider == "google" and ENABLE_GOOGLE_AUTH)
+        or (provider == "microsoft" and ENABLE_MICROSOFT_AUTH)
+    )
+
+
 def require_login(f):
     @wraps(f)
     def wrapper(*args, **kwargs):
@@ -1843,6 +1857,7 @@ def get_or_create_sso_user(
     email: str | None = None,
     default_role: str = "student",
     linked_student_id: str | None = None,
+    allow_create: bool = False,
 ):
     """
     Look up or create a user for an SSO identity.
@@ -1892,6 +1907,9 @@ def get_or_create_sso_user(
         return conn.execute(
             "SELECT * FROM users WHERE id = ?", (row["id"],)
         ).fetchone()
+
+    if not allow_create:
+        return None
 
     # 2) Create a new user, using email as a base username if available
     base_username = email.split("@")[0] if email and "@" in email else subject
@@ -2902,15 +2920,21 @@ def login():
                 Do not have an account? Contact your teacher to be added.
               </p>
 
-              <div class="divider"><span>OR</span></div>
+              {% if enable_google_auth or enable_microsoft_auth %}
+                <div class="divider"><span>OR</span></div>
 
-              <p class="sso-copy">Sign in with your school account:</p>
-              <form method="get" action="{{ url_for('sso_login', provider='google') }}" class="sso-form">
-                <button type="submit" class="btn-sso-google">Continue with Google</button>
-              </form>
-              <form method="get" action="{{ url_for('sso_login', provider='microsoft') }}" class="sso-form">
-                <button type="submit" class="btn-sso-ms">Continue with Microsoft</button>
-              </form>
+                <p class="sso-copy">Sign in with your school account:</p>
+                {% if enable_google_auth %}
+                  <form method="get" action="{{ url_for('sso_login', provider='google') }}" class="sso-form">
+                    <button type="submit" class="btn-sso-google">Continue with Google</button>
+                  </form>
+                {% endif %}
+                {% if enable_microsoft_auth %}
+                  <form method="get" action="{{ url_for('sso_login', provider='microsoft') }}" class="sso-form">
+                    <button type="submit" class="btn-sso-ms">Continue with Microsoft</button>
+                  </form>
+                {% endif %}
+              {% endif %}
             </div>
           </aside>
         </section>
@@ -2918,7 +2942,11 @@ def login():
     </body>
     </html>
     """
-    return render_template_string(login_html)
+    return render_template_string(
+        login_html,
+        enable_google_auth=ENABLE_GOOGLE_AUTH,
+        enable_microsoft_auth=ENABLE_MICROSOFT_AUTH,
+    )
 
 
 @app.route("/logout")
@@ -2937,6 +2965,9 @@ def sso_login(provider):
     provider = provider.lower()
     if provider not in ("google", "microsoft"):
         abort(404)
+    if not is_sso_provider_enabled(provider):
+        flash("This sign-in method is not currently available.")
+        return redirect(url_for("not_authorized"))
 
     client = oauth.create_client(provider)
     if not client:
@@ -2963,6 +2994,9 @@ def sso_callback(provider):
     provider = provider.lower()
     if provider not in ("google", "microsoft"):
         abort(404)
+    if not is_sso_provider_enabled(provider):
+        flash("This sign-in method is not currently available.")
+        return redirect(url_for("not_authorized"))
 
     client = oauth.create_client(provider)
     if not client:
@@ -3014,11 +3048,12 @@ def sso_callback(provider):
         email=email,
         default_role=default_role,
         linked_student_id=None,
+        allow_create=ALLOW_SSO_AUTO_CREATE,
     )
 
     if not user:
-        flash("This SSO account is disabled or could not be created.")
-        return redirect(url_for("login"))
+        flash("This account is not authorized for RootED access.")
+        return redirect(url_for("not_authorized"))
 
     # Write login info to session (same as local login)
     session["user_id"] = user["id"]
@@ -3034,6 +3069,35 @@ def sso_callback(provider):
         session["current_mode"] = "home"
         session["locked_payload"] = None
         return redirect(url_for("student_view"))
+
+
+@app.get("/not-authorized")
+def not_authorized():
+    html = """
+    <!doctype html>
+    <html lang="en">
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1">
+      <title>RootED | Not authorized</title>
+      <style>
+        body{font-family:Arial, Helvetica, sans-serif;margin:0;min-height:100vh;display:grid;place-items:center;background:#fbfaf4;color:#1f2937}
+        .card{width:min(520px, calc(100% - 32px));background:#fff;border:1px solid #e5e0d2;border-radius:8px;padding:24px;box-shadow:0 18px 45px rgba(31,41,51,.08)}
+        h1{margin:0 0 10px;color:#183629;font-size:28px}
+        p{line-height:1.5;color:#4b5563}
+        a{display:inline-block;margin-top:8px;color:#24543d;font-weight:700}
+      </style>
+    </head>
+    <body>
+      <main class="card">
+        <h1>Not authorized</h1>
+        <p>This account is not approved for RootED access. Please contact your teacher or RootED administrator if you believe this is a mistake.</p>
+        <a href="{{ url_for('login') }}">Return to login</a>
+      </main>
+    </body>
+    </html>
+    """
+    return render_template_string(html), 403
 
 
 # ---------- Public landing page ----------
