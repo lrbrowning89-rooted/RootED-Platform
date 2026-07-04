@@ -15,6 +15,7 @@ import csv
 import io
 import uuid
 import os
+import json
 import logging
 from logging.handlers import RotatingFileHandler
 import traceback
@@ -60,6 +61,55 @@ if not logger.handlers:
     formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
+
+if not any(getattr(handler, "_rooted_render_stream", False) for handler in logger.handlers):
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+    stream_handler._rooted_render_stream = True
+    logger.addHandler(stream_handler)
+
+PUBLIC_CRAWLER_LOG_PATHS = {"/", "/landing", "/robots.txt", "/static/Logo.png"}
+PUBLIC_CRAWLER_UA_MARKERS = ("facebookexternalhit", "facebot")
+PUBLIC_CRAWLER_SAFE_HEADERS = (
+    "Accept",
+    "Accept-Language",
+    "CF-Connecting-IP",
+    "CF-Ray",
+    "Host",
+    "X-Forwarded-For",
+    "X-Forwarded-Host",
+    "X-Forwarded-Proto",
+)
+
+
+@app.after_request
+def log_public_crawler_request(response):
+    user_agent = request.headers.get("User-Agent", "")
+    user_agent_lower = user_agent.lower()
+
+    if request.path not in PUBLIC_CRAWLER_LOG_PATHS or not any(
+        marker in user_agent_lower for marker in PUBLIC_CRAWLER_UA_MARKERS
+    ):
+        return response
+
+    safe_headers = {
+        header: request.headers.get(header)
+        for header in PUBLIC_CRAWLER_SAFE_HEADERS
+        if request.headers.get(header)
+    }
+    payload = {
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "path": request.path,
+        "method": request.method,
+        "status": response.status_code,
+        "user_agent": user_agent,
+        "remote_addr": request.remote_addr,
+        "x_forwarded_for": request.headers.get("X-Forwarded-For"),
+        "cf_ray": request.headers.get("CF-Ray"),
+        "headers": safe_headers,
+    }
+    logger.info("PUBLIC_CRAWLER_REQUEST %s", json.dumps(payload, sort_keys=True))
+    return response
 
 # ---------- OAuth / SSO setup ----------
 oauth = OAuth(app)
