@@ -3123,7 +3123,7 @@ def public_landing():
           --landing-earth: #f6f2ea;
           --landing-paper: #fffdf8;
           --landing-line: #d9e3d6;
-          --landing-shadow: 0 20px 60px rgba(33, 51, 38, 0.12);
+          --landing-shadow: 0 16px 42px rgba(33, 51, 38, 0.09);
         }
 
         * {
@@ -3279,99 +3279,21 @@ def public_landing():
         .rooted-growth-art {
           min-height: 280px;
           border-radius: 8px;
-          background:
-            linear-gradient(160deg, rgba(47, 122, 79, 0.14), rgba(216, 234, 209, 0.8)),
-            var(--landing-paper);
+          background: #fff;
           border: 1px solid rgba(31, 77, 55, 0.16);
           display: grid;
           place-items: center;
           padding: 28px;
+          overflow: hidden;
         }
 
-        .rooted-sprout {
-          position: relative;
-          width: min(204px, 62vw);
-          height: 222px;
-        }
-
-        .rooted-sprout::before {
-          content: "";
-          position: absolute;
-          left: 50%;
-          bottom: 39px;
-          width: 6px;
-          height: 132px;
-          border-radius: 999px;
-          background: var(--landing-deep);
-          transform: translateX(-50%);
-        }
-
-        .rooted-leaf {
-          position: absolute;
-          width: 86px;
-          height: 55px;
-          border-radius: 64px 64px 6px 64px;
-          background: var(--landing-leaf);
-          box-shadow: inset 0 -10px 18px rgba(31, 77, 55, 0.18);
-        }
-
-        .rooted-leaf-left {
-          left: 18px;
-          top: 58px;
-          transform: rotate(-30deg);
-        }
-
-        .rooted-leaf-right {
-          right: 16px;
-          top: 32px;
-          transform: scaleX(-1) rotate(-24deg);
-          background: #4b9665;
-        }
-
-        .rooted-soil {
-          position: absolute;
-          left: 11px;
-          right: 11px;
-          bottom: 21px;
-          height: 32px;
-          border-radius: 999px;
-          background: #6f5c45;
-        }
-
-        .rooted-roots {
-          position: absolute;
-          left: 50%;
-          bottom: 0;
-          width: 132px;
-          height: 71px;
-          transform: translateX(-50%);
-          border-bottom: 3px solid #6f5c45;
-          border-left: 3px solid #6f5c45;
-          border-right: 3px solid #6f5c45;
-          border-radius: 0 0 80px 80px;
-          opacity: 0.9;
-        }
-
-        .rooted-roots::before,
-        .rooted-roots::after {
-          content: "";
-          position: absolute;
-          top: 20px;
-          width: 55px;
-          height: 37px;
-          border-bottom: 3px solid #6f5c45;
-        }
-
-        .rooted-roots::before {
-          left: 7px;
-          border-left: 3px solid #6f5c45;
-          border-radius: 0 0 0 42px;
-        }
-
-        .rooted-roots::after {
-          right: 7px;
-          border-right: 3px solid #6f5c45;
-          border-radius: 0 0 42px 0;
+        .rooted-hero-logo {
+          display: block;
+          width: min(100%, 408px);
+          max-height: 408px;
+          aspect-ratio: 1 / 1;
+          object-fit: contain;
+          border-radius: 8px;
         }
 
         .rooted-section {
@@ -3620,15 +3542,10 @@ def public_landing():
                 Mission: help students build deep understanding while giving teachers meaningful instructional support.
               </p>
             </div>
-            <!-- TODO: Replace this temporary illustration with an original RootED brand illustration in a future branding pass. -->
-            <div class="rooted-hero-panel" aria-hidden="true">
+            <!-- TODO: Future branding pass may add a dedicated hero illustration; currently using official RootED logo. -->
+            <div class="rooted-hero-panel">
               <div class="rooted-growth-art">
-                <div class="rooted-sprout">
-                  <span class="rooted-leaf rooted-leaf-left"></span>
-                  <span class="rooted-leaf rooted-leaf-right"></span>
-                  <span class="rooted-soil"></span>
-                  <span class="rooted-roots"></span>
-                </div>
+                <img class="rooted-hero-logo" src="{{ url_for('static', filename='Logo.png') }}" alt="RootED logo">
               </div>
             </div>
           </section>
