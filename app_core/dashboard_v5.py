@@ -21,6 +21,7 @@ import traceback
 from functools import wraps
 
 from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.exceptions import HTTPException
 from authlib.integrations.flask_client import OAuth
 
 from app_core.config import (
@@ -6914,6 +6915,9 @@ def engine_debug(student_id, standard_id):
 # ---------- Global error handler ----------
 @app.errorhandler(Exception)
 def handle_exception(e):
+    if isinstance(e, HTTPException):
+        return e
+
     conn = get_conn()
     ts = int(time.time())
     path = request.path
@@ -7089,6 +7093,13 @@ def clear_errors():
 @app.route('/favicon.ico')
 def favicon():
     return redirect(url_for('static', filename='favicon.ico'))
+
+@app.get("/robots.txt")
+def robots_txt():
+    return app.response_class(
+        "User-agent: *\nDisallow:\n",
+        mimetype="text/plain",
+    )
 
 print(app.url_map)
 
