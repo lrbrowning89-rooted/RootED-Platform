@@ -3110,9 +3110,19 @@ def public_landing():
     <head>
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width, initial-scale=1">
-      <title>RootED | Where learning takes root.</title>
+      <title>RootED | Science Learning. Built differently.</title>
       <meta name="description" content="RootED is a science learning platform in development, designed to help learners build deep understanding through curiosity, discovery, and meaningful challenge.">
+      <link rel="canonical" href="https://rooted.school/">
       <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}">
+      <meta property="og:title" content="RootED | Science Learning. Built differently.">
+      <meta property="og:description" content="RootED is a science learning platform in development, designed to help learners build deep understanding through curiosity, discovery, and meaningful challenge.">
+      <meta property="og:type" content="website">
+      <meta property="og:url" content="https://rooted.school/">
+      <meta property="og:image" content="https://rooted.school/static/Logo.png">
+      <meta name="twitter:card" content="summary_large_image">
+      <meta name="twitter:title" content="RootED | Science Learning. Built differently.">
+      <meta name="twitter:description" content="RootED is a science learning platform in development, designed to help learners build deep understanding through curiosity, discovery, and meaningful challenge.">
+      <meta name="twitter:image" content="https://rooted.school/static/Logo.png">
       <style>
         :root {
           --landing-ink: #213326;
