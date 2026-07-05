@@ -3169,11 +3169,11 @@ def public_landing():
       <meta property="og:description" content="RootED is a science learning platform in development, designed to help learners build deep understanding through curiosity, discovery, and meaningful challenge.">
       <meta property="og:type" content="website">
       <meta property="og:url" content="https://rooted.school/">
-      <meta property="og:image" content="https://rooted.school/static/Logo.png">
+      <meta property="og:image" content="https://rooted.school/static/rooted-og-preview.png">
       <meta name="twitter:card" content="summary_large_image">
       <meta name="twitter:title" content="RootED | Science Learning. Built differently.">
       <meta name="twitter:description" content="RootED is a science learning platform in development, designed to help learners build deep understanding through curiosity, discovery, and meaningful challenge.">
-      <meta name="twitter:image" content="https://rooted.school/static/Logo.png">
+      <meta name="twitter:image" content="https://rooted.school/static/rooted-og-preview.png">
       <style>
         :root {
           --landing-ink: #213326;
