@@ -2,11 +2,8 @@ import argparse
 import sqlite3
 import sys
 import time
-from pathlib import Path
 
-
-ROOT = Path(__file__).resolve().parents[1]
-DB = ROOT / "data" / "ngss.db"
+from db_path import add_db_argument, print_database_path, resolve_database_path
 
 RESET_TABLES = (
     "attempts",
@@ -223,6 +220,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--username", required=True)
     parser.add_argument("--standard-id", required=True)
     parser.add_argument("--objective-id", required=True)
+    add_db_argument(parser)
     parser.add_argument("--confirm", action="store_true")
     args = parser.parse_args()
     if not args.confirm:
@@ -232,8 +230,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    db_path = resolve_database_path(args.db)
 
-    with sqlite3.connect(DB) as conn:
+    with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
 
@@ -254,7 +253,7 @@ def main() -> None:
         }
 
         print("Reset plan")
-        print(f"Database: {DB}")
+        print_database_path(db_path)
         print(f"Username: {args.username}")
         print(f"Resolved student_id: {student_id}")
         print(f"Target standard_id: {args.standard_id}")

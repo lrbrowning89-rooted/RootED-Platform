@@ -1,12 +1,11 @@
 import argparse
 import getpass
-import os
 import sqlite3
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_DB = Path(os.environ.get("NGSS_DB", ROOT / "data" / "ngss.db"))
+from db_path import add_db_argument, print_database_path, resolve_database_path
+
 ALLOWED_ROLES = {"teacher"}
 REQUIRED_COLUMNS = {"id", "username", "password_hash", "role", "is_active"}
 
@@ -20,11 +19,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Set/reset a password for one existing approved RootED user."
     )
-    parser.add_argument(
-        "--db",
-        default=str(DEFAULT_DB),
-        help="Path to SQLite database. Defaults to NGSS_DB or data/ngss.db.",
-    )
+    add_db_argument(parser)
     lookup = parser.add_mutually_exclusive_group(required=True)
     lookup.add_argument("--username", help="Existing users.username to update.")
     lookup.add_argument("--email", help="Existing users.sso_email to update.")
@@ -125,7 +120,7 @@ def safe_email(email: str | None) -> str:
 
 def main() -> None:
     args = parse_args()
-    db_path = Path(args.db).expanduser().resolve()
+    db_path = resolve_database_path(args.db)
 
     if args.role not in ALLOWED_ROLES:
         fail(f"Role is not allowed for this recovery script: {args.role}")
@@ -151,7 +146,7 @@ def main() -> None:
         }
 
         print("Approved user password reset plan")
-        print(f"Database: {db_path}")
+        print_database_path(db_path)
         for key, value in planned.items():
             print(f"{key}: {value}")
 

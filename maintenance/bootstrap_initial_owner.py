@@ -1,14 +1,12 @@
 import argparse
 import getpass
-import os
 import re
 import sqlite3
 import sys
 from pathlib import Path
 
+from db_path import add_db_argument, print_database_path, resolve_database_path
 
-ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_DB = Path(os.environ.get("NGSS_DB", ROOT / "data" / "ngss.db"))
 REQUIRED_COLUMNS = {"username", "password_hash", "role", "is_active"}
 ROLE_CHOICES = {"teacher", "owner"}
 
@@ -22,11 +20,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Bootstrap exactly one initial approved RootED owner/teacher account."
     )
-    parser.add_argument(
-        "--db",
-        default=str(DEFAULT_DB),
-        help="Path to SQLite database. Defaults to NGSS_DB or data/ngss.db.",
-    )
+    add_db_argument(parser)
     parser.add_argument("--username", required=True, help="Username for the initial account.")
     parser.add_argument("--email", required=True, help="Email for the initial account.")
     parser.add_argument(
@@ -132,7 +126,7 @@ def safe_email(email: str) -> str:
 
 def main() -> None:
     args = parse_args()
-    db_path = Path(args.db).expanduser().resolve()
+    db_path = resolve_database_path(args.db)
     username = args.username.strip()
     email = args.email.strip()
 
@@ -166,7 +160,7 @@ def main() -> None:
         }
 
         print("Initial approved owner bootstrap plan")
-        print(f"Database: {db_path}")
+        print_database_path(db_path)
         for key, value in planned.items():
             print(f"{key}: {value}")
 

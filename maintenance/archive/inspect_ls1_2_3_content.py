@@ -1,6 +1,21 @@
+import argparse
 import sqlite3
+import sys
+from pathlib import Path
 
-conn = sqlite3.connect("data/ngss.db")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from db_path import add_db_argument, print_database_path, resolve_database_path
+
+
+parser = argparse.ArgumentParser(description="Inspect MS-LS1-2 and MS-LS1-3 content.")
+add_db_argument(parser)
+args = parser.parse_args()
+db_path = resolve_database_path(args.db)
+
+print_database_path(db_path)
+
+conn = sqlite3.connect(db_path)
 conn.row_factory = sqlite3.Row
 
 for std in ("MS-LS1-2", "MS-LS1-3"):
