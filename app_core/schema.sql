@@ -87,6 +87,30 @@ CREATE TABLE IF NOT EXISTS students (
   class_period TEXT
 );
 
+CREATE TABLE IF NOT EXISTS class_sections (
+  class_id        TEXT PRIMARY KEY,
+  teacher_user_id INTEGER,
+  name            TEXT NOT NULL,
+  class_period    TEXT,
+  join_code       TEXT UNIQUE NOT NULL,
+  is_active       INTEGER NOT NULL DEFAULT 1,
+  created_at      INTEGER NOT NULL,
+  updated_at      INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS class_enrollments (
+  class_id    TEXT NOT NULL,
+  student_id  TEXT NOT NULL,
+  enrolled_at INTEGER NOT NULL,
+  enrolled_by TEXT NOT NULL DEFAULT 'self',
+  PRIMARY KEY (class_id, student_id),
+  FOREIGN KEY (class_id) REFERENCES class_sections(class_id) ON DELETE CASCADE,
+  FOREIGN KEY (student_id) REFERENCES students(student_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_class_enrollments_student
+  ON class_enrollments(student_id);
+
 CREATE TABLE IF NOT EXISTS attempts (
   attempt_id    TEXT PRIMARY KEY,
   student_id    TEXT NOT NULL,

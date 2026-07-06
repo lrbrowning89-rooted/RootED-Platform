@@ -19,6 +19,7 @@ import json
 import logging
 from logging.handlers import RotatingFileHandler
 import traceback
+import secrets
 from functools import wraps
 
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -209,6 +210,41 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
           grade        INTEGER,
           class_period TEXT
         )
+        """
+    )
+
+    # Classroom sections and self-enrollment
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS class_sections (
+          class_id        TEXT PRIMARY KEY,
+          teacher_user_id INTEGER,
+          name            TEXT NOT NULL,
+          class_period    TEXT,
+          join_code       TEXT UNIQUE NOT NULL,
+          is_active       INTEGER NOT NULL DEFAULT 1,
+          created_at      INTEGER NOT NULL,
+          updated_at      INTEGER NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS class_enrollments (
+          class_id    TEXT NOT NULL,
+          student_id  TEXT NOT NULL,
+          enrolled_at INTEGER NOT NULL,
+          enrolled_by TEXT NOT NULL DEFAULT 'self',
+          PRIMARY KEY (class_id, student_id),
+          FOREIGN KEY(class_id) REFERENCES class_sections(class_id) ON DELETE CASCADE,
+          FOREIGN KEY(student_id) REFERENCES students(student_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_class_enrollments_student
+        ON class_enrollments(student_id)
         """
     )
 
@@ -1866,6 +1902,160 @@ def get_students(conn, period=None):
         FROM students
         ORDER BY student_id
         """
+    ).fetchall()
+
+
+CLASS_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+
+def normalize_join_code(join_code: str | None) -> str:
+    return "".join((join_code or "").upper().split())
+
+
+def generate_join_code(conn: sqlite3.Connection, length: int = 6) -> str:
+    for _ in range(24):
+        code = "".join(secrets.choice(CLASS_CODE_ALPHABET) for _ in range(length))
+        row = conn.execute(
+            "SELECT 1 FROM class_sections WHERE join_code = ?",
+            (code,),
+        ).fetchone()
+        if not row:
+            return code
+    raise RuntimeError("Could not generate a unique class code.")
+
+
+def create_class_section(
+    conn: sqlite3.Connection,
+    teacher_user_id: int | None,
+    name: str,
+    class_period: str | None = None,
+) -> str:
+    class_id = str(uuid.uuid4())
+    now = int(time.time())
+    join_code = generate_join_code(conn)
+    conn.execute(
+        """
+        INSERT INTO class_sections
+          (class_id, teacher_user_id, name, class_period, join_code, is_active, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+        """,
+        (class_id, teacher_user_id, name, class_period, join_code, now, now),
+    )
+    conn.commit()
+    return class_id
+
+
+def get_class_sections_for_teacher(conn: sqlite3.Connection, teacher_user_id: int | None):
+    return conn.execute(
+        """
+        SELECT cs.*,
+               COUNT(ce.student_id) AS enrolled_count
+        FROM class_sections cs
+        LEFT JOIN class_enrollments ce ON ce.class_id = cs.class_id
+        WHERE cs.teacher_user_id = ? OR cs.teacher_user_id IS NULL
+        GROUP BY cs.class_id
+        ORDER BY cs.is_active DESC, cs.name COLLATE NOCASE
+        """,
+        (teacher_user_id,),
+    ).fetchall()
+
+
+def get_class_roster_map(conn: sqlite3.Connection, class_ids: list[str]) -> dict[str, list[sqlite3.Row]]:
+    if not class_ids:
+        return {}
+    placeholders = ",".join(["?"] * len(class_ids))
+    rows = conn.execute(
+        f"""
+        SELECT ce.class_id,
+               ce.enrolled_at,
+               s.student_id,
+               s.first_name,
+               s.last_name,
+               s.grade,
+               s.class_period
+        FROM class_enrollments ce
+        JOIN students s ON s.student_id = ce.student_id
+        WHERE ce.class_id IN ({placeholders})
+        ORDER BY s.last_name COLLATE NOCASE, s.first_name COLLATE NOCASE, s.student_id
+        """,
+        class_ids,
+    ).fetchall()
+
+    roster_map: dict[str, list[sqlite3.Row]] = {class_id: [] for class_id in class_ids}
+    for row in rows:
+        roster_map.setdefault(row["class_id"], []).append(row)
+    return roster_map
+
+
+def enroll_student_by_code(
+    conn: sqlite3.Connection,
+    student_id: str,
+    join_code: str,
+    enrolled_by: str = "self",
+) -> tuple[bool, str]:
+    code = normalize_join_code(join_code)
+    if not code:
+        return False, "Enter a class code to join."
+
+    class_row = conn.execute(
+        """
+        SELECT class_id, name, class_period, is_active
+        FROM class_sections
+        WHERE join_code = ?
+        """,
+        (code,),
+    ).fetchone()
+    if not class_row:
+        return False, "That class code was not found."
+    if int(class_row["is_active"] or 0) != 1:
+        return False, "That class code is not active right now."
+
+    existing = conn.execute(
+        """
+        SELECT 1
+        FROM class_enrollments
+        WHERE class_id = ? AND student_id = ?
+        """,
+        (class_row["class_id"], student_id),
+    ).fetchone()
+    if existing:
+        return True, f"You are already enrolled in {class_row['name']}."
+
+    now = int(time.time())
+    conn.execute(
+        """
+        INSERT INTO class_enrollments (class_id, student_id, enrolled_at, enrolled_by)
+        VALUES (?, ?, ?, ?)
+        """,
+        (class_row["class_id"], student_id, now, enrolled_by),
+    )
+    if class_row["class_period"]:
+        conn.execute(
+            """
+            UPDATE students
+            SET class_period = COALESCE(NULLIF(class_period, ''), ?)
+            WHERE student_id = ?
+            """,
+            (class_row["class_period"], student_id),
+        )
+    conn.commit()
+    return True, f"You joined {class_row['name']}."
+
+
+def get_student_class_sections(conn: sqlite3.Connection, student_id: str):
+    return conn.execute(
+        """
+        SELECT cs.class_id,
+               cs.name,
+               cs.class_period,
+               cs.join_code,
+               ce.enrolled_at
+        FROM class_enrollments ce
+        JOIN class_sections cs ON cs.class_id = ce.class_id
+        WHERE ce.student_id = ?
+        ORDER BY ce.enrolled_at DESC
+        """,
+        (student_id,),
     ).fetchall()
 
 
@@ -3714,6 +3904,11 @@ def index():
     all_users = conn.execute(
         "SELECT id, username, role, is_active, linked_student_id FROM users ORDER BY username"
     ).fetchall()
+    class_sections = get_class_sections_for_teacher(conn, session.get("user_id"))
+    class_rosters = get_class_roster_map(
+        conn,
+        [class_row["class_id"] for class_row in class_sections],
+    )
 
     # Save / update student
     if request.method == "POST" and request.form.get("action") == "save_student":
@@ -3766,6 +3961,66 @@ def index():
             flash(f"Username '{u_username}' already exists.")
 
         return redirect(url_for("index"))
+
+    # Create class section with a self-enrollment code
+    if request.method == "POST" and request.form.get("action") == "create_class":
+        class_name = request.form.get("class_name", "").strip()
+        class_period = request.form.get("class_period", "").strip() or None
+        if not class_name:
+            flash("Class name is required.")
+            return redirect(url_for("index") + "#class-enrollment")
+
+        create_class_section(conn, session.get("user_id"), class_name, class_period)
+        flash(f"Class '{class_name}' created with a join code.")
+        return redirect(url_for("index") + "#class-enrollment")
+
+    # Manage class codes
+    if request.method == "POST" and request.form.get("action") in {
+        "rotate_class_code",
+        "toggle_class_active",
+    }:
+        action = request.form.get("action")
+        class_id = request.form.get("class_id", "").strip()
+        class_row = conn.execute(
+            """
+            SELECT class_id, teacher_user_id, name, is_active
+            FROM class_sections
+            WHERE class_id = ?
+            """,
+            (class_id,),
+        ).fetchone()
+        if not class_row:
+            flash("Class not found.")
+            return redirect(url_for("index") + "#class-enrollment")
+        if class_row["teacher_user_id"] not in (None, session.get("user_id")):
+            flash("You can only manage your own class codes.")
+            return redirect(url_for("index") + "#class-enrollment")
+
+        if action == "rotate_class_code":
+            conn.execute(
+                """
+                UPDATE class_sections
+                SET join_code = ?, updated_at = ?
+                WHERE class_id = ?
+                """,
+                (generate_join_code(conn), int(time.time()), class_id),
+            )
+            conn.commit()
+            flash(f"New join code created for {class_row['name']}.")
+        else:
+            conn.execute(
+                """
+                UPDATE class_sections
+                SET is_active = CASE WHEN is_active = 1 THEN 0 ELSE 1 END,
+                    updated_at = ?
+                WHERE class_id = ?
+                """,
+                (int(time.time()), class_id),
+            )
+            conn.commit()
+            flash("Class code status updated.")
+
+        return redirect(url_for("index") + "#class-enrollment")
 
     # Save attempt (teacher-driven)
     if request.method == "POST" and request.form.get("action") == "save_attempt":
@@ -4051,6 +4306,7 @@ def index():
   .status-start{background:#e0f2fe;color:#075985}
   .status-progress{background:#fef3c7;color:#92400e}
   .status-mastered{background:#dcfce7;color:#166534}
+  .code-token{display:inline-block;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:18px;letter-spacing:1px;background:#111827;color:#fff;padding:5px 8px;border-radius:6px}
   .tool-section{border-top:3px solid #dfe8d9;margin-top:20px;padding-top:4px}
   .tool-details{margin-top:10px}
   .tool-details > summary{cursor:pointer;list-style:none;border:1px solid #dfe8d9;border-radius:10px;background:#f5f8f1;padding:12px 14px;font-weight:800;color:#2f5138}
@@ -4312,6 +4568,89 @@ def index():
 <div class="tool-section">
   <h2 style="margin-bottom:0;">Management and Setup Tools</h2>
   <p class="section-note">Existing configuration, roster, account, import, maintenance, and detailed progress tools remain available below.</p>
+</div>
+
+<div class="card" id="class-enrollment">
+  <h2>Class Enrollment</h2>
+  <p class="section-note">Create class codes students can use to enroll themselves.</p>
+
+  <form method="post" style="margin-bottom:14px;">
+    <input type="hidden" name="action" value="create_class">
+    <div style="display:grid;grid-template-columns:1.4fr .8fr auto;gap:8px;align-items:end">
+      <label>Class name
+        <input name="class_name" placeholder="Period 1 Science" required>
+      </label>
+      <label>Period
+        <input name="class_period" placeholder="1">
+      </label>
+      <button class="btn" type="submit">Create Class Code</button>
+    </div>
+  </form>
+
+  {% if class_sections %}
+    <table>
+      <tr>
+        <th>Class / Period</th>
+        <th>Join Code</th>
+        <th>Status</th>
+        <th>Students / Roster</th>
+        <th>Actions</th>
+      </tr>
+      {% for c in class_sections %}
+        <tr>
+          <td>
+            <strong>{{ c['name'] }}</strong><br>
+            <span style="font-size:12px;color:#6b7280;">Class period: {{ c['class_period'] or 'Not set' }}</span>
+          </td>
+          <td><span class="code-token">{{ c['join_code'] }}</span></td>
+          <td>
+            {% if c['is_active'] %}
+              <span class="pill pill-adv">active</span>
+            {% else %}
+              <span class="pill pill-rem">inactive</span>
+            {% endif %}
+          </td>
+          <td>
+            <strong>{{ c['enrolled_count'] }}</strong>
+            <span style="font-size:12px;color:#6b7280;">student(s)</span><br>
+            <span style="font-size:12px;color:#6b7280;">Class period: {{ c['class_period'] or 'Not set' }}</span>
+            {% set roster = class_rosters.get(c['class_id'], []) %}
+            {% if roster %}
+              <details style="margin-top:6px;">
+                <summary style="cursor:pointer;color:#2f5138;">View roster for period {{ c['class_period'] or 'Not set' }}</summary>
+                <ul style="margin:8px 0 0 18px;padding:0;">
+                  {% for s in roster %}
+                    <li>
+                      {{ display_name(s) }}
+                      <span style="font-size:12px;color:#6b7280;">
+                        ({{ s['student_id'] }}; student period {{ s['class_period'] or 'Not set' }})
+                      </span>
+                    </li>
+                  {% endfor %}
+                </ul>
+              </details>
+            {% endif %}
+          </td>
+          <td>
+            <form method="post" style="display:inline">
+              <input type="hidden" name="action" value="rotate_class_code">
+              <input type="hidden" name="class_id" value="{{ c['class_id'] }}">
+              <button class="btn-mini" type="submit">New Code</button>
+            </form>
+            <form method="post" style="display:inline;margin-left:4px;">
+              <input type="hidden" name="action" value="toggle_class_active">
+              <input type="hidden" name="class_id" value="{{ c['class_id'] }}">
+              <button class="btn-mini" type="submit">
+                {% if c['is_active'] %}Deactivate{% else %}Activate{% endif %}
+              </button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+    </table>
+  {% else %}
+    <div class="empty-state">No class codes yet. Create one and share the code with students.</div>
+  {% endif %}
 </div>
 
 <details class="tool-details">
@@ -4831,6 +5170,8 @@ def index():
         engine_checks=engine_checks,
         recent_errors=recent_errors,
         all_users=all_users,
+        class_sections=class_sections,
+        class_rosters=class_rosters,
     )
 
 
@@ -4895,6 +5236,21 @@ def student_view():
         student_id = request.values.get("student_id")
         if not student_id and students:
             student_id = students[0]["student_id"]
+
+    if role == "student" and request.method == "POST" and request.form.get("action") == "join_class":
+        ok, message = enroll_student_by_code(
+            conn,
+            student_id,
+            request.form.get("join_code", ""),
+        )
+        flash(message)
+        return redirect(url_for("student_view"))
+
+    enrolled_classes = (
+        get_student_class_sections(conn, student_id)
+        if role == "student" and student_id
+        else []
+    )
 
     def ms_ls1_1_objective_for_level(level: int) -> str:
         if level == 1:
@@ -5354,6 +5710,14 @@ LIMIT 1
   .cta-panel p{margin:8px 0 0;color:#4d5e55;line-height:1.5}
   .cta-button{width:100%;min-height:52px;padding:13px 16px;background:var(--leaf);color:#fff;box-shadow:0 14px 24px rgba(47,111,78,.18);font-size:16px}
   .cta-button:hover{background:var(--leaf-dark)}
+  .join-card{border-top:1px solid var(--line);padding-top:16px}
+  .join-card h3{margin:0;color:#183629;font-size:20px}
+  .join-form{display:flex;gap:8px;align-items:end;margin-top:10px}
+  .join-form label{display:block;flex:1;color:#40524a;font-size:13px;font-weight:750}
+  .join-form input{width:100%;margin-top:5px;padding:10px 11px;border:1px solid #cbd5c7;border-radius:8px;background:#fff;font:inherit;text-transform:uppercase}
+  .join-button{min-height:41px;padding:10px 12px;background:var(--leaf-dark);color:#fff}
+  .class-list{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+  .class-chip{display:inline-flex;align-items:center;background:#e7f7ee;color:#0f6b3a;border:1px solid #a8e0bf;border-radius:999px;padding:4px 8px;font-size:12px;font-weight:800}
   .card{padding:20px 22px;margin-bottom:16px}
   .section-head{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;margin-bottom:14px}
   .section-head h2{margin:0;color:#183629;font-size:24px}
@@ -5432,6 +5796,26 @@ LIMIT 1
         <input type="hidden" name="action" value="continue_learning">
         <button class="btn cta-button" type="submit">Continue Learning</button>
       </form>
+      <div class="join-card" aria-label="Join a class">
+        <div>
+          <h3>Join a Class</h3>
+          <p>Enter the class code your teacher shared.</p>
+        </div>
+        <form method="post" class="join-form">
+          <input type="hidden" name="action" value="join_class">
+          <label>Class code
+            <input name="join_code" placeholder="ABC123" autocomplete="off">
+          </label>
+          <button class="btn join-button" type="submit">Join</button>
+        </form>
+        {% if enrolled_classes %}
+          <div class="class-list" aria-label="Joined classes">
+            {% for c in enrolled_classes %}
+              <span class="class-chip">{{ c['name'] }}</span>
+            {% endfor %}
+          </div>
+        {% endif %}
+      </div>
     </aside>
   </section>
 
@@ -5486,6 +5870,7 @@ LIMIT 1
             response_percent=response_percent,
             progress_status=progress_status,
             response_count=response_count,
+            enrolled_classes=enrolled_classes,
         )
 
     locked_review = session.get("locked_payload") if session.get("current_mode") == "locked" else None
@@ -5559,6 +5944,8 @@ LIMIT 1
   .model-asset-title{margin:0 0 8px 0;font-weight:700;color:#1f2937}
   .model-asset-caption{margin:8px 0 0 0;font-size:13px;color:#555;line-height:1.4}
   .model-asset img{display:block;max-width:100%;height:auto;margin:0 auto;border-radius:6px}
+  .enrollment-box{border:1px solid #d7dee8;border-radius:8px;background:#f8fafc;padding:12px;margin:12px 0}
+  .class-chip{display:inline-block;background:#e7f7ee;color:#0f6b3a;border:1px solid #a8e0bf;border-radius:999px;padding:4px 8px;margin:3px;font-size:12px}
   .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 </style>
 
@@ -5585,6 +5972,26 @@ LIMIT 1
       </div>
     {% endif %}
   {% endwith %}
+
+  {% if session.get('role') == 'student' %}
+    <div class="enrollment-box">
+      <form method="post" class="toolbar" style="margin:0;">
+        <input type="hidden" name="action" value="join_class">
+        <label>Class code
+          <input name="join_code" placeholder="ABC123" autocomplete="off">
+        </label>
+        <button class="btn" type="submit">Join Class</button>
+      </form>
+      {% if enrolled_classes %}
+        <div style="font-size:13px;color:#555;margin-top:8px;">
+          Enrolled:
+          {% for c in enrolled_classes %}
+            <span class="class-chip">{{ c['name'] }}</span>
+          {% endfor %}
+        </div>
+      {% endif %}
+    </div>
+  {% endif %}
 
   <form method="get" class="toolbar">
     {% if session.get('role') == 'teacher' %}
@@ -5709,6 +6116,7 @@ LIMIT 1
         feedback=feedback,
         locked_review=locked_review,
         current_level=current_level,
+        enrolled_classes=enrolled_classes,
     )
 
 # ---------- Diagnostic Arena ----------
