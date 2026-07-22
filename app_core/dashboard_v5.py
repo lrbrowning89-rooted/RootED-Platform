@@ -405,6 +405,22 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
 
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS student_objective_state (
+          student_id            TEXT NOT NULL,
+          standard_id           TEXT NOT NULL,
+          current_objective_id  TEXT NOT NULL,
+          status                TEXT DEFAULT 'active',
+          last_update           INTEGER,
+          PRIMARY KEY (student_id, standard_id),
+          FOREIGN KEY(student_id) REFERENCES students(student_id) ON DELETE CASCADE,
+          FOREIGN KEY(standard_id) REFERENCES standards(standard_id) ON DELETE CASCADE,
+          FOREIGN KEY(current_objective_id) REFERENCES objectives(objective_id) ON DELETE CASCADE
+        )
+        """
+    )
+
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS remediation_links (
           id                INTEGER PRIMARY KEY,
           standard_id       TEXT NOT NULL,
@@ -1142,6 +1158,7 @@ def get_progress_by_standard(conn, student_id):
         SELECT standard_id, current_level, status, rolling_avg, locked, last_update
         FROM progress_state
         WHERE student_id = ?
+          AND status <> 'inactive'
         ORDER BY last_update DESC
         """,
         (student_id,),
@@ -1177,27 +1194,14 @@ def get_student_activity_counts(conn, student_id):
     }
 
 
+def evidence_aware_rolling_avg(value, evidence_count: int):
+    if int(evidence_count or 0) <= 0:
+        return None
+    return float(value or 0.0)
+
+
 def get_latest_student_progress(conn, student_id):
-    return conn.execute(
-        """
-        SELECT ps.student_id,
-               ps.standard_id,
-               ps.current_level,
-               ps.status,
-               ps.rolling_avg,
-               ps.locked,
-               ps.locked_reason,
-               ps.last_update,
-               s.core_idea,
-               s.grade_band
-        FROM progress_state ps
-        LEFT JOIN standards s ON s.standard_id = ps.standard_id
-        WHERE ps.student_id = ?
-        ORDER BY ps.last_update DESC
-        LIMIT 1
-        """,
-        (student_id,),
-    ).fetchone()
+    return get_current_student_placement(conn, student_id)["progress"]
 
 
 def get_active_objective_for_student(conn, student_id, standard_id):
@@ -1221,6 +1225,70 @@ def get_active_objective_for_student(conn, student_id, standard_id):
         return None
 
 
+def get_current_student_placement(conn, student_id):
+    """
+    Read the current durable placement used by both student resume and teacher display.
+
+    progress_state is the authoritative active standard/level source. Inactive rows
+    are historical and must not drive current placement displays or student routing.
+    """
+    if not student_id:
+        return {
+            "progress": None,
+            "objective": None,
+            "standard_id": None,
+            "current_level": 1,
+            "objective_id": None,
+        }
+
+    progress_columns = table_columns(conn, "progress_state")
+    optional_progress_cols = []
+    if "active_route_type" in progress_columns:
+        optional_progress_cols.append("ps.active_route_type")
+    else:
+        optional_progress_cols.append("NULL AS active_route_type")
+    if "origin_standard_id" in progress_columns:
+        optional_progress_cols.append("ps.origin_standard_id")
+    else:
+        optional_progress_cols.append("NULL AS origin_standard_id")
+
+    progress = conn.execute(
+        f"""
+        SELECT ps.student_id,
+               ps.standard_id,
+               ps.current_level,
+               ps.status,
+               ps.rolling_avg,
+               ps.locked,
+               ps.locked_reason,
+               ps.last_update,
+               {", ".join(optional_progress_cols)},
+               s.core_idea,
+               s.grade_band
+        FROM progress_state ps
+        LEFT JOIN standards s ON s.standard_id = ps.standard_id
+        WHERE ps.student_id = ?
+          AND ps.status <> 'inactive'
+        ORDER BY ps.last_update DESC, ps.id DESC
+        LIMIT 1
+        """,
+        (student_id,),
+    ).fetchone()
+
+    standard_id = row_get(progress, "standard_id", None)
+    current_level = int(row_get(progress, "current_level", 1) or 1)
+    objective = get_active_objective_for_student(conn, student_id, standard_id)
+    objective_id = row_get(objective, "objective_id", None)
+
+    return {
+        "progress": progress,
+        "objective": objective,
+        "standard_id": standard_id,
+        "current_level": current_level,
+        "objective_id": objective_id,
+    }
+
+
 def get_dashboard_student_rows(conn, students, mastery, practice):
     rows = []
     for student in students:
@@ -1236,7 +1304,7 @@ def get_dashboard_student_rows(conn, students, mastery, practice):
             standard_id,
             row_get(progress, "current_level", None),
         )
-        avg = float(row_get(progress, "rolling_avg", 0.0))
+        avg = evidence_aware_rolling_avg(row_get(progress, "rolling_avg", None), response_count)
         status = (row_get(progress, "status", "") or "").lower()
         locked = bool(row_get(progress, "locked", 0))
         frustrated = frustration_active(conn, sid, objective_id) if objective_id else False
@@ -1244,13 +1312,12 @@ def get_dashboard_student_rows(conn, students, mastery, practice):
         not_started = (
             counts["attempts"] == 0
             and counts["responses"] == 0
-            and counts["progress_rows"] == 0
         )
         mastered = status in ("mastered", "completed", "complete") or (
-            response_count >= 7 and avg >= mastery
+            response_count >= 7 and avg is not None and avg >= mastery
         )
-        low_average = counts["responses"] > 0 and avg < practice
-        no_recent_progress = counts["progress_rows"] > 0 and response_count == 0
+        low_average = response_count > 0 and avg is not None and avg < practice
+        no_recent_progress = False
         needs_help = bool(locked or frustrated or low_average or no_recent_progress)
         progressing = bool(progress and not mastered and not needs_help)
 
@@ -1259,10 +1326,10 @@ def get_dashboard_student_rows(conn, students, mastery, practice):
             reasons.append(row_get(progress, "locked_reason", "locked") or "locked")
         if frustrated:
             reasons.append("frustration signal")
-        if low_average:
+        if low_average and avg is not None:
             reasons.append(f"rolling avg {round(avg * 100)}%")
-        if no_recent_progress:
-            reasons.append("no responses at current level")
+        if not_started and progress:
+            reasons.append("placed; no responses yet")
         if not reasons and progressing:
             reasons.append("active practice")
         if not reasons and mastered:
@@ -1345,6 +1412,7 @@ def get_student_learning_history(conn, student_id):
             SELECT standard_id, status, last_update
             FROM progress_state
             WHERE student_id = ?
+              AND status <> 'inactive'
             ORDER BY last_update DESC
             LIMIT 1
             """,
@@ -1582,48 +1650,17 @@ def get_student_overview(conn, student_id):
     if not student:
         return None
 
-    progress_columns = table_columns(conn, "progress_state")
-    optional_progress_cols = []
-    if "active_route_type" in progress_columns:
-        optional_progress_cols.append("ps.active_route_type")
-    else:
-        optional_progress_cols.append("NULL AS active_route_type")
-    if "origin_standard_id" in progress_columns:
-        optional_progress_cols.append("ps.origin_standard_id")
-    else:
-        optional_progress_cols.append("NULL AS origin_standard_id")
-
-    latest_progress = conn.execute(
-        f"""
-        SELECT ps.student_id,
-               ps.standard_id,
-               ps.current_level,
-               ps.status,
-               ps.rolling_avg,
-               ps.locked,
-               ps.locked_reason,
-               ps.last_update,
-               {", ".join(optional_progress_cols)},
-               s.core_idea,
-               s.grade_band
-        FROM progress_state ps
-        LEFT JOIN standards s ON s.standard_id = ps.standard_id
-        WHERE ps.student_id = ?
-        ORDER BY ps.last_update DESC
-        LIMIT 1
-        """,
-        (student_id,),
-    ).fetchone()
-
-    standard_id = row_get(latest_progress, "standard_id", None)
-    current_level = row_get(latest_progress, "current_level", None)
-    objective = get_active_objective_for_student(conn, student_id, standard_id)
-    objective_id = row_get(objective, "objective_id", None)
+    placement = get_current_student_placement(conn, student_id)
+    latest_progress = placement["progress"]
+    standard_id = placement["standard_id"]
+    current_level = placement["current_level"] if latest_progress else None
+    objective = placement["objective"]
+    objective_id = placement["objective_id"]
 
     rolling_responses = []
     rolling_count = 0
     rolling_correct = 0
-    rolling_avg = row_get(latest_progress, "rolling_avg", None)
+    rolling_avg = None
     if standard_id and current_level:
         rolling_responses = conn.execute(
             """
@@ -1839,11 +1876,12 @@ def build_dashboard_snapshot(student_rows):
 
 
 def get_active_standard_summary(conn, selected_period=None):
-    period_filter = ""
+    where_clauses = ["ps.status <> 'inactive'"]
     params = []
     if selected_period and selected_period != "ALL":
-        period_filter = "WHERE st.class_period = ?"
+        where_clauses.append("st.class_period = ?")
         params.append(selected_period)
+    where_sql = "WHERE " + " AND ".join(where_clauses)
 
     return conn.execute(
         f"""
@@ -1853,15 +1891,23 @@ def get_active_standard_summary(conn, selected_period=None):
                COUNT(DISTINCT ps.student_id) AS student_count,
                SUM(CASE WHEN ps.locked = 1 THEN 1 ELSE 0 END) AS locked_count,
                SUM(CASE WHEN ps.status IN ('mastered', 'completed', 'complete') THEN 1 ELSE 0 END) AS completed_count,
-               ROUND(AVG(ps.rolling_avg), 2) AS avg_progress,
+               ROUND(AVG(CASE WHEN COALESCE(rs.response_count, 0) > 0 THEN ps.rolling_avg END), 2) AS avg_progress,
+               COUNT(DISTINCT CASE WHEN COALESCE(rs.response_count, 0) > 0 THEN ps.student_id END) AS students_with_evidence,
                COUNT(DISTINCT o.objective_id) AS objective_count,
                COUNT(DISTINCT q.question_id) AS question_count
         FROM progress_state ps
         JOIN students st ON st.student_id = ps.student_id
         LEFT JOIN standards s ON s.standard_id = ps.standard_id
+        LEFT JOIN (
+          SELECT student_id, standard_id, level, COUNT(*) AS response_count
+          FROM responses
+          GROUP BY student_id, standard_id, level
+        ) rs ON rs.student_id = ps.student_id
+            AND rs.standard_id = ps.standard_id
+            AND rs.level = ps.current_level
         LEFT JOIN objectives o ON o.standard_id = ps.standard_id
         LEFT JOIN questions q ON q.objective_id = o.objective_id
-        {period_filter}
+        {where_sql}
         GROUP BY ps.standard_id, s.core_idea, s.grade_band
         ORDER BY student_count DESC, ps.standard_id
         """,
@@ -2057,6 +2103,200 @@ def get_student_class_sections(conn: sqlite3.Connection, student_id: str):
         """,
         (student_id,),
     ).fetchall()
+
+
+def teacher_controls_student(
+    conn: sqlite3.Connection,
+    teacher_user_id: int | None,
+    student_id: str | None,
+) -> bool:
+    if not teacher_user_id or not student_id:
+        return False
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM class_enrollments ce
+        JOIN class_sections cs ON cs.class_id = ce.class_id
+        WHERE ce.student_id = ?
+          AND cs.teacher_user_id = ?
+          AND cs.is_active = 1
+        LIMIT 1
+        """,
+        (student_id, teacher_user_id),
+    ).fetchone()
+    return row is not None
+
+
+def get_placeable_learning_nodes(conn: sqlite3.Connection):
+    return conn.execute(
+        """
+        SELECT s.standard_id,
+               s.core_idea,
+               s.grade_band,
+               o.objective_id,
+               o.objective_text,
+               o.order_in_band,
+               COUNT(q.question_id) AS question_count
+        FROM standards s
+        JOIN objectives o ON o.standard_id = s.standard_id
+        LEFT JOIN questions q ON q.objective_id = o.objective_id
+        GROUP BY
+          s.standard_id,
+          s.core_idea,
+          s.grade_band,
+          o.objective_id,
+          o.objective_text,
+          o.order_in_band
+        HAVING COUNT(q.question_id) > 0
+        ORDER BY s.core_idea, s.grade_band, s.standard_id, o.order_in_band, o.objective_id
+        """
+    ).fetchall()
+
+
+def first_objective_for_standard(conn: sqlite3.Connection, standard_id: str) -> str | None:
+    row = conn.execute(
+        """
+        SELECT o.objective_id
+        FROM objectives o
+        WHERE o.standard_id = ?
+          AND EXISTS (
+              SELECT 1
+              FROM questions q
+              WHERE q.objective_id = o.objective_id
+          )
+        ORDER BY o.order_in_band, o.objective_id
+        LIMIT 1
+        """,
+        (standard_id,),
+    ).fetchone()
+    return row["objective_id"] if row else None
+
+
+def validate_learning_placement(
+    conn: sqlite3.Connection,
+    *,
+    student_id: str,
+    standard_id: str,
+    objective_id: str,
+    current_level: int,
+) -> tuple[bool, str]:
+    if current_level not in (1, 2, 3):
+        return False, "Current level must be 1, 2, or 3."
+
+    student = conn.execute(
+        "SELECT 1 FROM students WHERE student_id = ?",
+        (student_id,),
+    ).fetchone()
+    if not student:
+        return False, "Student was not found."
+
+    standard = conn.execute(
+        "SELECT 1 FROM standards WHERE standard_id = ?",
+        (standard_id,),
+    ).fetchone()
+    if not standard:
+        return False, "Standard was not found."
+
+    objective = conn.execute(
+        """
+        SELECT 1
+        FROM objectives
+        WHERE objective_id = ?
+          AND standard_id = ?
+        """,
+        (objective_id, standard_id),
+    ).fetchone()
+    if not objective:
+        return False, "Objective does not belong to the selected standard."
+
+    question = conn.execute(
+        "SELECT 1 FROM questions WHERE objective_id = ? LIMIT 1",
+        (objective_id,),
+    ).fetchone()
+    if not question:
+        return False, "Selected objective has no available questions."
+
+    return True, ""
+
+
+def place_student_learning_node(
+    conn: sqlite3.Connection,
+    *,
+    student_id: str,
+    standard_id: str,
+    objective_id: str,
+    current_level: int,
+    placed_by_user_id: int | None = None,
+    require_teacher_control: bool = True,
+) -> tuple[bool, str]:
+    """
+    Durable placement bridge for teacher placement now and diagnostic placement later.
+
+    progress_state is authoritative for active standard/level/adaptive status.
+    student_objective_state stores the active objective within that standard.
+    Both rows are written in one transaction by explicit placement actions only.
+    """
+    if require_teacher_control and not teacher_controls_student(conn, placed_by_user_id, student_id):
+        return False, "You can only place students enrolled in one of your active classes."
+
+    ok, message = validate_learning_placement(
+        conn,
+        student_id=student_id,
+        standard_id=standard_id,
+        objective_id=objective_id,
+        current_level=current_level,
+    )
+    if not ok:
+        return False, message
+
+    now = int(time.time())
+    try:
+        conn.execute("BEGIN")
+        conn.execute(
+            """
+            UPDATE progress_state
+            SET status = 'inactive',
+                locked = 0,
+                locked_reason = NULL,
+                last_update = ?
+            WHERE student_id = ?
+              AND standard_id <> ?
+            """,
+            (now, student_id, standard_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO progress_state
+              (student_id, standard_id, current_level, status, rolling_avg, locked, locked_reason, last_update)
+            VALUES (?, ?, ?, 'practicing', 0.0, 0, NULL, ?)
+            ON CONFLICT(student_id, standard_id) DO UPDATE SET
+              current_level = excluded.current_level,
+              status = 'practicing',
+              rolling_avg = 0.0,
+              locked = 0,
+              locked_reason = NULL,
+              last_update = excluded.last_update
+            """,
+            (student_id, standard_id, current_level, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO student_objective_state
+              (student_id, standard_id, current_objective_id, status, last_update)
+            VALUES (?, ?, ?, 'active', ?)
+            ON CONFLICT(student_id, standard_id) DO UPDATE SET
+              current_objective_id = excluded.current_objective_id,
+              status = 'active',
+              last_update = excluded.last_update
+            """,
+            (student_id, standard_id, objective_id, now),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+    return True, f"Placed {student_id} at {standard_id} / {objective_id}, Level {current_level}."
 
 
 # ---------- User account helpers ----------
@@ -4395,7 +4635,7 @@ def index():
 <div class="pilot-grid">
   <div class="card" id="needs-attention">
     <h2>Needs Attention</h2>
-    <p class="section-note">Uses existing locked status, frustration signal, low Rolling-7 average, and missing current-level responses.</p>
+    <p class="section-note">Uses existing locked status, frustration signal, and low Rolling-7 average when response evidence exists.</p>
     {% if needs_attention_rows %}
       <div class="priority-list">
         {% for row in needs_attention_rows %}
@@ -4413,7 +4653,7 @@ def index():
             </div>
             <div class="priority-reason">{{ row.reason or "Review current progress." }}</div>
             <div class="priority-meta">
-              Rolling avg: {{ (row.rolling_avg * 100)|round|int }}%
+              Rolling avg: {% if row.rolling_avg is not none %}{{ (row.rolling_avg * 100)|round|int }}%{% else %}No responses yet{% endif %}
               {% if row.objective_id %} | Objective {{ row.objective_id }}{% endif %}
               {% if row.last_activity %} | Last activity {{ format_ts(row.last_activity) }}{% endif %}
             </div>
@@ -4443,7 +4683,7 @@ def index():
               <span style="font-size:12px;color:#6b7280;">{{ row["core_idea"] }} {{ row["grade_band"] }}</span>
             </td>
             <td>{{ row["student_count"] }}{% if row["locked_count"] %}<br><span class="bad">{{ row["locked_count"] }} locked</span>{% endif %}</td>
-            <td>{{ ((row["avg_progress"] or 0) * 100)|round|int }}%</td>
+            <td>{% if row["students_with_evidence"] %}{{ ((row["avg_progress"] or 0) * 100)|round|int }}%{% else %}No responses yet{% endif %}</td>
             <td>{{ row["objective_count"] }} obj<br>{{ row["question_count"] }} q</td>
           </tr>
         {% endfor %}
@@ -4457,7 +4697,7 @@ def index():
 <div class="subgrid">
   <div class="card" id="not-started">
     <h2>Not Started</h2>
-    <p class="section-note">Students with no attempts, responses, or progress state.</p>
+    <p class="section-note">Students with no response evidence yet, including newly placed students.</p>
     {% if not_started_rows %}
       <table>
         <tr><th>Student</th><th>Grade</th><th>Period</th><th>Next Click</th></tr>
@@ -4492,7 +4732,7 @@ def index():
               {% endif %}
             </td>
             <td>{{ row.standard_id or "" }}{% if row.level %}<br><span style="font-size:12px;color:#6b7280;">Level {{ row.level }}</span>{% endif %}</td>
-            <td>{{ (row.rolling_avg * 100)|round|int }}%</td>
+            <td>{% if row.rolling_avg is not none %}{{ (row.rolling_avg * 100)|round|int }}%{% else %}No responses yet{% endif %}</td>
             <td><a class="btn-mini" style="background:#2f6f4e;color:#fff;text-decoration:none;" href="{{ url_for('student_overview', student_id=row.student_id) }}" target="_blank">Overview</a></td>
           </tr>
         {% endfor %}
@@ -5325,43 +5565,21 @@ LIMIT 1
 
     def get_engine_target():
         """
-        Choose the student's current standard/objective from progress_state.
-        MS-LS1-1 uses the approved A/B mapper; unexpected higher levels fall back to B.
-        Other standards use the first available objective for that standard.
+        Choose the student's current standard/objective from durable placement.
         If no content exists yet, objective_id stays None.
         """
-        ps = conn.execute(
-            """
-            SELECT standard_id, current_level, status, locked, locked_reason
-            FROM progress_state
-            WHERE student_id = ?
-            ORDER BY last_update DESC
-            LIMIT 1
-            """,
-            (student_id,),
-        ).fetchone()
+        placement = get_current_student_placement(conn, student_id)
+        ps = placement["progress"]
 
         if ps:
-            std = ps["standard_id"]
-            level = int(ps["current_level"] or 1)
+            std = placement["standard_id"]
+            level = placement["current_level"]
 
             if std == "MS-LS1-1" and ps["status"] == "completed":
                 return "MS-LS1-1", level, None, ps
 
-
-            saved_obj = conn.execute(
-                """
-                SELECT current_objective_id
-                FROM student_objective_state
-                WHERE student_id = ?
-                  AND standard_id = ?
-                  AND status = 'active'
-                """,
-                (student_id, std),
-            ).fetchone()
-
-            if saved_obj:
-                return std, level, saved_obj["current_objective_id"], ps
+            if placement["objective_id"]:
+                return std, level, placement["objective_id"], ps
 
             first_obj = get_first_objective_for_standard(std)
             if first_obj:
@@ -5609,7 +5827,17 @@ LIMIT 1
     for standard in available_standard_cards:
         standard_progress = progress_by_standard.get(standard["standard_id"])
         standard["level"] = row_get(standard_progress, "current_level", None)
-        standard["rolling_avg"] = row_get(standard_progress, "rolling_avg", None)
+        standard_response_count = get_response_count_for_level(
+            conn,
+            student_id,
+            standard["standard_id"],
+            standard["level"],
+        )
+        standard["response_count"] = standard_response_count
+        standard["rolling_avg"] = evidence_aware_rolling_avg(
+            row_get(standard_progress, "rolling_avg", None),
+            standard_response_count,
+        )
         standard["is_locked"] = bool(row_get(standard_progress, "locked", 0))
         status = row_get(standard_progress, "status", None)
         if standard["standard_id"] == current_std:
@@ -5629,8 +5857,13 @@ LIMIT 1
             standard["status_class"] = "review"
     current_standard_meta = get_standard_meta(conn, current_std)
     response_count = get_response_count_for_level(conn, student_id, current_std, current_level)
-    rolling_avg = float(row_get(progress_row, "rolling_avg", 0.0) or 0.0)
-    progress_percent = max(0, min(100, round(rolling_avg * 100)))
+    rolling_avg = evidence_aware_rolling_avg(row_get(progress_row, "rolling_avg", None), response_count)
+    progress_percent = max(0, min(100, round((rolling_avg or 0.0) * 100)))
+    progress_label = (
+        f"{progress_percent}%"
+        if rolling_avg is not None
+        else "No check-ins yet"
+    )
     progress_status = row_get(progress_row, "status", "not started")
     response_goal = 7
     response_percent = max(0, min(100, round((response_count / response_goal) * 100)))
@@ -5775,7 +6008,7 @@ LIMIT 1
         <div class="stats">
           <div class="stat">
             <span class="muted">Rolling-7 progress</span>
-            <strong>{{ progress_percent }}%</strong>
+            <strong>{{ progress_label }}</strong>
             <div class="progress" aria-label="Rolling-7 progress"><div class="bar"></div></div>
           </div>
           <div class="stat">
@@ -5846,6 +6079,8 @@ LIMIT 1
               <p class="muted">Questions are not available for this standard yet.</p>
             {% elif standard.rolling_avg is not none %}
               <p class="muted">Latest Rolling-7 average: {{ (standard.rolling_avg * 100)|round|int }}%</p>
+            {% elif standard.response_count == 0 and standard.level %}
+              <p class="muted">No responses yet.</p>
             {% endif %}
           </section>
         {% endfor %}
@@ -5867,6 +6102,7 @@ LIMIT 1
             current_core_idea=current_core_idea,
             current_grade_band=current_grade_band,
             progress_percent=progress_percent,
+            progress_label=progress_label,
             response_percent=response_percent,
             progress_status=progress_status,
             response_count=response_count,
@@ -6723,6 +6959,36 @@ def export_csv():
 
 
 # ---------- Student Overview ----------
+@app.post("/teacher/student/<student_id>/placement")
+@require_teacher
+def update_student_placement(student_id):
+    conn = get_conn()
+    node_value = request.form.get("learning_node", "").strip()
+    level_raw = request.form.get("current_level", "1").strip()
+
+    if "||" not in node_value:
+        flash("Select a valid standard and objective.")
+        return redirect(url_for("student_overview", student_id=student_id))
+
+    standard_id, objective_id = [part.strip() for part in node_value.split("||", 1)]
+    try:
+        current_level = int(level_raw)
+    except Exception:
+        current_level = 1
+
+    ok, message = place_student_learning_node(
+        conn,
+        student_id=student_id,
+        standard_id=standard_id,
+        objective_id=objective_id,
+        current_level=current_level,
+        placed_by_user_id=session.get("user_id"),
+        require_teacher_control=True,
+    )
+    flash(message)
+    return redirect(url_for("student_overview", student_id=student_id))
+
+
 @app.route("/teacher/student/<student_id>")
 @require_teacher
 def student_overview(student_id):
@@ -6730,6 +6996,8 @@ def student_overview(student_id):
     overview = get_student_overview(conn, student_id)
     if not overview:
         abort(404)
+    placement_options = get_placeable_learning_nodes(conn)
+    ms_ls1_1_first_objective = first_objective_for_standard(conn, "MS-LS1-1")
 
     html = """
 <!doctype html>
@@ -6766,6 +7034,9 @@ def student_overview(student_id):
   .pill-alert{background:#fee2e2;color:#991b1b}
   .pill-current{background:#e0f2fe;color:#075985}
   .pill-muted{background:#f3f4f6;color:#4b5563}
+  .placement-form{display:grid;grid-template-columns:2fr 120px auto;gap:10px;align-items:end}
+  .placement-form label{font-size:13px;color:#374151;font-weight:700}
+  .placement-form select{width:100%;margin-top:6px;padding:8px;border:1px solid #cbd5e1;border-radius:8px;background:#fff}
   .history-standard{border-top:1px solid #e5e0d2;padding-top:14px;margin-top:14px}
   .history-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:8px}
   .history-title{font-weight:800;color:#111827}
@@ -6774,7 +7045,7 @@ def student_overview(student_id):
   .muted{color:#6b7280}
   ul.clean{margin:8px 0 0 18px;padding:0}
   li{margin:4px 0}
-  @media(max-width:850px){.grid,.stat-grid{grid-template-columns:1fr}.topbar{display:block}.topbar .actions{margin-top:12px}}
+  @media(max-width:850px){.grid,.stat-grid,.placement-form{grid-template-columns:1fr}.topbar{display:block}.topbar .actions{margin-top:12px}}
 </style>
 <div class="page">
   <div class="topbar">
@@ -6842,6 +7113,37 @@ def student_overview(student_id):
       </div>
     {% else %}
       <div class="empty">No current progress record exists for this student yet.</div>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>Teacher Placement</h2>
+    <p class="note">Explicitly place or reposition this student. This updates the durable current standard, objective, and level without deleting prior work.</p>
+    {% if placement_options %}
+      <form class="placement-form" method="post" action="{{ url_for('update_student_placement', student_id=overview.student['student_id']) }}">
+        <label>Standard and objective
+          <select name="learning_node" required>
+            {% for node in placement_options %}
+              {% set value = node['standard_id'] ~ '||' ~ node['objective_id'] %}
+              <option value="{{ value }}"
+                {% if overview.latest_progress and node['standard_id'] == overview.latest_progress['standard_id'] and overview.objective and node['objective_id'] == overview.objective['objective_id'] %}selected
+                {% elif not overview.latest_progress and node['standard_id'] == 'MS-LS1-1' and node['objective_id'] == ms_ls1_1_first_objective %}selected{% endif %}>
+                {{ node['standard_id'] }} - {{ node['objective_id'] }}{% if node['objective_text'] %}: {{ node['objective_text'] }}{% endif %}
+              </option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>Level
+          <select name="current_level" required>
+            {% for level in [1, 2, 3] %}
+              <option value="{{ level }}" {% if overview.latest_progress and overview.latest_progress['current_level'] == level %}selected{% elif not overview.latest_progress and level == 1 %}selected{% endif %}>{{ level }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <button class="btn" type="submit">Place Student</button>
+      </form>
+    {% else %}
+      <div class="empty">No placeable objectives are available yet.</div>
     {% endif %}
   </div>
 
@@ -7052,6 +7354,8 @@ def student_overview(student_id):
         html,
         overview=overview,
         format_ts=format_ts,
+        placement_options=placement_options,
+        ms_ls1_1_first_objective=ms_ls1_1_first_objective,
     )
 
 

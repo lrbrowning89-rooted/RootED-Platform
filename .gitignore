@@ -3,6 +3,7 @@ __pycache__/
 # Local DB + logs
 data/*.db
 app_core/*.db
+.test_placement_*.db
 data/ngss_errors.log
 
 # Local venvs
