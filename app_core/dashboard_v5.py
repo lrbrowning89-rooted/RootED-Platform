@@ -40,6 +40,66 @@ from app_core import adaptive_engine as ae
 APP_VERSION = "v0.5 – Rolling-7 Engine Active"
 APP_NAME = "Adaptive NGSS Platform"
 
+# Classroom launch manifest. Adaptive levels 1/2/3 live inside each objective;
+# objective letters are the approved NGSS-aligned learning objectives.
+LAUNCH_STANDARD_IDS = ("MS-LS1-1", "MS-LS1-2", "MS-LS1-3")
+LAUNCH_OBJECTIVE_IDS = (
+    "MS-LS1-1A",
+    "MS-LS1-1B",
+    "MS-LS1-2A",
+    "MS-LS1-2B",
+    "MS-LS1-3A",
+    "MS-LS1-3B",
+    "MS-LS1-3C",
+)
+LAUNCH_OBJECTIVE_ID_SET = set(LAUNCH_OBJECTIVE_IDS)
+LAUNCH_STANDARD_ID_SET = set(LAUNCH_STANDARD_IDS)
+OBSOLETE_LAUNCH_OBJECTIVE_IDS = (
+    "MS-LS1-2C",
+    "MS-LS1-2D",
+    "MS-LS1-2E",
+    "MS-LS1-2F",
+    "MS-LS1-2G",
+    "MS-LS1-3E",
+)
+
+
+def sql_placeholders(values) -> str:
+    return ",".join("?" for _ in values)
+
+
+def is_launch_standard_id(standard_id: str | None) -> bool:
+    return bool(standard_id and standard_id in LAUNCH_STANDARD_ID_SET)
+
+
+def is_launch_objective_id(objective_id: str | None) -> bool:
+    return bool(objective_id and objective_id in LAUNCH_OBJECTIVE_ID_SET)
+
+
+def canonical_objective_order(objective_id: str | None) -> int:
+    try:
+        return LAUNCH_OBJECTIVE_IDS.index(objective_id)
+    except ValueError:
+        return len(LAUNCH_OBJECTIVE_IDS)
+
+
+def canonical_objective_sort_key(row) -> tuple[int, str]:
+    objective_id = row_get(row, "objective_id", None)
+    return canonical_objective_order(objective_id), objective_id or ""
+
+
+def order_objective_rows(rows):
+    return sorted(rows, key=canonical_objective_sort_key)
+
+
+def next_launch_objective_id(current_objective_id: str | None) -> str | None:
+    if not is_launch_objective_id(current_objective_id):
+        return None
+    index = canonical_objective_order(current_objective_id)
+    if index + 1 >= len(LAUNCH_OBJECTIVE_IDS):
+        return None
+    return LAUNCH_OBJECTIVE_IDS[index + 1]
+
 # ---------- Database setup ----------
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB = os.environ.get("NGSS_DB", os.path.join(BASE_DIR, "data", "ngss.db"))
@@ -945,16 +1005,17 @@ def lookup_map(conn, oid):
 
 
 def mastered_fraction_in_band(conn, sid, core, band, mastery=0.9):
-    rows = conn.execute(
-        """
+    objective_placeholders = sql_placeholders(LAUNCH_OBJECTIVE_IDS)
+    rows = order_objective_rows(conn.execute(
+        f"""
         SELECT o.objective_id
         FROM objectives o
         JOIN standards s ON s.standard_id = o.standard_id
         WHERE s.core_idea = ? AND s.grade_band = ?
-        ORDER BY o.order_in_band, o.objective_id
+          AND o.objective_id IN ({objective_placeholders})
         """,
-        (core, band),
-    ).fetchall()
+        (core, band, *LAUNCH_OBJECTIVE_IDS),
+    ).fetchall())
     if not rows:
         return 0.0, []
     mastered = []
@@ -967,17 +1028,18 @@ def mastered_fraction_in_band(conn, sid, core, band, mastery=0.9):
 
 
 def first_objective_in_band(conn, core, band):
-    r = conn.execute(
-        """
+    objective_placeholders = sql_placeholders(LAUNCH_OBJECTIVE_IDS)
+    rows = order_objective_rows(conn.execute(
+        f"""
         SELECT o.objective_id
         FROM objectives o
         JOIN standards s ON s.standard_id = o.standard_id
         WHERE s.core_idea = ? AND s.grade_band = ?
-        ORDER BY o.order_in_band, o.objective_id
-        LIMIT 1
+          AND o.objective_id IN ({objective_placeholders})
         """,
-        (core, band),
-    ).fetchone()
+        (core, band, *LAUNCH_OBJECTIVE_IDS),
+    ).fetchall())
+    r = rows[0] if rows else None
     return r["objective_id"] if r else None
 
 
@@ -1090,8 +1152,9 @@ def decide_next(conn, sid, oid):
 
 
 def get_objectives(conn):
-    return conn.execute(
-        """
+    objective_placeholders = sql_placeholders(LAUNCH_OBJECTIVE_IDS)
+    return order_objective_rows(conn.execute(
+        f"""
         SELECT
             o.objective_id,
             o.objective_text,
@@ -1100,14 +1163,17 @@ def get_objectives(conn):
             s.grade_band
         FROM objectives o
         JOIN standards s ON s.standard_id = o.standard_id
-        ORDER BY s.core_idea, s.grade_band, o.order_in_band, o.objective_id
-        """
-    ).fetchall()
+        WHERE o.objective_id IN ({objective_placeholders})
+        """,
+        LAUNCH_OBJECTIVE_IDS,
+    ).fetchall())
 
 
 def get_available_standards(conn):
+    standard_placeholders = sql_placeholders(LAUNCH_STANDARD_IDS)
+    objective_placeholders = sql_placeholders(LAUNCH_OBJECTIVE_IDS)
     return conn.execute(
-        """
+        f"""
         SELECT
             s.standard_id,
             s.core_idea,
@@ -1116,10 +1182,13 @@ def get_available_standards(conn):
             COUNT(DISTINCT q.question_id) AS question_count
         FROM standards s
         LEFT JOIN objectives o ON o.standard_id = s.standard_id
+          AND o.objective_id IN ({objective_placeholders})
         LEFT JOIN questions q ON q.objective_id = o.objective_id
+        WHERE s.standard_id IN ({standard_placeholders})
         GROUP BY s.standard_id, s.core_idea, s.grade_band
         ORDER BY s.core_idea, s.grade_band, s.standard_id
-        """
+        """,
+        (*LAUNCH_OBJECTIVE_IDS, *LAUNCH_STANDARD_IDS),
     ).fetchall()
 
 
@@ -1159,9 +1228,10 @@ def get_progress_by_standard(conn, student_id):
         FROM progress_state
         WHERE student_id = ?
           AND status <> 'inactive'
+          AND standard_id IN ({})
         ORDER BY last_update DESC
-        """,
-        (student_id,),
+        """.format(sql_placeholders(LAUNCH_STANDARD_IDS)),
+        (student_id, *LAUNCH_STANDARD_IDS),
     ).fetchall()
     return {row["standard_id"]: row for row in rows}
 
@@ -1205,11 +1275,12 @@ def get_latest_student_progress(conn, student_id):
 
 
 def get_active_objective_for_student(conn, student_id, standard_id):
-    if not student_id or not standard_id:
+    if not student_id or not is_launch_standard_id(standard_id):
         return None
+    objective_placeholders = sql_placeholders(LAUNCH_OBJECTIVE_IDS)
     try:
         return conn.execute(
-            """
+            f"""
             SELECT sos.current_objective_id AS objective_id,
                    o.objective_text
             FROM student_objective_state sos
@@ -1217,9 +1288,10 @@ def get_active_objective_for_student(conn, student_id, standard_id):
             WHERE sos.student_id = ?
               AND sos.standard_id = ?
               AND sos.status = 'active'
+              AND sos.current_objective_id IN ({objective_placeholders})
             LIMIT 1
             """,
-            (student_id, standard_id),
+            (student_id, standard_id, *LAUNCH_OBJECTIVE_IDS),
         ).fetchone()
     except sqlite3.OperationalError:
         return None
@@ -1269,10 +1341,11 @@ def get_current_student_placement(conn, student_id):
         LEFT JOIN standards s ON s.standard_id = ps.standard_id
         WHERE ps.student_id = ?
           AND ps.status <> 'inactive'
+          AND ps.standard_id IN ({sql_placeholders(LAUNCH_STANDARD_IDS)})
         ORDER BY ps.last_update DESC, ps.id DESC
         LIMIT 1
         """,
-        (student_id,),
+        (student_id, *LAUNCH_STANDARD_IDS),
     ).fetchone()
 
     standard_id = row_get(progress, "standard_id", None)
@@ -1472,8 +1545,9 @@ def get_student_learning_history(conn, student_id):
     if not standard_ids:
         return empty
 
-    placeholders = ",".join("?" for _ in standard_ids)
-    objective_rows = conn.execute(
+    standard_placeholders = ",".join("?" for _ in standard_ids)
+    objective_placeholders = sql_placeholders(LAUNCH_OBJECTIVE_IDS)
+    objective_rows = order_objective_rows(conn.execute(
         f"""
         SELECT o.objective_id,
                o.standard_id,
@@ -1483,11 +1557,11 @@ def get_student_learning_history(conn, student_id):
                s.grade_band
         FROM objectives o
         LEFT JOIN standards s ON s.standard_id = o.standard_id
-        WHERE o.standard_id IN ({placeholders})
-        ORDER BY s.core_idea, s.grade_band, o.standard_id, o.order_in_band, o.objective_id
+        WHERE o.standard_id IN ({standard_placeholders})
+          AND o.objective_id IN ({objective_placeholders})
         """,
-        tuple(sorted(standard_ids)),
-    ).fetchall()
+        (*tuple(sorted(standard_ids)), *LAUNCH_OBJECTIVE_IDS),
+    ).fetchall())
 
     objective_metrics = {}
     if table_exists(conn, "attempts") and table_exists(conn, "questions"):
@@ -1503,10 +1577,11 @@ def get_student_learning_history(conn, student_id):
             JOIN questions q ON q.question_id = a.question_id
             JOIN objectives o ON o.objective_id = q.objective_id
             WHERE a.student_id = ?
-              AND o.standard_id IN ({placeholders})
+              AND o.standard_id IN ({standard_placeholders})
+              AND o.objective_id IN ({objective_placeholders})
             GROUP BY q.objective_id
             """,
-            (student_id, *tuple(sorted(standard_ids))),
+            (student_id, *tuple(sorted(standard_ids)), *LAUNCH_OBJECTIVE_IDS),
         ).fetchall():
             objective_metrics[row["objective_id"]] = {
                 "attempt_count": int(row_get(row, "attempt_count", 0)),
@@ -1881,7 +1956,10 @@ def get_active_standard_summary(conn, selected_period=None):
     if selected_period and selected_period != "ALL":
         where_clauses.append("st.class_period = ?")
         params.append(selected_period)
+    where_clauses.append(f"ps.standard_id IN ({sql_placeholders(LAUNCH_STANDARD_IDS)})")
+    params.extend(LAUNCH_STANDARD_IDS)
     where_sql = "WHERE " + " AND ".join(where_clauses)
+    objective_placeholders = sql_placeholders(LAUNCH_OBJECTIVE_IDS)
 
     return conn.execute(
         f"""
@@ -1906,12 +1984,13 @@ def get_active_standard_summary(conn, selected_period=None):
             AND rs.standard_id = ps.standard_id
             AND rs.level = ps.current_level
         LEFT JOIN objectives o ON o.standard_id = ps.standard_id
+            AND o.objective_id IN ({objective_placeholders})
         LEFT JOIN questions q ON q.objective_id = o.objective_id
         {where_sql}
         GROUP BY ps.standard_id, s.core_idea, s.grade_band
         ORDER BY student_count DESC, ps.standard_id
         """,
-        params,
+        (*LAUNCH_OBJECTIVE_IDS, *params),
     ).fetchall()
 
 
@@ -2128,8 +2207,9 @@ def teacher_controls_student(
 
 
 def get_placeable_learning_nodes(conn: sqlite3.Connection):
-    return conn.execute(
-        """
+    objective_placeholders = sql_placeholders(LAUNCH_OBJECTIVE_IDS)
+    return order_objective_rows(conn.execute(
+        f"""
         SELECT s.standard_id,
                s.core_idea,
                s.grade_band,
@@ -2140,6 +2220,7 @@ def get_placeable_learning_nodes(conn: sqlite3.Connection):
         FROM standards s
         JOIN objectives o ON o.standard_id = s.standard_id
         LEFT JOIN questions q ON q.objective_id = o.objective_id
+        WHERE o.objective_id IN ({objective_placeholders})
         GROUP BY
           s.standard_id,
           s.core_idea,
@@ -2148,27 +2229,30 @@ def get_placeable_learning_nodes(conn: sqlite3.Connection):
           o.objective_text,
           o.order_in_band
         HAVING COUNT(q.question_id) > 0
-        ORDER BY s.core_idea, s.grade_band, s.standard_id, o.order_in_band, o.objective_id
-        """
-    ).fetchall()
+        """,
+        LAUNCH_OBJECTIVE_IDS,
+    ).fetchall())
 
 
 def first_objective_for_standard(conn: sqlite3.Connection, standard_id: str) -> str | None:
-    row = conn.execute(
-        """
+    if not is_launch_standard_id(standard_id):
+        return None
+    objective_placeholders = sql_placeholders(LAUNCH_OBJECTIVE_IDS)
+    rows = order_objective_rows(conn.execute(
+        f"""
         SELECT o.objective_id
         FROM objectives o
         WHERE o.standard_id = ?
+          AND o.objective_id IN ({objective_placeholders})
           AND EXISTS (
               SELECT 1
               FROM questions q
               WHERE q.objective_id = o.objective_id
           )
-        ORDER BY o.order_in_band, o.objective_id
-        LIMIT 1
         """,
-        (standard_id,),
-    ).fetchone()
+        (standard_id, *LAUNCH_OBJECTIVE_IDS),
+    ).fetchall())
+    row = rows[0] if rows else None
     return row["objective_id"] if row else None
 
 
@@ -2182,6 +2266,9 @@ def validate_learning_placement(
 ) -> tuple[bool, str]:
     if current_level not in (1, 2, 3):
         return False, "Current level must be 1, 2, or 3."
+
+    if not is_launch_standard_id(standard_id) or not is_launch_objective_id(objective_id):
+        return False, "Selected objective is not part of the classroom launch manifest."
 
     student = conn.execute(
         "SELECT 1 FROM students WHERE student_id = ?",
@@ -2434,7 +2521,7 @@ def get_or_create_sso_user(
 
 
 def get_questions_for_objective(conn, oid):
-    if not oid:
+    if not is_launch_objective_id(oid):
         return []
     return conn.execute(
         """
@@ -2450,8 +2537,9 @@ def get_questions_for_objective(conn, oid):
 def get_preview_question(conn, question_id):
     if not question_id:
         return None
+    objective_placeholders = sql_placeholders(LAUNCH_OBJECTIVE_IDS)
     return conn.execute(
-        """
+        f"""
         SELECT q.question_id,
                q.objective_id,
                q.stem,
@@ -2464,14 +2552,17 @@ def get_preview_question(conn, question_id):
         FROM questions q
         LEFT JOIN objectives o ON o.objective_id = q.objective_id
         WHERE q.question_id = ?
+          AND q.objective_id IN ({objective_placeholders})
         LIMIT 1
         """,
-        (question_id,),
+        (question_id, *LAUNCH_OBJECTIVE_IDS),
     ).fetchone()
 
 
 def get_first_preview_question_id(conn, objective_id=None):
     if objective_id:
+        if not is_launch_objective_id(objective_id):
+            return None
         row = conn.execute(
             """
             SELECT question_id
@@ -2485,13 +2576,16 @@ def get_first_preview_question_id(conn, objective_id=None):
         if row:
             return row["question_id"]
 
+    objective_placeholders = sql_placeholders(LAUNCH_OBJECTIVE_IDS)
     row = conn.execute(
-        """
+        f"""
         SELECT question_id
         FROM questions
+        WHERE objective_id IN ({objective_placeholders})
         ORDER BY question_id
         LIMIT 1
-        """
+        """,
+        LAUNCH_OBJECTIVE_IDS,
     ).fetchone()
     return row["question_id"] if row else None
 
@@ -2698,6 +2792,8 @@ def teacher_question_preview():
 
 
 def get_any_question_id(conn, objective_id):
+    if not is_launch_objective_id(objective_id):
+        return None
     row = conn.execute(
         """
         SELECT question_id
@@ -2710,7 +2806,7 @@ def get_any_question_id(conn, objective_id):
     ).fetchone()
     if row:
         return row["question_id"]
-    return f"Q-{objective_id}-quick"
+    return None
 
 def get_level_for_objective(conn, objective_id):
     try:
@@ -4275,11 +4371,9 @@ def index():
         keep_obj = request.values.get("class_objective") or request.values.get(
             "objective_id"
         )
-        if not keep_obj:
-            row_first = conn.execute(
-                "SELECT objective_id FROM objectives ORDER BY objective_id LIMIT 1"
-            ).fetchone()
-            keep_obj = row_first["objective_id"] if row_first else None
+        if not is_launch_objective_id(keep_obj):
+            ordered_objectives = get_objectives(conn)
+            keep_obj = ordered_objectives[0]["objective_id"] if ordered_objectives else None
         keep_period = request.values.get("period", "ALL")
 
         if not qid:
@@ -4329,17 +4423,21 @@ def index():
     active_student = request.values.get(
         "student_id", students[0]["student_id"] if students else "S1"
     )
-    class_obj = request.values.get(
-        "class_objective", objs[0]["objective_id"] if objs else None
-    )
+    class_obj = request.values.get("class_objective")
+    if not is_launch_objective_id(class_obj):
+        class_obj = objs[0]["objective_id"] if objs else None
 
     current_obj_for_questions = request.values.get("objective_id", class_obj)
+    if not is_launch_objective_id(current_obj_for_questions):
+        current_obj_for_questions = class_obj
     qrows = (
         get_questions_for_objective(conn, current_obj_for_questions)
         if current_obj_for_questions
         else []
     )
     preview_objective_id = request.values.get("preview_objective_id", class_obj)
+    if not is_launch_objective_id(preview_objective_id):
+        preview_objective_id = class_obj
     preview_qrows = (
         get_questions_for_objective(conn, preview_objective_id)
         if preview_objective_id
@@ -5498,54 +5596,50 @@ def student_view():
         return "MS-LS1-1B"
     
     def get_first_objective_for_standard(std):
-        row = conn.execute(
-            """
+        if not is_launch_standard_id(std):
+            return None
+        objective_placeholders = sql_placeholders(LAUNCH_OBJECTIVE_IDS)
+        rows = order_objective_rows(conn.execute(
+            f"""
 SELECT o.objective_id
 FROM objectives o
 WHERE o.standard_id = ?
+  AND o.objective_id IN ({objective_placeholders})
   AND EXISTS (
       SELECT 1
       FROM questions q
       WHERE q.objective_id = o.objective_id
   )
-ORDER BY o.order_in_band, o.objective_id
-LIMIT 1
             """,
-            (std,),
-        ).fetchone()
+            (std, *LAUNCH_OBJECTIVE_IDS),
+        ).fetchall())
+        row = rows[0] if rows else None
         return row["objective_id"] if row else None
 
     def get_next_objective_for_standard(std, current_objective_id):
-        current = conn.execute(
-            """
-            SELECT order_in_band
-            FROM objectives
-            WHERE objective_id = ?
-            """,
-            (current_objective_id,),
-        ).fetchone()
-
-        if not current:
+        if not is_launch_standard_id(std) or not is_launch_objective_id(current_objective_id):
             return None
-
-        row = conn.execute(
-            """
+        next_objective_id = next_launch_objective_id(current_objective_id)
+        if not next_objective_id:
+            return None
+        objective_placeholders = sql_placeholders(LAUNCH_OBJECTIVE_IDS)
+        rows = order_objective_rows(conn.execute(
+            f"""
 SELECT o.objective_id
 FROM objectives o
 WHERE o.standard_id = ?
-  AND o.order_in_band > ?
+  AND o.objective_id IN ({objective_placeholders})
   AND EXISTS (
       SELECT 1
       FROM questions q
       WHERE q.objective_id = o.objective_id
   )
-ORDER BY o.order_in_band, o.objective_id
-LIMIT 1
             """,
-            (std, current["order_in_band"]),
-        ).fetchone()
+            (std, *LAUNCH_OBJECTIVE_IDS),
+        ).fetchall())
 
-        return row["objective_id"] if row else None
+        objective_ids = [row["objective_id"] for row in rows]
+        return next_objective_id if next_objective_id in objective_ids else None
 
     def set_student_objective(student_id, std, objective_id):
         now = int(time.time())
@@ -5593,7 +5687,7 @@ LIMIT 1
 
     if role == "teacher":
         requested_objective = request.values.get("objective_id")
-        if requested_objective:
+        if is_launch_objective_id(requested_objective):
             objective_id = requested_objective
             std_row = conn.execute(
                 "SELECT standard_id FROM objectives WHERE objective_id=?",
