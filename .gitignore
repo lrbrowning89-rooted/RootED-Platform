@@ -12,5 +12,10 @@ app_core/venv/
 __pycache__/
 *.pyc
 
+# Local environment files (never commit real secrets)
+.env
+.env.*
+!.env.example
+
 # Local backups
 data/backups/*.db

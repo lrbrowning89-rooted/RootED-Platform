@@ -1,5 +1,15 @@
 # config.py
 import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+
+# Local development reads the repository-root .env file. Existing process
+# variables always win, so production hosts continue to use their normal
+# environment/secret configuration.
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(PROJECT_ROOT / ".env", override=False)
 
 # FERPA defaults
 FERPA_ENFORCED = False  # Allow teachers to toggle between masked/full

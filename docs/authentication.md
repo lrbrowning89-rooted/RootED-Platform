@@ -8,6 +8,21 @@ RootED uses one OIDC callback shape for Google and Microsoft:
 Register the matching `http://localhost:<port>` callback separately for local
 development. Redirect URIs must match exactly.
 
+## Local environment file
+
+For local development, copy `.env.example` to a file named `.env` in the
+repository root:
+
+`C:\Users\lrbro\OneDrive\Documents\RootED\.env`
+
+RootED loads that file automatically through `python-dotenv`. Values already
+present in the process environment take precedence over `.env`, so production
+deployments continue to use the hosting platform's environment-variable or
+secret-management settings. Do not deploy a `.env` file to production.
+
+The local `.env` and all `.env.*` variants are ignored by Git, except for the
+secret-free `.env.example`. Never place real credentials in `.env.example`.
+
 ## Environment variables
 
 - `SECRET_KEY`: long random production session secret
@@ -19,6 +34,12 @@ development. Redirect URIs must match exactly.
 - `MICROSOFT_CLIENT_SECRET`
 - `MICROSOFT_TENANT`: `common` by default; use a tenant ID to restrict sign-in
 - `ALLOW_SSO_AUTO_CREATE=true`: creates pending, restricted RootED accounts after valid OIDC login
+
+Local maintenance credentials are never stored in source control. The
+`fix_login.py` helper requires `ROOTED_MAINTENANCE_USERNAME` and
+`ROOTED_MAINTENANCE_PASSWORD` in its process environment and never prints the
+password. Set them only for the terminal session that runs the helper, then
+close that terminal or remove the variables.
 
 The legacy `MS_CLIENT_ID` and `MS_CLIENT_SECRET` names remain accepted during
 deployment migration. Prefer the `MICROSOFT_*` names for new configuration.
@@ -99,6 +120,8 @@ slash behavior used by that environment.
 - [ ] Apply the authentication identity migration.
 - [ ] Back up the production database before applying the migration.
 - [ ] Confirm the restricted onboarding page is available at `/restricted`.
+- [ ] Confirm `.env` and `.env.*` are ignored and only `.env.example` may be
+      committed.
 
 ### Verification
 
