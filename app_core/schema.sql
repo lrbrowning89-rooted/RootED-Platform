@@ -144,6 +144,8 @@ CREATE TABLE IF NOT EXISTS question_flags (
   escalated_by_user_id INTEGER,
   escalated_at        INTEGER,
   escalation_note     TEXT,
+  owner_reviewing_at  INTEGER,
+  owner_reviewing_by_user_id INTEGER,
   resolved_ts         INTEGER,
   resolution_note     TEXT,
   resolved_by_user_id INTEGER,
@@ -159,6 +161,22 @@ CREATE INDEX IF NOT EXISTS idx_question_flags_status_created
 
 CREATE INDEX IF NOT EXISTS idx_question_flags_question_status
   ON question_flags(question_id, status);
+
+CREATE TABLE IF NOT EXISTS question_flag_events (
+  event_id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  flag_id         TEXT NOT NULL,
+  from_status     TEXT,
+  to_status       TEXT NOT NULL CHECK (to_status IN ('open', 'teacher_resolved', 'escalated', 'owner_reviewing', 'fixed', 'closed')),
+  actor_user_id   INTEGER NOT NULL,
+  actor_authority TEXT NOT NULL,
+  note            TEXT,
+  created_ts      INTEGER NOT NULL,
+  FOREIGN KEY (flag_id) REFERENCES question_flags(flag_id) ON DELETE CASCADE,
+  FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS idx_question_flag_events_flag_created
+  ON question_flag_events(flag_id, created_ts, event_id);
 
 -- -------------------------
 -- Platform authority

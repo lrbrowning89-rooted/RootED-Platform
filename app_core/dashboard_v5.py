@@ -103,6 +103,24 @@ QUESTION_FLAG_STATUS_FILTERS = {
 }
 QUESTION_FLAG_DEFAULT_STATUS_FILTER = "current"
 QUESTION_FLAG_DEFAULT_CATEGORY_FILTER = "all"
+OWNER_QUESTION_FLAG_FILTERS = {
+    "needs-review": {
+        "label": "Needs Review",
+        "statuses": ("escalated",),
+        "empty": "No escalated reports are waiting for review.",
+    },
+    "in-review": {
+        "label": "In Review",
+        "statuses": ("owner_reviewing",),
+        "empty": "No reports are currently in owner review.",
+    },
+    "completed": {
+        "label": "Completed",
+        "statuses": ("fixed", "closed"),
+        "empty": "No owner-reviewed reports have been completed.",
+    },
+}
+OWNER_QUESTION_FLAG_DEFAULT_FILTER = "needs-review"
 QUESTION_REFERENCE_CSS = """
   .question-reference{display:grid;gap:5px;max-width:520px}
   .question-reference-label{font-size:11px;font-weight:850;color:#6b7280;text-transform:uppercase;letter-spacing:.04em}
@@ -548,6 +566,8 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
           escalated_by_user_id INTEGER,
           escalated_at        INTEGER,
           escalation_note     TEXT,
+          owner_reviewing_at  INTEGER,
+          owner_reviewing_by_user_id INTEGER,
           resolved_ts         INTEGER,
           resolution_note     TEXT,
           resolved_by_user_id INTEGER,
@@ -588,6 +608,8 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
               escalated_by_user_id INTEGER,
               escalated_at        INTEGER,
               escalation_note     TEXT,
+              owner_reviewing_at  INTEGER,
+              owner_reviewing_by_user_id INTEGER,
               resolved_ts         INTEGER,
               resolution_note     TEXT,
               resolved_by_user_id INTEGER,
@@ -631,6 +653,8 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         ("escalated_by_user_id", "INTEGER"),
         ("escalated_at", "INTEGER"),
         ("escalation_note", "TEXT"),
+        ("owner_reviewing_at", "INTEGER"),
+        ("owner_reviewing_by_user_id", "INTEGER"),
     ]:
         try:
             conn.execute(f"SELECT {col_name} FROM question_flags LIMIT 1")
@@ -649,6 +673,30 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             "UPDATE question_flags SET category = ? WHERE category = ?",
             (code, legacy_category),
         )
+    conn.commit()
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS question_flag_events (
+          event_id       INTEGER PRIMARY KEY AUTOINCREMENT,
+          flag_id        TEXT NOT NULL,
+          from_status    TEXT,
+          to_status      TEXT NOT NULL CHECK(to_status IN ('open', 'teacher_resolved', 'escalated', 'owner_reviewing', 'fixed', 'closed')),
+          actor_user_id  INTEGER NOT NULL,
+          actor_authority TEXT NOT NULL,
+          note           TEXT,
+          created_ts     INTEGER NOT NULL,
+          FOREIGN KEY(flag_id) REFERENCES question_flags(flag_id) ON DELETE CASCADE,
+          FOREIGN KEY(actor_user_id) REFERENCES users(id) ON DELETE RESTRICT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_question_flag_events_flag_created
+        ON question_flag_events(flag_id, created_ts, event_id)
+        """
+    )
     conn.commit()
 
     # Objective map overrides
@@ -2902,6 +2950,84 @@ def get_question_flag_by_id(conn: sqlite3.Connection, flag_id: str | None):
     ).fetchone()
 
 
+def normalize_owner_question_flag_filter(value: str | None) -> str:
+    value = (value or "").strip().lower()
+    if value in OWNER_QUESTION_FLAG_FILTERS:
+        return value
+    return OWNER_QUESTION_FLAG_DEFAULT_FILTER
+
+
+def question_flag_count_for_statuses(
+    conn: sqlite3.Connection,
+    statuses: tuple[str, ...],
+) -> int:
+    placeholders = sql_placeholders(statuses)
+    row = conn.execute(
+        f"SELECT COUNT(*) AS count FROM question_flags WHERE status IN ({placeholders})",
+        statuses,
+    ).fetchone()
+    return int(row["count"] or 0) if row else 0
+
+
+def owner_escalated_question_flag_count(conn: sqlite3.Connection) -> int:
+    return question_flag_count_for_statuses(conn, ("escalated",))
+
+
+def owner_question_flag_filter_counts(conn: sqlite3.Connection) -> dict[str, int]:
+    return {
+        key: question_flag_count_for_statuses(conn, config["statuses"])
+        for key, config in OWNER_QUESTION_FLAG_FILTERS.items()
+    }
+
+
+def get_question_flags_for_owner(
+    conn: sqlite3.Connection,
+    status_filter: str = OWNER_QUESTION_FLAG_DEFAULT_FILTER,
+):
+    status_filter = normalize_owner_question_flag_filter(status_filter)
+    statuses = OWNER_QUESTION_FLAG_FILTERS[status_filter]["statuses"]
+    status_placeholders = sql_placeholders(statuses)
+    objective_placeholders = sql_placeholders(LAUNCH_OBJECTIVE_IDS)
+    return conn.execute(
+        f"""
+        SELECT qf.*,
+               COALESCE(o.objective_text, '') AS objective_text,
+               q.question_id AS live_question_id,
+               q.stem AS question_stem,
+               cs.name AS class_name,
+               cs.class_period AS class_period,
+               reporter.username AS reporter_username
+        FROM question_flags qf
+        LEFT JOIN objectives o ON o.objective_id = qf.objective_id
+        LEFT JOIN questions q ON q.question_id = qf.question_id
+             AND q.objective_id IN ({objective_placeholders})
+        LEFT JOIN class_sections cs ON cs.class_id = qf.class_id
+        LEFT JOIN users reporter ON reporter.id = qf.reporter_user_id
+        WHERE qf.status IN ({status_placeholders})
+        ORDER BY CASE
+                   WHEN qf.status = 'escalated' THEN 0
+                   WHEN qf.status = 'owner_reviewing' THEN 1
+                   ELSE 2
+                 END,
+                 qf.created_ts DESC
+        """,
+        (*LAUNCH_OBJECTIVE_IDS, *statuses),
+    ).fetchall()
+
+
+def get_question_flag_events(conn: sqlite3.Connection, flag_id: str):
+    return conn.execute(
+        """
+        SELECT qfe.*, u.username AS actor_username
+        FROM question_flag_events qfe
+        LEFT JOIN users u ON u.id = qfe.actor_user_id
+        WHERE qfe.flag_id = ?
+        ORDER BY qfe.created_ts, qfe.event_id
+        """,
+        (flag_id,),
+    ).fetchall()
+
+
 def get_placeable_learning_nodes(conn: sqlite3.Connection):
     objective_placeholders = sql_placeholders(LAUNCH_OBJECTIVE_IDS)
     return order_objective_rows(conn.execute(
@@ -3859,6 +3985,378 @@ def escalate_question_flag(flag_id):
     conn.commit()
     flash("Flag sent to RootED Support.")
     return redirect(url_for("question_flags_review", filter=selected_filter, category=selected_category))
+
+
+# ---------- Owner workspace ----------
+@app.get("/owner")
+@owner_required
+def owner_home():
+    conn = get_conn()
+    escalated_count = owner_escalated_question_flag_count(conn)
+    user = current_user()
+    html = """
+<!doctype html>
+<title>RootED Owner Workspace</title>
+<style>
+  body{font-family:Arial,Helvetica,sans-serif;margin:0;background:#fbfaf4;color:#1f2937}
+  .page{max-width:960px;margin:0 auto;padding:24px}
+  .topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:18px;padding:18px 20px;border:1px solid #dfe8d9;border-radius:12px;background:linear-gradient(135deg,#fffdf7,#eef7ed)}
+  h1{margin:0;color:#234b35}.subtitle{margin:7px 0 0;color:#4b6654}
+  .actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .btn{display:inline-flex;align-items:center;gap:7px;background:#2f6f4e;color:#fff;text-decoration:none;border:none;padding:9px 13px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:700}
+  .btn-secondary{background:#eef4ec;color:#2f5138;border:1px solid #c8d9c4}
+  .card{margin-top:18px;padding:20px;border:1px solid #e2decf;border-radius:12px;background:#fffefa;box-shadow:0 8px 18px rgba(47,111,78,.06)}
+  .card h2{margin:0 0 8px;color:#234b35}.muted{color:#647067;font-size:13px}
+  .badge{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:24px;padding:0 7px;border-radius:999px;background:#b42318;color:#fff;font-size:12px;font-weight:850}
+  .account{display:grid;grid-template-columns:max-content 1fr;gap:7px 12px;margin:10px 0 0}
+</style>
+<main class="page">
+  <header class="topbar">
+    <div>
+      <h1>RootED Owner Workspace</h1>
+      <p class="subtitle">Platform support and escalated question review.</p>
+    </div>
+    <div class="actions">
+      {% if is_teacher_user %}
+        <a class="btn btn-secondary" href="{{ url_for('index') }}">Teacher Dashboard</a>
+      {% endif %}
+      <a class="btn btn-secondary" href="{{ url_for('logout') }}">Sign Out</a>
+    </div>
+  </header>
+
+  <section class="card">
+    <h2>Escalated Question Flags</h2>
+    <p>Review reports teachers have sent to RootED Support.</p>
+    <a class="btn" href="{{ url_for('owner_question_flags') }}">
+      <span>Open Question Flags</span>
+      {% if escalated_count %}
+        <span class="badge" aria-label="{{ escalated_count }} escalated report{{ '' if escalated_count == 1 else 's' }} awaiting review">{{ escalated_count }}</span>
+      {% endif %}
+    </a>
+  </section>
+
+  <section class="card">
+    <h2>Account</h2>
+    <dl class="account">
+      <dt>Username</dt><dd>{{ user['username'] }}</dd>
+      <dt>Classroom role</dt><dd>{{ user['role'] }}</dd>
+      <dt>Platform authority</dt><dd>Owner</dd>
+    </dl>
+  </section>
+</main>
+    """
+    return render_template_string(
+        html,
+        escalated_count=escalated_count,
+        user=user,
+        is_teacher_user=is_teacher(user),
+    )
+
+
+@app.get("/owner/question-flags")
+@owner_required
+def owner_question_flags():
+    conn = get_conn()
+    selected_filter = normalize_owner_question_flag_filter(request.args.get("filter"))
+    flags = get_question_flags_for_owner(conn, selected_filter)
+    status_counts = owner_question_flag_filter_counts(conn)
+    flag_events = {
+        flag["flag_id"]: get_question_flag_events(conn, flag["flag_id"])
+        for flag in flags
+    }
+    html = """
+<!doctype html>
+<title>RootED Support - Question Flags</title>
+<style>
+  body{font-family:Arial,Helvetica,sans-serif;margin:0;background:#fbfaf4;color:#1f2937}
+  .page{max-width:1240px;margin:0 auto;padding:24px}
+  .topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:18px;padding:18px 20px;border:1px solid #dfe8d9;border-radius:12px;background:linear-gradient(135deg,#fffdf7,#eef7ed)}
+  h1{margin:0;color:#234b35}.subtitle{margin:7px 0 0;color:#4b6654}
+  .btn{display:inline-block;background:#2f6f4e;color:#fff;text-decoration:none;border:none;padding:8px 12px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:700}
+  .btn-secondary{background:#eef4ec;color:#2f5138;border:1px solid #c8d9c4}
+  .card{margin-top:18px;padding:18px;border:1px solid #e2decf;border-radius:12px;background:#fffefa}
+  .tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}.tab{display:inline-flex;gap:7px;align-items:center;padding:8px 11px;border-radius:999px;background:#eef4ec;color:#2f5138;text-decoration:none;border:1px solid #c8d9c4;font-weight:700;font-size:13px}.tab[aria-current="page"]{background:#2f6f4e;color:#fff}.count{font-size:11px;font-weight:850}
+  table{border-collapse:collapse;width:100%}th,td{border:1px solid #e5e0d2;padding:9px;vertical-align:top;font-size:13px}th{background:#f5f1e8;text-align:left}
+  .pill{display:inline-block;padding:3px 8px;border-radius:999px;font-size:12px;font-weight:800}.pill-escalated{background:#fee2e2;color:#991b1b}.pill-owner_reviewing{background:#dbeafe;color:#1d4ed8}.pill-fixed,.pill-closed{background:#dcfce7;color:#166534}
+  .muted{color:#6b7280;font-size:12px}.note{white-space:pre-wrap}.empty{padding:14px;border:1px dashed #c8d9c4;border-radius:8px;color:#53665a;background:#fbf8ef}
+  textarea{width:100%;box-sizing:border-box;min-height:58px;padding:7px;border:1px solid #cbd5e1;border-radius:7px;font:inherit}.action-form{display:grid;gap:7px;margin-top:8px}.history{margin:8px 0 0;padding-left:18px}.history li{margin:4px 0}
+  {{ question_reference_css }}
+</style>
+<main class="page">
+  <header class="topbar">
+    <div>
+      <h1>Escalated Question Flags</h1>
+      <p class="subtitle">RootED Support review queue.</p>
+    </div>
+    <a class="btn btn-secondary" href="{{ url_for('owner_home') }}">Owner Workspace</a>
+  </header>
+  <section class="card">
+    <nav class="tabs" aria-label="Owner question flag filters">
+      {% for key, config in filters.items() %}
+        <a class="tab" href="{{ url_for('owner_question_flags', filter=key) }}" {% if key == selected_filter %}aria-current="page"{% endif %}>
+          <span>{{ config.label }}</span><span class="count">{{ status_counts[key] }}</span>
+        </a>
+      {% endfor %}
+    </nav>
+
+    {% if flags %}
+      <table>
+        <tr>
+          <th>Status</th><th>Question</th><th>Report</th><th>Context</th><th>Timeline</th><th>Action</th>
+        </tr>
+        {% for flag in flags %}
+          <tr>
+            <td><span class="pill pill-{{ flag['status'] }}">{{ flag['status'].replace('_', ' ') }}</span></td>
+            <td>
+              {{ question_reference_for_flag(
+                   flag,
+                   url_for('owner_question_preview', question_id=flag['question_id'], return_filter=selected_filter)
+                 ) }}
+            </td>
+            <td>
+              <strong>{{ category_label(flag['category']) }}</strong>
+              <div class="note">{{ flag['comment'] or 'No reporter comment.' }}</div>
+              <div class="muted">Reporter: {{ flag['reporter_role'] }}{% if flag['reporter_username'] %} ({{ flag['reporter_username'] }}){% endif %}</div>
+            </td>
+            <td>
+              {% if flag['class_name'] %}<div>{{ flag['class_name'] }}{% if flag['class_period'] %} · {{ flag['class_period'] }}{% endif %}</div>{% endif %}
+              {% if flag['student_id'] %}<div class="muted">Student: {{ flag['student_id'] }}</div>{% endif %}
+              <div class="muted">{{ flag['page_context'] or 'No page context' }}</div>
+            </td>
+            <td>
+              <div>Submitted: {{ format_ts(flag['created_ts']) }}</div>
+              <div>Escalated: {{ format_ts(flag['escalated_at']) }}</div>
+              {% if flag['escalation_note'] %}<div class="note"><strong>Escalation note:</strong> {{ flag['escalation_note'] }}</div>{% endif %}
+              {% if flag['owner_reviewing_at'] %}<div>Review started: {{ format_ts(flag['owner_reviewing_at']) }}</div>{% endif %}
+              {% if flag['resolution_note'] %}<div class="note"><strong>Owner resolution:</strong> {{ flag['resolution_note'] }}</div>{% endif %}
+              {% if flag_events[flag['flag_id']] %}
+                <ul class="history" aria-label="Report history">
+                  {% for event in flag_events[flag['flag_id']] %}
+                    <li>{{ event['from_status'] or 'created' }} → {{ event['to_status'] }} · {{ format_ts(event['created_ts']) }} · {{ event['actor_username'] or ('user ' ~ event['actor_user_id']) }}{% if event['note'] %}<br><span class="muted">{{ event['note'] }}</span>{% endif %}</li>
+                  {% endfor %}
+                </ul>
+              {% endif %}
+            </td>
+            <td>
+              {% if flag['status'] == 'escalated' %}
+                <form class="action-form" method="post" action="{{ url_for('owner_start_flag_review', flag_id=flag['flag_id']) }}">
+                  <input type="hidden" name="filter" value="{{ selected_filter }}">
+                  <textarea name="note" maxlength="1000" placeholder="Optional review note"></textarea>
+                  <button class="btn" type="submit">Start Review</button>
+                </form>
+              {% elif flag['status'] == 'owner_reviewing' %}
+                <form class="action-form" method="post" action="{{ url_for('owner_fix_question_flag', flag_id=flag['flag_id']) }}">
+                  <input type="hidden" name="filter" value="{{ selected_filter }}">
+                  <textarea name="resolution_note" maxlength="1000" required placeholder="Required resolution note"></textarea>
+                  <button class="btn" type="submit">Mark Fixed</button>
+                </form>
+                <form class="action-form" method="post" action="{{ url_for('owner_close_question_flag', flag_id=flag['flag_id']) }}">
+                  <input type="hidden" name="filter" value="{{ selected_filter }}">
+                  <textarea name="resolution_note" maxlength="1000" required placeholder="Required closure note"></textarea>
+                  <button class="btn btn-secondary" type="submit">Close Report</button>
+                </form>
+              {% else %}
+                <span class="muted">Completed {{ format_ts(flag['resolved_ts']) }}</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </table>
+    {% else %}
+      <div class="empty">{{ filters[selected_filter].empty }}</div>
+    {% endif %}
+  </section>
+</main>
+    """
+    return render_template_string(
+        html,
+        flags=flags,
+        flag_events=flag_events,
+        filters=OWNER_QUESTION_FLAG_FILTERS,
+        selected_filter=selected_filter,
+        status_counts=status_counts,
+        category_label=question_flag_category_label,
+        question_reference_for_flag=question_reference_for_flag,
+        question_reference_css=Markup(QUESTION_REFERENCE_CSS),
+        format_ts=format_ts,
+    )
+
+
+@app.get("/owner/question-preview")
+@owner_required
+def owner_question_preview():
+    conn = get_conn()
+    question_id = (request.args.get("question_id") or "").strip()
+    return_filter = normalize_owner_question_flag_filter(
+        request.args.get("return_filter")
+    )
+    current_question = get_preview_question(conn, question_id)
+    if not current_question:
+        abort(404)
+    resolved_asset = resolve_model_asset_for_question(conn, question_id)
+    current_model_asset = static_image_asset_for_render(resolved_asset)
+    html = """
+<!doctype html>
+<title>Owner Question Preview</title>
+<style>
+  body{font-family:Arial,Helvetica,sans-serif;margin:24px;background:#f3f4f6;color:#1f2937}
+  .card{max-width:780px;margin:0 auto;background:#fff;border-radius:12px;padding:20px;border:1px solid #e5e7eb}
+  .header{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}.header h1{margin:0;color:#234b35}.muted{color:#5f6b64;font-size:13px}
+  .btn{display:inline-block;background:#2f6f4e;color:#fff;text-decoration:none;padding:8px 12px;border-radius:8px;font-size:13px;font-weight:700}
+  .banner{margin:16px 0;padding:12px;border-radius:8px;background:#eef7ed;border:1px solid #c8d9c4;color:#2f5138}.choice{margin:8px 0;padding:8px;border:1px solid #e5e7eb;border-radius:7px;background:#fafafa}
+  .model-asset{margin:14px 0;padding:12px;border:1px solid #d7dee8;border-radius:8px;background:#f8fafc}.model-asset img{display:block;max-width:100%;height:auto;margin:0 auto}.model-asset-title{font-weight:700}.model-asset-caption{font-size:13px;color:#555}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+</style>
+<main class="card">
+  <header class="header">
+    <div><h1>Question Preview</h1><p class="muted">Read-only owner review.</p></div>
+    <a class="btn" href="{{ url_for('owner_question_flags', filter=return_filter) }}">Back to Question Flags</a>
+  </header>
+  <div class="banner">Responses are disabled. This preview cannot record attempts, change placement, or alter adaptive progress.</div>
+  <h2>{{ current_question['stem'] }}</h2>
+  <p class="muted">{{ question_reference_meta_text(current_question['objective_id'], current_question['objective_text'], current_question['question_id']) }} · {{ current_question['standard_id'] }}</p>
+  {% if current_model_asset %}
+    <figure class="model-asset">
+      {% if current_model_asset.title %}<figcaption class="model-asset-title">{{ current_model_asset.title }}</figcaption>{% endif %}
+      <img src="{{ url_for('static', filename=current_model_asset.filename) }}" alt="{{ current_model_asset.alt_text }}">
+      {% if current_model_asset.caption %}<p class="model-asset-caption">{{ current_model_asset.caption }}</p>{% endif %}
+      {% if current_model_asset.alt_text %}<span class="sr-only">Image description: {{ current_model_asset.alt_text }}</span>{% endif %}
+    </figure>
+  {% endif %}
+  <div aria-label="Answer choices">
+    <div class="choice">A. {{ current_question['choice_a'] }}</div>
+    <div class="choice">B. {{ current_question['choice_b'] }}</div>
+    <div class="choice">C. {{ current_question['choice_c'] }}</div>
+    <div class="choice">D. {{ current_question['choice_d'] }}</div>
+  </div>
+</main>
+    """
+    return render_template_string(
+        html,
+        current_question=current_question,
+        current_model_asset=current_model_asset,
+        return_filter=return_filter,
+        question_reference_meta_text=question_reference_meta_text,
+    )
+
+
+def transition_owner_question_flag(
+    flag_id: str,
+    *,
+    expected_status: str,
+    target_status: str,
+    note: str | None,
+    require_note: bool,
+) -> None:
+    clean_note = (note or "").strip()
+    if require_note and not clean_note:
+        abort(400, description="An owner resolution note is required.")
+    if len(clean_note) > 1000:
+        abort(400, description="Owner notes must be 1000 characters or fewer.")
+
+    user = current_user()
+    now = int(time.time())
+    conn = get_conn()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        flag = get_question_flag_by_id(conn, flag_id)
+        if not flag:
+            conn.rollback()
+            abort(404)
+        if flag["status"] != expected_status:
+            conn.rollback()
+            abort(409, description="That report is no longer in the required status.")
+
+        if target_status == "owner_reviewing":
+            cursor = conn.execute(
+                """
+                UPDATE question_flags
+                SET status = 'owner_reviewing',
+                    owner_reviewing_at = ?,
+                    owner_reviewing_by_user_id = ?
+                WHERE flag_id = ? AND status = 'escalated'
+                """,
+                (now, user["id"], flag_id),
+            )
+        else:
+            cursor = conn.execute(
+                """
+                UPDATE question_flags
+                SET status = ?,
+                    resolved_ts = ?,
+                    resolution_note = ?,
+                    resolved_by_user_id = ?
+                WHERE flag_id = ? AND status = 'owner_reviewing'
+                """,
+                (target_status, now, clean_note, user["id"], flag_id),
+            )
+        if cursor.rowcount != 1:
+            conn.rollback()
+            abort(409, description="The report changed before this action completed.")
+        conn.execute(
+            """
+            INSERT INTO question_flag_events
+              (flag_id, from_status, to_status, actor_user_id, actor_authority, note, created_ts)
+            VALUES (?, ?, ?, ?, 'owner', ?, ?)
+            """,
+            (
+                flag_id,
+                expected_status,
+                target_status,
+                user["id"],
+                clean_note or None,
+                now,
+            ),
+        )
+        conn.commit()
+    except HTTPException:
+        raise
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+@app.post("/owner/question-flags/<flag_id>/review")
+@owner_required
+def owner_start_flag_review(flag_id):
+    transition_owner_question_flag(
+        flag_id,
+        expected_status="escalated",
+        target_status="owner_reviewing",
+        note=request.form.get("note"),
+        require_note=False,
+    )
+    flash("Report moved to In Review.")
+    return redirect(url_for("owner_question_flags", filter="in-review"))
+
+
+@app.post("/owner/question-flags/<flag_id>/fixed")
+@owner_required
+def owner_fix_question_flag(flag_id):
+    transition_owner_question_flag(
+        flag_id,
+        expected_status="owner_reviewing",
+        target_status="fixed",
+        note=request.form.get("resolution_note"),
+        require_note=True,
+    )
+    flash("Report marked fixed.")
+    return redirect(url_for("owner_question_flags", filter="completed"))
+
+
+@app.post("/owner/question-flags/<flag_id>/closed")
+@owner_required
+def owner_close_question_flag(flag_id):
+    transition_owner_question_flag(
+        flag_id,
+        expected_status="owner_reviewing",
+        target_status="closed",
+        note=request.form.get("resolution_note"),
+        require_note=True,
+    )
+    flash("Report closed.")
+    return redirect(url_for("owner_question_flags", filter="completed"))
 
 
 def get_any_question_id(conn, objective_id):
@@ -5619,6 +6117,10 @@ def index():
         conn,
         session.get("user_id"),
     )
+    current_user_is_owner = is_owner()
+    owner_escalated_flag_count = (
+        owner_escalated_question_flag_count(conn) if current_user_is_owner else 0
+    )
 
     for o in objs:
         per_student = (
@@ -5697,6 +6199,19 @@ def index():
         </span>
       {% endif %}
     </a>
+
+    {% if current_user_is_owner %}
+      <a href="{{ url_for('owner_home') }}"
+         class="btn btn-secondary btn-with-badge"
+         style="text-decoration:none;">
+        <span>Owner Workspace</span>
+        {% if owner_escalated_flag_count %}
+          <span class="action-badge" aria-label="{{ owner_escalated_flag_count }} escalated question report{{ '' if owner_escalated_flag_count == 1 else 's' }} awaiting RootED review">
+            {{ owner_escalated_flag_count }}
+          </span>
+        {% endif %}
+      </a>
+    {% endif %}
 
     <form action="{{ url_for('logout') }}" method="get" style="margin:0;">
       <button type="submit" class="btn btn-ghost">Logout</button>
@@ -6638,6 +7153,8 @@ def index():
         engine_checks=engine_checks,
         recent_errors=recent_errors,
         question_flags_action_count=question_flags_action_count,
+        current_user_is_owner=current_user_is_owner,
+        owner_escalated_flag_count=owner_escalated_flag_count,
         question_reference_css=Markup(QUESTION_REFERENCE_CSS),
         all_users=all_users,
         class_sections=class_sections,
