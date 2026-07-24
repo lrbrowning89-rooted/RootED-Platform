@@ -54,6 +54,34 @@ LAUNCH_OBJECTIVE_IDS = (
 )
 LAUNCH_OBJECTIVE_ID_SET = set(LAUNCH_OBJECTIVE_IDS)
 LAUNCH_STANDARD_ID_SET = set(LAUNCH_STANDARD_IDS)
+QUESTION_FLAG_CATEGORIES = (
+    ("incorrect_answer", "The answer looks wrong"),
+    ("confusing_question", "This question is confusing"),
+    ("visual_problem", "The picture or model has a problem"),
+    ("display_problem", "Something does not look right on my screen"),
+    ("accessibility_problem", "This question is hard to read or use"),
+    ("duplicate_question", "I have already seen this question"),
+    ("other", "Something else"),
+)
+QUESTION_FLAG_CATEGORY_LABELS = dict(QUESTION_FLAG_CATEGORIES)
+QUESTION_FLAG_CATEGORY_SET = set(QUESTION_FLAG_CATEGORY_LABELS)
+LEGACY_QUESTION_FLAG_CATEGORIES = {
+    "incorrect answer or scoring": "incorrect_answer",
+    "confusing wording": "confusing_question",
+    "image/model problem": "visual_problem",
+    "formatting/rendering problem": "display_problem",
+    "accessibility problem": "accessibility_problem",
+    "duplicate question": "duplicate_question",
+}
+QUESTION_FLAG_COMMENT_MAX_LENGTH = 500
+QUESTION_FLAG_STATUSES = (
+    "open",
+    "teacher_resolved",
+    "escalated",
+    "owner_reviewing",
+    "fixed",
+    "closed",
+)
 OBSOLETE_LAUNCH_OBJECTIVE_IDS = (
     "MS-LS1-2C",
     "MS-LS1-2D",
@@ -372,6 +400,128 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         ON attempts(student_id, question_id, timestamp DESC)
         """
     )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS question_flags (
+          flag_id             TEXT PRIMARY KEY,
+          question_id         TEXT NOT NULL,
+          objective_id        TEXT NOT NULL,
+          standard_id         TEXT NOT NULL,
+          reporter_user_id    INTEGER,
+          reporter_role       TEXT NOT NULL CHECK(reporter_role IN ('teacher', 'student')),
+          class_id            TEXT,
+          student_id          TEXT,
+          category            TEXT NOT NULL,
+          comment             TEXT,
+          page_context        TEXT,
+          created_ts          INTEGER NOT NULL,
+          status              TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open', 'teacher_resolved', 'escalated', 'owner_reviewing', 'fixed', 'closed')),
+          escalated_by_user_id INTEGER,
+          escalated_at        INTEGER,
+          escalation_note     TEXT,
+          resolved_ts         INTEGER,
+          resolution_note     TEXT,
+          resolved_by_user_id INTEGER,
+          FOREIGN KEY(question_id) REFERENCES questions(question_id) ON DELETE CASCADE,
+          FOREIGN KEY(objective_id) REFERENCES objectives(objective_id) ON DELETE CASCADE,
+          FOREIGN KEY(standard_id) REFERENCES standards(standard_id) ON DELETE CASCADE,
+          FOREIGN KEY(class_id) REFERENCES class_sections(class_id) ON DELETE SET NULL,
+          FOREIGN KEY(student_id) REFERENCES students(student_id) ON DELETE SET NULL
+        )
+        """
+    )
+    flag_schema = conn.execute(
+        """
+        SELECT sql
+        FROM sqlite_master
+        WHERE type = 'table'
+          AND name = 'question_flags'
+        """
+    ).fetchone()
+    if flag_schema and "('open', 'resolved')" in (flag_schema["sql"] or ""):
+        conn.execute("ALTER TABLE question_flags RENAME TO question_flags_old")
+        conn.execute(
+            """
+            CREATE TABLE question_flags (
+              flag_id             TEXT PRIMARY KEY,
+              question_id         TEXT NOT NULL,
+              objective_id        TEXT NOT NULL,
+              standard_id         TEXT NOT NULL,
+              reporter_user_id    INTEGER,
+              reporter_role       TEXT NOT NULL CHECK(reporter_role IN ('teacher', 'student')),
+              class_id            TEXT,
+              student_id          TEXT,
+              category            TEXT NOT NULL,
+              comment             TEXT,
+              page_context        TEXT,
+              created_ts          INTEGER NOT NULL,
+              status              TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open', 'teacher_resolved', 'escalated', 'owner_reviewing', 'fixed', 'closed')),
+              escalated_by_user_id INTEGER,
+              escalated_at        INTEGER,
+              escalation_note     TEXT,
+              resolved_ts         INTEGER,
+              resolution_note     TEXT,
+              resolved_by_user_id INTEGER,
+              FOREIGN KEY(question_id) REFERENCES questions(question_id) ON DELETE CASCADE,
+              FOREIGN KEY(objective_id) REFERENCES objectives(objective_id) ON DELETE CASCADE,
+              FOREIGN KEY(standard_id) REFERENCES standards(standard_id) ON DELETE CASCADE,
+              FOREIGN KEY(class_id) REFERENCES class_sections(class_id) ON DELETE SET NULL,
+              FOREIGN KEY(student_id) REFERENCES students(student_id) ON DELETE SET NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO question_flags
+              (flag_id, question_id, objective_id, standard_id, reporter_user_id,
+               reporter_role, class_id, student_id, category, comment, page_context,
+               created_ts, status, resolved_ts, resolution_note, resolved_by_user_id)
+            SELECT flag_id, question_id, objective_id, standard_id, reporter_user_id,
+                   reporter_role, class_id, student_id, category, comment, page_context,
+                   created_ts,
+                   CASE WHEN status = 'resolved' THEN 'teacher_resolved' ELSE status END,
+                   resolved_ts, resolution_note, resolved_by_user_id
+            FROM question_flags_old
+            """
+        )
+        conn.execute("DROP TABLE question_flags_old")
+        conn.commit()
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_question_flags_status_created
+        ON question_flags(status, created_ts DESC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_question_flags_question_status
+        ON question_flags(question_id, status)
+        """
+    )
+    for col_name, col_type in [
+        ("escalated_by_user_id", "INTEGER"),
+        ("escalated_at", "INTEGER"),
+        ("escalation_note", "TEXT"),
+    ]:
+        try:
+            conn.execute(f"SELECT {col_name} FROM question_flags LIMIT 1")
+        except sqlite3.OperationalError:
+            conn.execute(f"ALTER TABLE question_flags ADD COLUMN {col_name} {col_type}")
+            conn.commit()
+    conn.execute(
+        """
+        UPDATE question_flags
+        SET status = 'teacher_resolved'
+        WHERE status = 'resolved'
+        """
+    )
+    for legacy_category, code in LEGACY_QUESTION_FLAG_CATEGORIES.items():
+        conn.execute(
+            "UPDATE question_flags SET category = ? WHERE category = ?",
+            (code, legacy_category),
+        )
+    conn.commit()
 
     # Objective map overrides
     conn.execute(
@@ -2206,6 +2356,198 @@ def teacher_controls_student(
     return row is not None
 
 
+def get_launch_question_for_flag(conn: sqlite3.Connection, question_id: str | None):
+    question_id = (question_id or "").strip()
+    if not question_id:
+        return None
+    objective_placeholders = sql_placeholders(LAUNCH_OBJECTIVE_IDS)
+    return conn.execute(
+        f"""
+        SELECT q.question_id,
+               q.objective_id,
+               o.standard_id,
+               COALESCE(o.objective_text, '') AS objective_text
+        FROM questions q
+        JOIN objectives o ON o.objective_id = q.objective_id
+        WHERE q.question_id = ?
+          AND q.objective_id IN ({objective_placeholders})
+          AND o.standard_id IN ({sql_placeholders(LAUNCH_STANDARD_IDS)})
+        LIMIT 1
+        """,
+        (question_id, *LAUNCH_OBJECTIVE_IDS, *LAUNCH_STANDARD_IDS),
+    ).fetchone()
+
+
+def normalize_question_flag_category(category: str | None) -> str | None:
+    category = (category or "").strip().lower()
+    category = LEGACY_QUESTION_FLAG_CATEGORIES.get(category, category)
+    return category if category in QUESTION_FLAG_CATEGORY_SET else None
+
+
+def question_flag_category_label(category: str | None) -> str:
+    category = normalize_question_flag_category(category)
+    return QUESTION_FLAG_CATEGORY_LABELS.get(category or "", "Something else")
+
+
+def current_student_id_for_flag(conn: sqlite3.Connection) -> str | None:
+    if session.get("role") != "student":
+        return None
+    student_id = locked_student_id_for_session(conn)
+    return student_id.strip() if student_id else None
+
+
+def get_default_flag_class_id(conn: sqlite3.Connection, student_id: str | None) -> str | None:
+    if not student_id:
+        return None
+    row = conn.execute(
+        """
+        SELECT cs.class_id
+        FROM class_enrollments ce
+        JOIN class_sections cs ON cs.class_id = ce.class_id
+        WHERE ce.student_id = ?
+          AND cs.is_active = 1
+        ORDER BY ce.enrolled_at DESC
+        LIMIT 1
+        """,
+        (student_id,),
+    ).fetchone()
+    return row["class_id"] if row else None
+
+
+def create_question_flag(
+    conn: sqlite3.Connection,
+    *,
+    question_id: str,
+    category: str | None,
+    comment: str | None,
+    page_context: str | None,
+    student_id: str | None = None,
+    class_id: str | None = None,
+) -> tuple[bool, str, str | None]:
+    question = get_launch_question_for_flag(conn, question_id)
+    if not question:
+        return False, "That question cannot be flagged from this classroom launch.", None
+
+    clean_category = normalize_question_flag_category(category)
+    if not clean_category:
+        return False, "Choose a valid flag category.", None
+
+    role = session.get("role")
+    if role not in ("teacher", "student"):
+        return False, "Please log in before flagging a question.", None
+
+    reporter_user_id = session.get("user_id")
+    clean_comment = (comment or "").strip()
+    if len(clean_comment) > QUESTION_FLAG_COMMENT_MAX_LENGTH:
+        return (
+            False,
+            f"Flag comments must be {QUESTION_FLAG_COMMENT_MAX_LENGTH} characters or fewer.",
+            None,
+        )
+    clean_context = (page_context or "").strip()[:120] or None
+
+    if role == "student":
+        student_id = current_student_id_for_flag(conn)
+        if not student_id:
+            return False, "Your account is not linked to a student record.", None
+        class_id = get_default_flag_class_id(conn, student_id)
+    else:
+        student_id = None
+        class_id = None
+
+    flag_id = f"QF-{uuid.uuid4().hex}"
+    conn.execute(
+        """
+        INSERT INTO question_flags
+          (flag_id, question_id, objective_id, standard_id, reporter_user_id,
+           reporter_role, class_id, student_id, category, comment, page_context,
+           created_ts, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open')
+        """,
+        (
+            flag_id,
+            question["question_id"],
+            question["objective_id"],
+            question["standard_id"],
+            reporter_user_id,
+            role,
+            class_id,
+            student_id,
+            clean_category,
+            clean_comment or None,
+            clean_context,
+            int(time.time()),
+        ),
+    )
+    conn.commit()
+    return True, "Thanks. Your flag was submitted for review.", flag_id
+
+
+def teacher_authorized_for_flag(conn: sqlite3.Connection, flag_row) -> bool:
+    if session.get("role") != "teacher":
+        return False
+    teacher_user_id = session.get("user_id")
+    if not teacher_user_id:
+        return False
+    if row_get(flag_row, "reporter_user_id", None) == teacher_user_id:
+        return True
+    class_id = row_get(flag_row, "class_id", None)
+    if class_id:
+        row = conn.execute(
+            """
+            SELECT 1
+            FROM class_sections
+            WHERE class_id = ?
+              AND teacher_user_id = ?
+              AND is_active = 1
+            LIMIT 1
+            """,
+            (class_id, teacher_user_id),
+        ).fetchone()
+        return row is not None
+    return False
+
+
+def get_question_flags_for_teacher(conn: sqlite3.Connection, teacher_user_id: int | None):
+    if not teacher_user_id:
+        return []
+    rows = conn.execute(
+        """
+        SELECT qf.*,
+               COALESCE(o.objective_text, '') AS objective_text,
+               cs.name AS class_name,
+               cs.teacher_user_id AS class_teacher_user_id,
+               COUNT(*) OVER (PARTITION BY qf.question_id) AS question_flag_count,
+               SUM(CASE WHEN qf.status = 'open' THEN 1 ELSE 0 END)
+                   OVER (PARTITION BY qf.question_id) AS question_open_count
+        FROM question_flags qf
+        LEFT JOIN objectives o ON o.objective_id = qf.objective_id
+        LEFT JOIN class_sections cs ON cs.class_id = qf.class_id
+        WHERE qf.reporter_user_id = ?
+           OR qf.class_id IN (
+               SELECT class_id
+               FROM class_sections
+               WHERE teacher_user_id = ?
+                 AND is_active = 1
+           )
+        ORDER BY CASE
+                   WHEN qf.status IN ('open', 'escalated', 'owner_reviewing') THEN 0
+                   ELSE 1
+                 END,
+                 qf.created_ts DESC
+        """,
+        (teacher_user_id, teacher_user_id),
+    ).fetchall()
+    return rows
+
+
+def get_question_flag_by_id(conn: sqlite3.Connection, flag_id: str | None):
+    return conn.execute(
+        "SELECT * FROM question_flags WHERE flag_id = ?",
+        ((flag_id or "").strip(),),
+    ).fetchone()
+
+
 def get_placeable_learning_nodes(conn: sqlite3.Connection):
     objective_placeholders = sql_placeholders(LAUNCH_OBJECTIVE_IDS)
     return order_objective_rows(conn.execute(
@@ -2701,8 +3043,16 @@ def teacher_question_preview():
   .banner strong{margin-bottom:4px}
   .choice{margin:4px 0}
   .choice input{margin-right:8px}
-  input,select{padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px}
+  input,select,textarea{padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px}
+  textarea{width:100%;min-height:58px;font:inherit}
   .muted{font-size:13px;color:#555}
+  .flag-panel{margin-top:14px;border-top:1px solid #e5e7eb;padding-top:12px}
+  .report-toggle{margin-top:14px;background:transparent;color:#4b5563;border:1px solid #d1d5db;padding:5px 8px;border-radius:6px;font-size:12px;cursor:pointer}
+  .flag-panel[hidden]{display:none}
+  .flag-panel{border:1px solid #e5e7eb;border-radius:8px;background:#f9fafb;padding:10px;margin-top:8px}
+  .flag-form{display:grid;gap:8px;margin-top:10px}
+  .btn-flag{background:#eef2f7;color:#374151;border:1px solid #cbd5e1}
+  .flash-box{background:#e7f7ee;border:1px solid #a8e0bf;color:#0f6b3a;padding:10px 12px;border-radius:8px;margin:10px 0;font-size:14px}
   .model-asset{margin:14px 0 16px 0;padding:12px;border:1px solid #d7dee8;border-radius:8px;background:#f8fafc}
   .model-asset-title{margin:0 0 8px 0;font-weight:700;color:#1f2937}
   .model-asset-caption{margin:8px 0 0 0;font-size:13px;color:#555;line-height:1.4}
@@ -2718,6 +3068,16 @@ def teacher_question_preview():
     </div>
     <a class="btn btn-muted" href="{{ url_for('index') }}">Back to Dashboard</a>
   </div>
+
+  {% with msgs = get_flashed_messages() %}
+    {% if msgs %}
+      <div class="flash-box">
+        {% for m in msgs %}
+          <div>{{ m }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
 
   <form method="get" class="toolbar">
     <label>Objective
@@ -2775,10 +3135,54 @@ def teacher_question_preview():
       <div class="choice"><label><input type="radio" name="preview_response" value="C" disabled> C. {{ current_question['choice_c'] }}</label></div>
       <div class="choice"><label><input type="radio" name="preview_response" value="D" disabled> D. {{ current_question['choice_d'] }}</label></div>
     </div>
+    <button class="report-toggle" type="button" aria-expanded="false" aria-controls="teacher-report-panel" onclick="toggleReportPanel('teacher-report-panel', this)">Report a problem</button>
+    <div class="flag-panel" id="teacher-report-panel" hidden>
+      <form class="flag-form" method="post" action="{{ url_for('submit_question_flag') }}">
+        <input type="hidden" name="question_id" value="{{ current_question['question_id'] }}">
+        <input type="hidden" name="page_context" value="teacher_question_preview">
+        <input type="hidden" name="next" value="{{ url_for('teacher_question_preview', question_id=current_question['question_id']) }}">
+        <div class="muted">Question {{ current_question['question_id'] }} | Objective {{ current_question['objective_id'] }}</div>
+        <label>Category
+          <select name="category" required>
+            {% for code, label in flag_categories %}
+              <option value="{{ code }}">{{ label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>Comment
+          <textarea name="comment" maxlength="{{ flag_comment_max_length }}" placeholder="Optional note"></textarea>
+        </label>
+        <div>
+          <button class="btn btn-flag" type="submit">Submit</button>
+          <button class="btn btn-muted" type="button" onclick="closeReportPanel('teacher-report-panel')">Cancel</button>
+        </div>
+      </form>
+    </div>
   {% else %}
     <p><em>No questions are available to preview yet.</em></p>
   {% endif %}
 </div>
+<script>
+  function toggleReportPanel(panelId, button){
+    const panel = document.getElementById(panelId);
+    const isOpening = panel.hasAttribute('hidden');
+    panel.toggleAttribute('hidden', !isOpening);
+    button.setAttribute('aria-expanded', String(isOpening));
+    if(isOpening){
+      const firstField = panel.querySelector('select, textarea, button');
+      if(firstField){ firstField.focus(); }
+    }
+  }
+  function closeReportPanel(panelId){
+    const panel = document.getElementById(panelId);
+    const button = document.querySelector('[aria-controls="' + panelId + '"]');
+    panel.setAttribute('hidden', '');
+    if(button){
+      button.setAttribute('aria-expanded', 'false');
+      button.focus();
+    }
+  }
+</script>
     """
     return render_template_string(
         html,
@@ -2788,7 +3192,217 @@ def teacher_question_preview():
         selected_question_id=selected_question_id,
         current_question=current_question,
         current_model_asset=current_model_asset,
+        flag_categories=QUESTION_FLAG_CATEGORIES,
+        flag_comment_max_length=QUESTION_FLAG_COMMENT_MAX_LENGTH,
     )
+
+
+@app.post("/question_flags")
+@require_login
+def submit_question_flag():
+    conn = get_conn()
+    ok, message, _ = create_question_flag(
+        conn,
+        question_id=request.form.get("question_id", ""),
+        category=request.form.get("category"),
+        comment=request.form.get("comment"),
+        page_context=request.form.get("page_context"),
+    )
+    flash(message)
+    next_url = request.form.get("next") or (
+        url_for("student_view")
+        if session.get("role") == "student"
+        else url_for("question_flags_review")
+    )
+    if not ok and session.get("role") == "teacher":
+        next_url = request.form.get("next") or url_for("teacher_question_preview")
+    return redirect(next_url)
+
+
+@app.route("/teacher/question_flags")
+@require_teacher
+def question_flags_review():
+    conn = get_conn()
+    flags = get_question_flags_for_teacher(conn, session.get("user_id"))
+
+    html = """
+<!doctype html>
+<title>Question Flags</title>
+<style>
+  body{font-family:Arial, Helvetica, sans-serif;margin:24px;background:#fbfaf4;color:#1f2937}
+  .page{max-width:1180px;margin:0 auto}
+  .topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:18px;margin-bottom:16px;padding:16px 18px;border:1px solid #dfe8d9;border-radius:12px;background:#fffdf7}
+  .topbar h1{margin:0 0 6px;font-size:30px}
+  .subtitle{margin:0;color:#4b5563;font-size:14px}
+  .btn{display:inline-block;background:#2f6f4e;color:#fff;text-decoration:none;border:none;padding:8px 12px;border-radius:8px;cursor:pointer;font-size:13px}
+  .btn-secondary{background:#eef4ec;color:#2f5138;border:1px solid #c8d9c4}
+  .card{border:1px solid #e2decf;border-radius:10px;padding:16px;margin:16px 0;background:#fffefa;box-shadow:0 8px 18px rgba(47,111,78,.05)}
+  table{border-collapse:collapse;width:100%}
+  th,td{border:1px solid #e5e0d2;padding:8px;vertical-align:top;font-size:13px}
+  th{background:#f5f1e8;text-align:left;color:#374151}
+  textarea{width:100%;min-height:54px;padding:7px 8px;border:1px solid #cbd5e1;border-radius:8px;font:inherit}
+  .pill{display:inline-block;padding:3px 8px;border-radius:999px;font-size:12px;font-weight:800}
+  .pill-open{background:#fef3c7;color:#92400e}
+  .pill-teacher_resolved,.pill-fixed,.pill-closed{background:#dcfce7;color:#166534}
+  .pill-escalated,.pill-owner_reviewing{background:#dbeafe;color:#1d4ed8}
+  .muted{color:#6b7280;font-size:12px}
+  .empty{border:1px dashed #c8d9c4;border-radius:8px;padding:12px;background:#fbf8ef;color:#53665a}
+  .flash{background:#e7f7ee;border:1px solid #a8e0bf;color:#0f6b3a;padding:10px 12px;border-radius:8px;margin:10px 0;font-size:14px}
+</style>
+<div class="page">
+  <div class="topbar">
+    <div>
+      <h1>Question Flags</h1>
+      <p class="subtitle">Unresolved flags appear first. Student context is only shown for your active classes.</p>
+    </div>
+    <div>
+      <a class="btn btn-secondary" href="{{ url_for('index') }}">Back to dashboard</a>
+    </div>
+  </div>
+
+  {% with msgs = get_flashed_messages() %}
+    {% if msgs %}
+      <div class="flash">
+        {% for m in msgs %}<div>{{ m }}</div>{% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+
+  <div class="card">
+    {% if flags %}
+      <table>
+        <tr>
+          <th>Status</th>
+          <th>Question</th>
+          <th>Objective</th>
+          <th>Category</th>
+          <th>Reporter</th>
+          <th>Context</th>
+          <th>Comment</th>
+          <th>Submitted</th>
+          <th>Next Step</th>
+        </tr>
+        {% for flag in flags %}
+          <tr>
+            <td><span class="pill pill-{{ flag['status'] }}">{{ flag['status'].replace('_', ' ') }}</span></td>
+            <td>
+              <strong>{{ flag['question_id'] }}</strong><br>
+              <span class="muted">{{ flag['standard_id'] }}</span>
+              {% if flag['question_flag_count'] > 1 %}
+                <br><span class="muted">{{ flag['question_flag_count'] }} total flag(s), {{ flag['question_open_count'] or 0 }} open</span>
+              {% endif %}
+            </td>
+            <td>
+              <strong>{{ flag['objective_id'] }}</strong><br>
+              <span class="muted">{{ flag['objective_text'] or 'No objective text' }}</span>
+            </td>
+            <td>{{ category_label(flag['category']) }}</td>
+            <td>{{ flag['reporter_role'] }}</td>
+            <td>
+              {% if flag['class_name'] %}
+                {{ flag['class_name'] }}<br>
+              {% endif %}
+              {% if flag['student_id'] and flag['class_teacher_user_id'] == session.get('user_id') %}
+                <span class="muted">Student: {{ flag['student_id'] }}</span><br>
+              {% elif flag['student_id'] %}
+                <span class="muted">Student: hidden</span><br>
+              {% endif %}
+              <span class="muted">{{ flag['page_context'] or 'No page context' }}</span>
+            </td>
+            <td>{{ flag['comment'] or '' }}</td>
+            <td>{{ format_ts(flag['created_ts']) }}</td>
+            <td>
+              {% if flag['status'] == 'teacher_resolved' %}
+                <div>{{ flag['resolution_note'] or 'Resolved' }}</div>
+                <div class="muted">{{ format_ts(flag['resolved_ts']) }}</div>
+              {% elif flag['status'] in ['escalated', 'owner_reviewing', 'fixed', 'closed'] %}
+                <div><strong>Sent to RootED Support</strong></div>
+                {% if flag['escalation_note'] %}
+                  <div class="muted">{{ flag['escalation_note'] }}</div>
+                {% endif %}
+                <div class="muted">{{ format_ts(flag['escalated_at']) }}</div>
+              {% else %}
+                <form method="post" action="{{ url_for('resolve_question_flag', flag_id=flag['flag_id']) }}">
+                  <textarea name="resolution_note" placeholder="Resolution note"></textarea>
+                  <button class="btn" type="submit" style="margin-top:6px;">Mark Resolved</button>
+                </form>
+                <form method="post" action="{{ url_for('escalate_question_flag', flag_id=flag['flag_id']) }}" style="margin-top:10px;">
+                  <textarea name="escalation_note" placeholder="Optional note for RootED Support"></textarea>
+                  <button class="btn btn-secondary" type="submit" style="margin-top:6px;">Send to RootED Support</button>
+                </form>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </table>
+    {% else %}
+      <div class="empty">No question flags are available for your classes yet.</div>
+    {% endif %}
+  </div>
+</div>
+    """
+    return render_template_string(
+        html,
+        flags=flags,
+        format_ts=format_ts,
+        category_label=question_flag_category_label,
+    )
+
+
+@app.post("/teacher/question_flags/<flag_id>/resolve")
+@require_teacher
+def resolve_question_flag(flag_id):
+    conn = get_conn()
+    flag = get_question_flag_by_id(conn, flag_id)
+    if not flag:
+        abort(404)
+    if not teacher_authorized_for_flag(conn, flag):
+        abort(403)
+    note = (request.form.get("resolution_note") or "").strip()
+    if len(note) > 1000:
+        note = note[:1000]
+    conn.execute(
+        """
+        UPDATE question_flags
+        SET status = 'teacher_resolved',
+            resolved_ts = ?,
+            resolution_note = ?,
+            resolved_by_user_id = ?
+        WHERE flag_id = ?
+        """,
+        (int(time.time()), note or None, session.get("user_id"), flag_id),
+    )
+    conn.commit()
+    flash("Flag marked resolved.")
+    return redirect(url_for("question_flags_review"))
+
+
+@app.post("/teacher/question_flags/<flag_id>/escalate")
+@require_teacher
+def escalate_question_flag(flag_id):
+    conn = get_conn()
+    flag = get_question_flag_by_id(conn, flag_id)
+    if not flag:
+        abort(404)
+    if not teacher_authorized_for_flag(conn, flag):
+        abort(403)
+    note = (request.form.get("escalation_note") or "").strip()
+    if len(note) > 1000:
+        note = note[:1000]
+    conn.execute(
+        """
+        UPDATE question_flags
+        SET status = 'escalated',
+            escalated_by_user_id = ?,
+            escalated_at = ?,
+            escalation_note = ?
+        WHERE flag_id = ?
+        """,
+        (session.get("user_id"), int(time.time()), note or None, flag_id),
+    )
+    conn.commit()
+    flash("Flag sent to RootED Support.")
+    return redirect(url_for("question_flags_review"))
 
 
 def get_any_question_id(conn, objective_id):
@@ -4589,6 +5203,12 @@ def index():
       View Error Log
     </a>
 
+    <a href="{{ url_for('question_flags_review') }}"
+       class="btn btn-secondary"
+       style="text-decoration:none;">
+      Question Flags
+    </a>
+
     <form action="{{ url_for('logout') }}" method="get" style="margin:0;">
       <button type="submit" class="btn btn-ghost">Logout</button>
     </form>
@@ -6268,8 +6888,14 @@ WHERE o.standard_id = ?
   .choice{margin:4px 0;}
   .ok{color:#16a34a}
   .bad{color:#dc2626}
-  input,select{padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px}
+  input,select,textarea{padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px}
+  textarea{width:100%;min-height:58px;font:inherit}
   .toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+  .report-toggle{margin-top:14px;background:transparent;color:#4b5563;border:1px solid #d1d5db;padding:5px 8px;border-radius:6px;font-size:12px;cursor:pointer}
+  .flag-panel[hidden]{display:none}
+  .flag-panel{border:1px solid #e5e7eb;border-radius:8px;background:#f9fafb;padding:10px;margin-top:8px}
+  .flag-form{display:grid;gap:8px;margin-top:10px}
+  .btn-flag{background:#eef2f7;color:#374151;border:1px solid #cbd5e1}
   .model-asset{margin:14px 0 16px 0;padding:12px;border:1px solid #d7dee8;border-radius:8px;background:#f8fafc}
   .model-asset-title{margin:0 0 8px 0;font-weight:700;color:#1f2937}
   .model-asset-caption{margin:8px 0 0 0;font-size:13px;color:#555;line-height:1.4}
@@ -6430,10 +7056,53 @@ WHERE o.standard_id = ?
 
       <p><button class="btn" type="submit">Submit Answer</button></p>
     </form>
+    <button class="report-toggle" type="button" aria-expanded="false" aria-controls="student-report-panel" onclick="toggleReportPanel('student-report-panel', this)">Report a problem</button>
+    <div class="flag-panel" id="student-report-panel" hidden>
+      <form class="flag-form" method="post" action="{{ url_for('submit_question_flag') }}">
+        <input type="hidden" name="question_id" value="{{ current_question['question_id'] }}">
+        <input type="hidden" name="page_context" value="student_question_view">
+        <input type="hidden" name="next" value="{{ url_for('student_view') }}">
+        <label>Category
+          <select name="category" required>
+            {% for code, label in flag_categories %}
+              <option value="{{ code }}">{{ label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>Comment
+          <textarea name="comment" maxlength="{{ flag_comment_max_length }}" placeholder="Optional note"></textarea>
+        </label>
+        <div>
+          <button class="btn btn-flag" type="submit">Submit</button>
+          <button class="btn" type="button" style="background:#4b5563;" onclick="closeReportPanel('student-report-panel')">Cancel</button>
+        </div>
+      </form>
+    </div>
   {% else %}
     <p><em>No questions are available for this objective yet.</em></p>
   {% endif %}
 </div>
+<script>
+  function toggleReportPanel(panelId, button){
+    const panel = document.getElementById(panelId);
+    const isOpening = panel.hasAttribute('hidden');
+    panel.toggleAttribute('hidden', !isOpening);
+    button.setAttribute('aria-expanded', String(isOpening));
+    if(isOpening){
+      const firstField = panel.querySelector('select, textarea, button');
+      if(firstField){ firstField.focus(); }
+    }
+  }
+  function closeReportPanel(panelId){
+    const panel = document.getElementById(panelId);
+    const button = document.querySelector('[aria-controls="' + panelId + '"]');
+    panel.setAttribute('hidden', '');
+    if(button){
+      button.setAttribute('aria-expanded', 'false');
+      button.focus();
+    }
+  }
+</script>
     """
     return render_template_string(
         student_html,
@@ -6447,6 +7116,8 @@ WHERE o.standard_id = ?
         locked_review=locked_review,
         current_level=current_level,
         enrolled_classes=enrolled_classes,
+        flag_categories=QUESTION_FLAG_CATEGORIES,
+        flag_comment_max_length=QUESTION_FLAG_COMMENT_MAX_LENGTH,
     )
 
 # ---------- Diagnostic Arena ----------

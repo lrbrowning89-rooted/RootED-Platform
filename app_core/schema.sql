@@ -127,6 +127,39 @@ CREATE TABLE IF NOT EXISTS attempts (
 CREATE INDEX IF NOT EXISTS idx_attempts_student_obj_ts
   ON attempts(student_id, question_id, timestamp DESC);
 
+CREATE TABLE IF NOT EXISTS question_flags (
+  flag_id             TEXT PRIMARY KEY,
+  question_id         TEXT NOT NULL,
+  objective_id        TEXT NOT NULL,
+  standard_id         TEXT NOT NULL,
+  reporter_user_id    INTEGER,
+  reporter_role       TEXT NOT NULL CHECK (reporter_role IN ('teacher', 'student')),
+  class_id            TEXT,
+  student_id          TEXT,
+  category            TEXT NOT NULL,
+  comment             TEXT,
+  page_context        TEXT,
+  created_ts          INTEGER NOT NULL,
+  status              TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'teacher_resolved', 'escalated', 'owner_reviewing', 'fixed', 'closed')),
+  escalated_by_user_id INTEGER,
+  escalated_at        INTEGER,
+  escalation_note     TEXT,
+  resolved_ts         INTEGER,
+  resolution_note     TEXT,
+  resolved_by_user_id INTEGER,
+  FOREIGN KEY (question_id) REFERENCES questions(question_id) ON DELETE CASCADE,
+  FOREIGN KEY (objective_id) REFERENCES objectives(objective_id) ON DELETE CASCADE,
+  FOREIGN KEY (standard_id) REFERENCES standards(standard_id) ON DELETE CASCADE,
+  FOREIGN KEY (class_id) REFERENCES class_sections(class_id) ON DELETE SET NULL,
+  FOREIGN KEY (student_id) REFERENCES students(student_id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_question_flags_status_created
+  ON question_flags(status, created_ts DESC);
+
+CREATE INDEX IF NOT EXISTS idx_question_flags_question_status
+  ON question_flags(question_id, status);
+
 -- -------------------------
 -- Teacher-authored maps & graph
 -- -------------------------
