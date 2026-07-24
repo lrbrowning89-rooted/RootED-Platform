@@ -84,6 +84,82 @@ class AuthorizationFoundationTests(unittest.TestCase):
         self.assertIn("'teacher', 'student'", users_sql)
         self.assertNotIn("'owner'", users_sql)
         self.assertIn("'owner'", platform_sql)
+        identity_sql = self.conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='user_auth_identities'"
+        ).fetchone()[0]
+        self.assertIn("UNIQUE(provider, provider_subject)", identity_sql)
+
+    def test_login_offers_google_and_microsoft(self):
+        old_google = dash.ENABLE_GOOGLE_AUTH
+        old_microsoft = dash.ENABLE_MICROSOFT_AUTH
+        try:
+            dash.ENABLE_GOOGLE_AUTH = True
+            dash.ENABLE_MICROSOFT_AUTH = True
+            response = dash.app.test_client().get("/login")
+            self.assertIn(b"Continue with Google", response.data)
+            self.assertIn(b"Continue with Microsoft", response.data)
+        finally:
+            dash.ENABLE_GOOGLE_AUTH = old_google
+            dash.ENABLE_MICROSOFT_AUTH = old_microsoft
+
+    def test_post_login_redirect_rejects_external_destinations(self):
+        self.assertEqual(dash.safe_local_redirect("/student?from=login"), "/student?from=login")
+        self.assertIsNone(dash.safe_local_redirect("https://evil.example/student"))
+        self.assertIsNone(dash.safe_local_redirect("//evil.example/student"))
+
+    def test_sso_accounts_are_restricted_until_membership_exists(self):
+        user = dash.resolve_sso_user(
+            self.conn, "microsoft", "subject-1", "new@example.org",
+            email_verified=True, display_name="New User", allow_create=True,
+        )
+        self.assertEqual(user["role"], "student")  # deprecated compatibility value
+        self.assertEqual(user["account_role"], "pending")
+        self.assertFalse(dash.is_student(user))
+        self.assertIsNone(user["linked_student_id"])
+        with dash.app.test_request_context("/"):
+            dash.session["user_id"] = user["id"]
+            self.assertTrue(dash.get_post_login_destination().endswith("/restricted"))
+
+    def test_pending_account_cannot_bypass_instructional_routes(self):
+        user = dash.resolve_sso_user(
+            self.conn, "google", "pending-direct", "pending@example.org",
+            email_verified=True, allow_create=True,
+        )
+        client = dash.app.test_client()
+        with client.session_transaction() as sess:
+            sess["user_id"] = user["id"]
+            sess["username"] = user["username"]
+            sess["role"] = "pending"
+        for path in ("/student", "/dashboard", "/teacher/question_preview"):
+            with self.subTest(path=path):
+                response = client.get(path)
+                self.assertEqual(response.status_code, 302)
+                self.assertTrue(response.location.endswith("/restricted"))
+        question_post = client.post("/question_flags", data={"question_id": "Q1"})
+        self.assertEqual(question_post.status_code, 302)
+        self.assertTrue(question_post.location.endswith("/restricted"))
+        for nonexistent_path in ("/teacher", "/questions", "/adaptive"):
+            with self.subTest(path=nonexistent_path):
+                self.assertEqual(client.get(nonexistent_path).status_code, 404)
+
+    def test_verified_email_links_one_account_but_rejects_ambiguity(self):
+        self.conn.execute(
+            "UPDATE users SET sso_email='one@example.org' WHERE id=2"
+        )
+        self.conn.commit()
+        linked = dash.resolve_sso_user(
+            self.conn, "google", "g-one", "one@example.org",
+            email_verified=True, allow_create=True,
+        )
+        self.assertEqual(linked["id"], 2)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.conn.execute(
+                """
+                INSERT INTO user_auth_identities
+                  (user_id, provider, provider_subject, created_at, last_login_at)
+                VALUES (1, 'google', 'g-one', 1, 1)
+                """
+            )
 
     def test_current_user_and_classroom_predicates_use_database_role(self):
         with dash.app.test_request_context("/"):
@@ -99,7 +175,7 @@ class AuthorizationFoundationTests(unittest.TestCase):
             dash.session.update(self.session_for(2, "teacher"))
             response = protected()
             self.assertEqual(response.status_code, 302)
-            self.assertTrue(response.location.endswith("/student"))
+            self.assertTrue(response.location.endswith("/restricted"))
 
     def test_inactive_database_user_is_not_authenticated(self):
         protected = dash.login_required(lambda: "allowed")
@@ -382,6 +458,42 @@ class AuthorizationFoundationTests(unittest.TestCase):
             grants[0]["grant_note"],
             "Migrated from Owner Role Phase 1",
         )
+
+    def test_auth_identity_migration_downgrade_is_guarded_and_reversible(self):
+        from migrations.add_user_auth_identities import downgrade, migrate
+
+        migration_db = Path(TEST_DIR.name) / f"auth_migration_{uuid.uuid4().hex}.db"
+        with sqlite3.connect(migration_db) as conn:
+            conn.execute(
+                """
+                CREATE TABLE users (
+                  id INTEGER PRIMARY KEY, username TEXT, role TEXT,
+                  sso_provider TEXT, sso_subject TEXT, sso_email TEXT,
+                  last_login_ts INTEGER
+                )
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO users VALUES
+                  (1, 'legacy', 'student', 'google', 'legacy-sub',
+                   'legacy@example.org', 123)
+                """
+            )
+            migrate(conn)
+            identity = conn.execute(
+                "SELECT provider, provider_subject FROM user_auth_identities"
+            ).fetchone()
+            self.assertEqual(identity, ("google", "legacy-sub"))
+            downgrade(conn)
+            tables = {
+                row[0] for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+            }
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(users)")}
+            self.assertNotIn("user_auth_identities", tables)
+            self.assertNotIn("account_role", columns)
 
 
 if __name__ == "__main__":

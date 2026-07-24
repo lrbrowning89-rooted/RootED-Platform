@@ -22,6 +22,7 @@ from logging.handlers import RotatingFileHandler
 import traceback
 import secrets
 from functools import wraps
+from urllib.parse import urlsplit
 
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.exceptions import HTTPException
@@ -261,12 +262,15 @@ oauth.register(
     client_kwargs={"scope": "openid email profile"},
 )
 
-# Microsoft SSO (OIDC via common tenant) – can leave env vars empty for now
+# Microsoft SSO (OIDC; common tenant by default)
 oauth.register(
     name="microsoft",
-    client_id=os.environ.get("MS_CLIENT_ID"),
-    client_secret=os.environ.get("MS_CLIENT_SECRET"),
-    server_metadata_url="https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration",
+    client_id=os.environ.get("MICROSOFT_CLIENT_ID") or os.environ.get("MS_CLIENT_ID"),
+    client_secret=os.environ.get("MICROSOFT_CLIENT_SECRET") or os.environ.get("MS_CLIENT_SECRET"),
+    server_metadata_url=(
+        "https://login.microsoftonline.com/"
+        f"{os.environ.get('MICROSOFT_TENANT', 'common')}/v2.0/.well-known/openid-configuration"
+    ),
     client_kwargs={"scope": "openid email profile"},
 )
 
@@ -305,6 +309,14 @@ def current_user():
     return user
 
 
+def account_role(user=None) -> str | None:
+    """Return the provider-neutral account role, falling back for legacy rows."""
+    user = user or current_user()
+    if not user:
+        return None
+    return user["account_role"] or user["role"]
+
+
 def has_platform_role(platform_role: str, user=None) -> bool:
     if platform_role != "owner":
         return False
@@ -332,16 +344,71 @@ def has_platform_role(platform_role: str, user=None) -> bool:
 
 def is_teacher(user=None) -> bool:
     user = user or current_user()
-    return bool(user and user["role"] == "teacher")
+    return bool(user and account_role(user) == "teacher")
 
 
 def is_student(user=None) -> bool:
     user = user or current_user()
-    return bool(user and user["role"] == "student")
+    return bool(user and account_role(user) == "student")
 
 
 def is_owner(user=None) -> bool:
     return has_platform_role("owner", user)
+
+
+def can_access_teacher_tools(user=None) -> bool:
+    user = user or current_user()
+    if not is_teacher(user):
+        return False
+    conn = get_conn()
+    try:
+        return conn.execute(
+            "SELECT 1 FROM class_sections WHERE teacher_user_id=? AND is_active=1 LIMIT 1",
+            (user["id"],),
+        ).fetchone() is not None
+    finally:
+        conn.close()
+
+
+def can_access_student_instruction(user=None) -> bool:
+    user = user or current_user()
+    if not is_student(user) or not user["linked_student_id"]:
+        return False
+    conn = get_conn()
+    try:
+        return conn.execute(
+            """
+            SELECT 1 FROM class_enrollments ce
+            JOIN class_sections cs ON cs.class_id=ce.class_id
+            WHERE ce.student_id=? AND cs.is_active=1 LIMIT 1
+            """,
+            (user["linked_student_id"],),
+        ).fetchone() is not None
+    finally:
+        conn.close()
+
+
+def get_post_login_destination(user=None) -> str:
+    user = user or current_user()
+    if is_owner(user):
+        return url_for("owner_home")
+    if can_access_teacher_tools(user):
+        return url_for("index")
+    if can_access_student_instruction(user):
+        return url_for("student_view")
+    return url_for("restricted_onboarding")
+
+
+def safe_local_redirect(value: str | None) -> str | None:
+    """Accept only an absolute-path destination on this application."""
+    if not value:
+        return None
+    parsed = urlsplit(value)
+    if parsed.scheme or parsed.netloc:
+        return None
+    if not parsed.path.startswith("/") or parsed.path.startswith("//"):
+        return None
+    return value
 
 
 def login_required(f):
@@ -352,7 +419,7 @@ def login_required(f):
             session.clear()
             flash("Please log in first.")
             return redirect(url_for("login"))
-        session["role"] = user["role"]
+        session["role"] = account_role(user)
         session["username"] = user["username"]
         return f(*args, **kwargs)
 
@@ -367,13 +434,11 @@ def teacher_required(f):
             session.clear()
             flash("Please log in as a teacher.")
             return redirect(url_for("login"))
-        session["role"] = user["role"]
+        session["role"] = account_role(user)
         session["username"] = user["username"]
-        if not is_teacher(user):
+        if not can_access_teacher_tools(user):
             flash("Teacher access only.")
-            if is_student(user):
-                return redirect(url_for("student_view"))
-            return redirect(url_for("login"))
+            return redirect(url_for("restricted_onboarding"))
         return f(*args, **kwargs)
 
     return wrapper
@@ -387,13 +452,33 @@ def student_required(f):
             session.clear()
             flash("Please log in as a student.")
             return redirect(url_for("login"))
-        session["role"] = user["role"]
+        session["role"] = account_role(user)
         session["username"] = user["username"]
-        if not is_student(user):
+        if not can_access_student_instruction(user):
             flash("Student access only.")
-            if is_teacher(user):
-                return redirect(url_for("index"))
+            return redirect(url_for("restricted_onboarding"))
+        return f(*args, **kwargs)
+
+    return wrapper
+
+
+def instruction_required(f):
+    """Allow only an authorized teacher preview or enrolled student."""
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        user = current_user()
+        if not user:
+            session.clear()
+            flash("Please log in first.")
             return redirect(url_for("login"))
+        session["role"] = account_role(user)
+        session["username"] = user["username"]
+        if not (
+            can_access_teacher_tools(user)
+            or can_access_student_instruction(user)
+        ):
+            flash("Connect to an active class to continue.")
+            return redirect(url_for("restricted_onboarding"))
         return f(*args, **kwargs)
 
     return wrapper
@@ -407,7 +492,7 @@ def owner_required(f):
             session.clear()
             flash("Please log in first.")
             return redirect(url_for("login"))
-        session["role"] = user["role"]
+        session["role"] = account_role(user)
         session["username"] = user["username"]
         if not is_owner(user):
             abort(403)
@@ -875,6 +960,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
           username          TEXT UNIQUE NOT NULL,
           password_hash     TEXT NOT NULL,
           role              TEXT NOT NULL CHECK(role IN ('teacher', 'student')),
+          account_role      TEXT CHECK(account_role IN ('pending', 'student', 'teacher')),
           linked_student_id TEXT,
           is_active         INTEGER NOT NULL DEFAULT 1,
           -- SSO fields (optional)
@@ -885,6 +971,42 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
           FOREIGN KEY(linked_student_id) REFERENCES students(student_id) ON DELETE SET NULL
         )
         """
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_auth_identities (
+          identity_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id          INTEGER NOT NULL,
+          provider         TEXT NOT NULL,
+          provider_subject TEXT NOT NULL,
+          verified_email   TEXT,
+          display_name     TEXT,
+          avatar_url       TEXT,
+          created_at       INTEGER NOT NULL,
+          last_login_at    INTEGER NOT NULL,
+          revoked_at       INTEGER,
+          FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+          UNIQUE(provider, provider_subject)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_auth_identities_email "
+        "ON user_auth_identities(verified_email)"
+    )
+    now_ts = int(time.time())
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO user_auth_identities
+          (user_id, provider, provider_subject, verified_email,
+           created_at, last_login_at)
+        SELECT id, sso_provider, sso_subject, sso_email,
+               COALESCE(last_login_ts, ?), COALESCE(last_login_ts, ?)
+        FROM users
+        WHERE sso_provider IS NOT NULL AND sso_subject IS NOT NULL
+        """,
+        (now_ts, now_ts),
     )
 
     platform_role_table = conn.execute(
@@ -999,6 +1121,18 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     except sqlite3.OperationalError:
         conn.execute(
             "ALTER TABLE users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1"
+        )
+        conn.commit()
+
+    # Neutral authorization role. NULL means "use legacy role" for existing rows.
+    try:
+        conn.execute("SELECT account_role FROM users LIMIT 1")
+    except sqlite3.OperationalError:
+        conn.execute(
+            """
+            ALTER TABLE users ADD COLUMN account_role TEXT
+            CHECK(account_role IN ('pending', 'student', 'teacher'))
+            """
         )
         conn.commit()
 
@@ -3201,6 +3335,7 @@ def place_student_learning_node(
             (student_id, standard_id, objective_id, now),
         )
         conn.commit()
+
     except Exception:
         conn.rollback()
         raise
@@ -3240,106 +3375,105 @@ def verify_user(conn, username, password):
         return user
     return None
 
-def get_or_create_sso_user(
+def resolve_sso_user(
     conn,
     provider: str,
     subject: str,
     email: str | None = None,
-    default_role: str = "student",
-    linked_student_id: str | None = None,
+    *,
+    email_verified: bool = False,
+    display_name: str | None = None,
+    avatar_url: str | None = None,
     allow_create: bool = False,
 ):
-    """
-    Look up or create a user for an SSO identity.
-
-    provider: e.g. "google", "microsoft", "clever", or "dev"
-    subject:  stable unique id from the SSO provider (sub claim)
-    """
+    """Resolve an OIDC identity without granting classroom or platform authority."""
     if not provider or not subject:
         return None
-
-    # 1) Check if a user already exists for this SSO identity
+    now_ts = int(time.time())
     row = conn.execute(
         """
-        SELECT *
-        FROM users
-        WHERE sso_provider = ? AND sso_subject = ?
+        SELECT u.* FROM user_auth_identities i
+        JOIN users u ON u.id=i.user_id
+        WHERE i.provider=? AND i.provider_subject=? AND i.revoked_at IS NULL
         LIMIT 1
         """,
         (provider, subject),
     ).fetchone()
-
-    now_ts = int(time.time())
-
     if row:
-        # Respect disabled accounts
-        try:
-            is_active = int(row["is_active"])
-        except Exception:
-            is_active = 1
-
-        if is_active != 1:
+        if not int(row["is_active"]):
             return None
-
-        # Soft update email / last_login_ts
         conn.execute(
             """
-            UPDATE users
-            SET sso_email = COALESCE(?, sso_email),
-                last_login_ts = ?
-            WHERE id = ?
+            UPDATE user_auth_identities
+            SET verified_email=COALESCE(?, verified_email),
+                display_name=COALESCE(?, display_name),
+                avatar_url=COALESCE(?, avatar_url), last_login_at=?
+            WHERE provider=? AND provider_subject=?
             """,
-            (email, now_ts, row["id"]),
+            (email if email_verified else None, display_name, avatar_url,
+             now_ts, provider, subject),
         )
+        conn.execute("UPDATE users SET last_login_ts=? WHERE id=?", (now_ts, row["id"]))
         conn.commit()
-
-        # Re-fetch to pick up changes
-        return conn.execute(
-            "SELECT * FROM users WHERE id = ?", (row["id"],)
-        ).fetchone()
+        return conn.execute("SELECT * FROM users WHERE id=?", (row["id"],)).fetchone()
 
     if not allow_create:
         return None
+    if email and email_verified:
+        matches = conn.execute(
+            """
+            SELECT DISTINCT u.* FROM users u
+            LEFT JOIN user_auth_identities i ON i.user_id=u.id
+            WHERE lower(u.sso_email)=lower(?) OR lower(i.verified_email)=lower(?)
+            """,
+            (email, email),
+        ).fetchall()
+        if len(matches) > 1:
+            return None
+        if len(matches) == 1:
+            row = matches[0]
+            conn.execute(
+                """
+                INSERT INTO user_auth_identities
+                  (user_id, provider, provider_subject, verified_email,
+                   display_name, avatar_url, created_at, last_login_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (row["id"], provider, subject, email, display_name, avatar_url,
+                 now_ts, now_ts),
+            )
+            conn.commit()
+            return row
 
-    # 2) Create a new user, using email as a base username if available
-    base_username = email.split("@")[0] if email and "@" in email else subject
-    username = base_username
+    base = email.split("@")[0] if email and "@" in email else subject
+    username = base
     suffix = 1
-    while conn.execute(
-        "SELECT 1 FROM users WHERE username = ?",
-        (username,),
-    ).fetchone():
+    while conn.execute("SELECT 1 FROM users WHERE username=?", (username,)).fetchone():
         suffix += 1
-        username = f"{base_username}{suffix}"
-
-    # Generate a random password (not actually used for SSO logins)
-    random_pw = uuid.uuid4().hex
-    pw_hash = generate_password_hash(random_pw)
-
+        username = f"{base}{suffix}"
     conn.execute(
         """
         INSERT INTO users
-          (username, password_hash, role, linked_student_id,
-           is_active, sso_provider, sso_subject, sso_email, last_login_ts)
-        VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?)
+          (username, password_hash, role, account_role, linked_student_id, is_active,
+           sso_provider, sso_subject, sso_email, last_login_ts)
+        VALUES (?, ?, 'student', 'pending', NULL, 1, ?, ?, ?, ?)
         """,
-        (
-            username,
-            pw_hash,
-            default_role,
-            linked_student_id,
-            provider,
-            subject,
-            email,
-            now_ts,
-        ),
+        (username, generate_password_hash(uuid.uuid4().hex), provider, subject,
+         email if email_verified else None, now_ts),
+    )
+    user_id = conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
+    conn.execute(
+        """
+        INSERT INTO user_auth_identities
+          (user_id, provider, provider_subject, verified_email, display_name,
+           avatar_url, created_at, last_login_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (user_id, provider, subject, email if email_verified else None,
+         display_name, avatar_url, now_ts, now_ts),
     )
     conn.commit()
-
-    return conn.execute(
-        "SELECT * FROM users WHERE sso_provider = ? AND sso_subject = ? LIMIT 1",
-        (provider, subject),
-    ).fetchone()
+    return conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
 
 
 def get_questions_for_objective(conn, oid):
@@ -3716,7 +3850,7 @@ def teacher_question_preview():
 
 
 @app.post("/question_flags")
-@require_login
+@instruction_required
 def submit_question_flag():
     conn = get_conn()
     ok, message, _ = create_question_flag(
@@ -4644,15 +4778,14 @@ def login():
 
             session["user_id"] = user["id"]
             session["username"] = user["username"]
-            session["role"] = user["role"]
+            session["role"] = account_role(user)
             flash(f"Welcome, {user['username']}!")
-            if user["role"] == "teacher":
-                session["current_mode"] = "question"
-                return redirect(url_for("index"))
-            else:
-                session["current_mode"] = "home"
-                session["locked_payload"] = None
-                return redirect(url_for("student_view"))
+            session["current_mode"] = "home"
+            session["locked_payload"] = None
+            return redirect(
+                safe_local_redirect(request.form.get("next"))
+                or get_post_login_destination(user)
+            )
         else:
             flash("Invalid username or password.")
 
@@ -5113,6 +5246,9 @@ def sso_login(provider):
     if not is_sso_provider_enabled(provider):
         flash("This sign-in method is not currently available.")
         return redirect(url_for("not_authorized"))
+    intended = safe_local_redirect(request.args.get("next"))
+    if intended:
+        session["post_login_destination"] = intended
 
     client = oauth.create_client(provider)
     if not client:
@@ -5158,6 +5294,7 @@ def sso_callback(provider):
     userinfo = None
     sub = None
     email = None
+    email_verified = False
 
     # For OIDC providers, Authlib can parse the ID token:
     try:
@@ -5168,7 +5305,10 @@ def sso_callback(provider):
     if id_token:
         # OIDC-compliant: subject + email come from ID token
         sub = id_token.get("sub")
-        email = id_token.get("email")
+        email = id_token.get("email") or id_token.get("preferred_username")
+        email_verified = bool(id_token.get("email_verified")) or (
+            provider == "microsoft" and id_token.get("xms_edov") is True
+        )
         userinfo = id_token
     else:
         # Fallback: some providers give a userinfo endpoint or put claims in token
@@ -5181,17 +5321,14 @@ def sso_callback(provider):
         return redirect(url_for("login"))
 
     conn = get_conn()
-    # New SSO users never receive elevated classroom or platform authority
-    # based on their email address.
-    default_role = "student"
-
-    user = get_or_create_sso_user(
+    user = resolve_sso_user(
         conn,
         provider=provider,
         subject=str(sub),
         email=email,
-        default_role=default_role,
-        linked_student_id=None,
+        email_verified=email_verified,
+        display_name=(userinfo or {}).get("name"),
+        avatar_url=(userinfo or {}).get("picture"),
         allow_create=ALLOW_SSO_AUTO_CREATE,
     )
 
@@ -5202,17 +5339,59 @@ def sso_callback(provider):
     # Write login info to session (same as local login)
     session["user_id"] = user["id"]
     session["username"] = user["username"]
-    session["role"] = user["role"]
+    session["role"] = account_role(user)
 
     flash(f"Welcome, {user['username']} (SSO via {provider})!")
 
-    if user["role"] == "teacher":
-        session["current_mode"] = "question"
-        return redirect(url_for("index"))
-    else:
-        session["current_mode"] = "home"
-        session["locked_payload"] = None
-        return redirect(url_for("student_view"))
+    session["current_mode"] = "home"
+    session["locked_payload"] = None
+    return redirect(
+        safe_local_redirect(session.pop("post_login_destination", None))
+        or get_post_login_destination(user)
+    )
+
+
+@app.get("/restricted")
+@login_required
+def restricted_onboarding():
+    user = current_user()
+    conn = get_conn()
+    try:
+        identity = conn.execute(
+            """
+            SELECT provider, verified_email, display_name
+            FROM user_auth_identities
+            WHERE user_id=? AND revoked_at IS NULL
+            ORDER BY last_login_at DESC LIMIT 1
+            """,
+            (user["id"],),
+        ).fetchone()
+    finally:
+        conn.close()
+    return render_template_string(
+        """
+        <!doctype html><html lang="en"><head><meta charset="utf-8">
+        <meta name="viewport" content="width=device-width,initial-scale=1">
+        <title>RootED | Connect to a class</title>
+        <style>
+        body{font-family:Arial,sans-serif;background:#fbfaf4;color:#183629;margin:0;display:grid;place-items:center;min-height:100vh}
+        main{width:min(560px,calc(100% - 32px));background:white;border:1px solid #dfe8d9;border-radius:12px;padding:28px;box-shadow:0 18px 45px #1f29330f}
+        input,button{box-sizing:border-box;width:100%;padding:12px;border-radius:8px;font:inherit}input{border:1px solid #cbd8cd}
+        button{margin-top:10px;border:0;background:#2f6f4e;color:white;font-weight:700}a{color:#24543d;font-weight:700}
+        .account{background:#f1f6ef;padding:12px;border-radius:8px;margin:18px 0;color:#4b5563}
+        </style></head><body><main>
+        <h1>Welcome to RootED</h1>
+        <p>Your account has been created successfully, but you are not currently connected to a class. Enter the class code provided by your teacher to continue.</p>
+        <div class="account"><strong>{{ identity['display_name'] or user['username'] }}</strong><br>
+        {{ identity['verified_email'] or '' }}</div>
+        <form><label for="code">Class code</label><input id="code" disabled placeholder="Class-code entry coming soon">
+        <button type="button" disabled>Connect to class</button></form>
+        <p><a href="{{ url_for('logout') }}">Sign out</a></p>
+        </main></body></html>
+        """,
+        user=user,
+        identity=identity or {"display_name": None, "verified_email": None},
+    )
 
 
 @app.get("/not-authorized")
@@ -7164,7 +7343,7 @@ def index():
 
 # ---------- Student view ----------
 @app.route("/student", methods=["GET", "POST"])
-@require_login
+@instruction_required
 def student_view():
     conn = get_conn()
     feedback = None

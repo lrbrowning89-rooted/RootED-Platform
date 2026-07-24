@@ -130,6 +130,15 @@ class OwnerWorkspaceTests(unittest.TestCase):
         )
         self.conn.execute(
             """
+            INSERT INTO class_sections
+              (class_id, teacher_user_id, name, class_period, join_code,
+               is_active, created_at, updated_at)
+            VALUES ('C2', 1, 'Owner Teaching Section', '2', 'BBB222', 1, ?, ?)
+            """,
+            (now, now),
+        )
+        self.conn.execute(
+            """
             INSERT INTO class_enrollments
               (class_id, student_id, enrolled_at, enrolled_by)
             VALUES ('C1', 'S1', ?, 'self')
@@ -282,7 +291,7 @@ class OwnerWorkspaceTests(unittest.TestCase):
         self.assertEqual(owner_home.status_code, 200)
         self.assertNotIn(b"Teacher Dashboard", owner_home.data)
         self.assertEqual(teacher_dashboard.status_code, 302)
-        self.assertTrue(teacher_dashboard.location.endswith("/student"))
+        self.assertTrue(teacher_dashboard.location.endswith("/restricted"))
 
     def test_owner_queue_filters_and_question_reference(self):
         self.insert_flag("QF-OPEN", status="open", comment="ordinary hidden")
