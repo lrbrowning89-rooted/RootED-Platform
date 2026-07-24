@@ -82,6 +82,25 @@ QUESTION_FLAG_STATUSES = (
     "fixed",
     "closed",
 )
+QUESTION_FLAG_STATUS_FILTERS = {
+    "current": {
+        "label": "Current",
+        "statuses": ("open",),
+        "empty": "No open question reports.",
+    },
+    "resolved": {
+        "label": "Resolved",
+        "statuses": ("teacher_resolved", "fixed", "closed"),
+        "empty": "No resolved reports.",
+    },
+    "sent": {
+        "label": "Sent to RootED",
+        "statuses": ("escalated", "owner_reviewing"),
+        "empty": "No reports have been sent to RootED Support.",
+    },
+}
+QUESTION_FLAG_DEFAULT_STATUS_FILTER = "current"
+QUESTION_FLAG_DEFAULT_CATEGORY_FILTER = "all"
 OBSOLETE_LAUNCH_OBJECTIVE_IDS = (
     "MS-LS1-2C",
     "MS-LS1-2D",
@@ -2389,6 +2408,22 @@ def question_flag_category_label(category: str | None) -> str:
     return QUESTION_FLAG_CATEGORY_LABELS.get(category or "", "Something else")
 
 
+def normalize_question_flag_status_filter(value: str | None) -> str:
+    value = (value or "").strip().lower()
+    return value if value in QUESTION_FLAG_STATUS_FILTERS else QUESTION_FLAG_DEFAULT_STATUS_FILTER
+
+
+def normalize_question_flag_category_filter(value: str | None) -> str:
+    value = (value or "").strip().lower()
+    if value == QUESTION_FLAG_DEFAULT_CATEGORY_FILTER:
+        return QUESTION_FLAG_DEFAULT_CATEGORY_FILTER
+    return value if value in QUESTION_FLAG_CATEGORY_SET else QUESTION_FLAG_DEFAULT_CATEGORY_FILTER
+
+
+def question_flag_category_filter_options():
+    return ((QUESTION_FLAG_DEFAULT_CATEGORY_FILTER, "All categories"), *QUESTION_FLAG_CATEGORIES)
+
+
 def current_student_id_for_flag(conn: sqlite3.Connection) -> str | None:
     if session.get("role") != "student":
         return None
@@ -2508,10 +2543,84 @@ def teacher_authorized_for_flag(conn: sqlite3.Connection, flag_row) -> bool:
     return False
 
 
-def get_question_flags_for_teacher(conn: sqlite3.Connection, teacher_user_id: int | None):
+def teacher_flag_authorization_sql(alias: str = "qf") -> str:
+    return f"""
+    ({alias}.reporter_user_id = ?
+     OR {alias}.class_id IN (
+         SELECT class_id
+         FROM class_sections
+         WHERE teacher_user_id = ?
+           AND is_active = 1
+     ))
+    """
+
+
+def question_flag_status_filter_counts(
+    conn: sqlite3.Connection,
+    teacher_user_id: int | None,
+    category_filter: str = QUESTION_FLAG_DEFAULT_CATEGORY_FILTER,
+) -> dict[str, int]:
+    if not teacher_user_id:
+        return {key: 0 for key in QUESTION_FLAG_STATUS_FILTERS}
+    category_filter = normalize_question_flag_category_filter(category_filter)
+    auth_sql = teacher_flag_authorization_sql("qf")
+    counts = {}
+    for key, config in QUESTION_FLAG_STATUS_FILTERS.items():
+        status_placeholders = sql_placeholders(config["statuses"])
+        where = [auth_sql, f"qf.status IN ({status_placeholders})"]
+        params = [teacher_user_id, teacher_user_id, *config["statuses"]]
+        if category_filter != QUESTION_FLAG_DEFAULT_CATEGORY_FILTER:
+            where.append("qf.category = ?")
+            params.append(category_filter)
+        row = conn.execute(
+            f"""
+            SELECT COUNT(*) AS count
+            FROM question_flags qf
+            WHERE {" AND ".join(where)}
+            """,
+            params,
+        ).fetchone()
+        counts[key] = int(row["count"] or 0) if row else 0
+    return counts
+
+
+def teacher_actionable_question_flag_count(
+    conn: sqlite3.Connection,
+    teacher_user_id: int | None,
+) -> int:
+    return question_flag_status_filter_counts(
+        conn,
+        teacher_user_id,
+        QUESTION_FLAG_DEFAULT_CATEGORY_FILTER,
+    )[QUESTION_FLAG_DEFAULT_STATUS_FILTER]
+
+
+def get_question_flags_for_teacher(
+    conn: sqlite3.Connection,
+    teacher_user_id: int | None,
+    status_filter: str = QUESTION_FLAG_DEFAULT_STATUS_FILTER,
+    category_filter: str = QUESTION_FLAG_DEFAULT_CATEGORY_FILTER,
+):
     if not teacher_user_id:
         return []
+    status_filter = normalize_question_flag_status_filter(status_filter)
+    category_filter = normalize_question_flag_category_filter(category_filter)
+    statuses = QUESTION_FLAG_STATUS_FILTERS[status_filter]["statuses"]
     objective_placeholders = sql_placeholders(LAUNCH_OBJECTIVE_IDS)
+    status_placeholders = sql_placeholders(statuses)
+    where_clauses = [
+        teacher_flag_authorization_sql("qf"),
+        f"qf.status IN ({status_placeholders})",
+    ]
+    params = [
+        *LAUNCH_OBJECTIVE_IDS,
+        teacher_user_id,
+        teacher_user_id,
+        *statuses,
+    ]
+    if category_filter != QUESTION_FLAG_DEFAULT_CATEGORY_FILTER:
+        where_clauses.append("qf.category = ?")
+        params.append(category_filter)
     rows = conn.execute(
         f"""
         SELECT qf.*,
@@ -2528,20 +2637,14 @@ def get_question_flags_for_teacher(conn: sqlite3.Connection, teacher_user_id: in
         LEFT JOIN questions q ON q.question_id = qf.question_id
              AND q.objective_id IN ({objective_placeholders})
         LEFT JOIN class_sections cs ON cs.class_id = qf.class_id
-        WHERE qf.reporter_user_id = ?
-           OR qf.class_id IN (
-               SELECT class_id
-               FROM class_sections
-               WHERE teacher_user_id = ?
-                 AND is_active = 1
-           )
+        WHERE {" AND ".join(where_clauses)}
         ORDER BY CASE
                    WHEN qf.status IN ('open', 'escalated', 'owner_reviewing') THEN 0
                    ELSE 1
                  END,
                  qf.created_ts DESC
         """,
-        (*LAUNCH_OBJECTIVE_IDS, teacher_user_id, teacher_user_id),
+        params,
     ).fetchall()
     return rows
 
@@ -3009,7 +3112,13 @@ def teacher_question_preview():
     selected_objective_id = request.args.get("objective_id")
     selected_question_id = request.args.get("question_id")
     return_to = request.args.get("return_to")
-    back_url = url_for("question_flags_review") if return_to == "question_flags" else url_for("index")
+    flag_filter = normalize_question_flag_status_filter(request.args.get("filter"))
+    flag_category = normalize_question_flag_category_filter(request.args.get("category"))
+    back_url = (
+        url_for("question_flags_review", filter=flag_filter, category=flag_category)
+        if return_to == "question_flags"
+        else url_for("index")
+    )
     back_label = "Back to Question Flags" if return_to == "question_flags" else "Back to Dashboard"
 
     if not selected_question_id:
@@ -3148,7 +3257,7 @@ def teacher_question_preview():
       <form class="flag-form" method="post" action="{{ url_for('submit_question_flag') }}">
         <input type="hidden" name="question_id" value="{{ current_question['question_id'] }}">
         <input type="hidden" name="page_context" value="teacher_question_preview">
-        <input type="hidden" name="next" value="{{ url_for('teacher_question_preview', question_id=current_question['question_id'], return_to=return_to) if return_to else url_for('teacher_question_preview', question_id=current_question['question_id']) }}">
+        <input type="hidden" name="next" value="{{ url_for('teacher_question_preview', question_id=current_question['question_id'], return_to=return_to, filter=flag_filter, category=flag_category) if return_to else url_for('teacher_question_preview', question_id=current_question['question_id']) }}">
         <div class="muted">Question {{ current_question['question_id'] }} | Objective {{ current_question['objective_id'] }}</div>
         <label>Category
           <select name="category" required>
@@ -3205,6 +3314,8 @@ def teacher_question_preview():
         back_url=back_url,
         back_label=back_label,
         return_to=return_to,
+        flag_filter=flag_filter,
+        flag_category=flag_category,
     )
 
 
@@ -3234,7 +3345,27 @@ def submit_question_flag():
 @require_teacher
 def question_flags_review():
     conn = get_conn()
-    flags = get_question_flags_for_teacher(conn, session.get("user_id"))
+    selected_filter = normalize_question_flag_status_filter(request.args.get("filter"))
+    selected_category = normalize_question_flag_category_filter(request.args.get("category"))
+    flags = get_question_flags_for_teacher(
+        conn,
+        session.get("user_id"),
+        selected_filter,
+        selected_category,
+    )
+    status_counts = question_flag_status_filter_counts(
+        conn,
+        session.get("user_id"),
+        selected_category,
+    )
+    selected_status_config = QUESTION_FLAG_STATUS_FILTERS[selected_filter]
+    selected_category_label = question_flag_category_label(selected_category)
+    active_category_filter = selected_category != QUESTION_FLAG_DEFAULT_CATEGORY_FILTER
+    empty_message = (
+        f"No {selected_status_config['label'].lower()} reports match {selected_category_label}."
+        if active_category_filter
+        else selected_status_config["empty"]
+    )
 
     html = """
 <!doctype html>
@@ -3261,6 +3392,13 @@ def question_flags_review():
   .flash{background:#e7f7ee;border:1px solid #a8e0bf;color:#0f6b3a;padding:10px 12px;border-radius:8px;margin:10px 0;font-size:14px}
   .question-link{color:#1d4ed8;font-weight:800;text-decoration:none}
   .question-link:hover{text-decoration:underline}
+  .filter-tabs{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 12px}
+  .filter-tab{display:inline-flex;gap:6px;align-items:center;text-decoration:none;border:1px solid #c8d9c4;border-radius:999px;padding:7px 10px;color:#2f5138;background:#eef4ec;font-weight:750;font-size:13px}
+  .filter-tab[aria-current="page"]{background:#2f6f4e;color:#fff;border-color:#2f6f4e}
+  .tab-count{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;padding:0 6px;border-radius:999px;background:rgba(255,255,255,.75);color:#1f2937;font-size:12px}
+  .category-filter{display:flex;gap:8px;align-items:end;flex-wrap:wrap;margin:0 0 14px}
+  .category-filter label{font-size:13px;font-weight:750;color:#374151}
+  .category-filter select{display:block;margin-top:5px;padding:7px 8px;border:1px solid #cbd5e1;border-radius:8px;background:#fff}
 </style>
 <div class="page">
   <div class="topbar">
@@ -3282,6 +3420,29 @@ def question_flags_review():
   {% endwith %}
 
   <div class="card">
+    <nav class="filter-tabs" aria-label="Question flag status filters">
+      {% for key, config in status_filters.items() %}
+        <a class="filter-tab"
+           href="{{ url_for('question_flags_review', filter=key, category=selected_category) }}"
+           {% if key == selected_filter %}aria-current="page"{% endif %}>
+          <span>{{ config.label }}</span>
+          <span class="tab-count">{{ status_counts[key] }}</span>
+        </a>
+      {% endfor %}
+    </nav>
+
+    <form class="category-filter" method="get" action="{{ url_for('question_flags_review') }}">
+      <input type="hidden" name="filter" value="{{ selected_filter }}">
+      <label>Category
+        <select name="category" onchange="this.form.submit()">
+          {% for code, label in category_options %}
+            <option value="{{ code }}" {% if code == selected_category %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <noscript><button class="btn btn-secondary" type="submit">Apply</button></noscript>
+    </form>
+
     {% if flags %}
       <table>
         <tr>
@@ -3300,9 +3461,9 @@ def question_flags_review():
             <td><span class="pill pill-{{ flag['status'] }}">{{ flag['status'].replace('_', ' ') }}</span></td>
             <td>
               {% if flag['live_question_id'] %}
-                <a class="question-link" href="{{ url_for('teacher_question_preview', question_id=flag['question_id'], return_to='question_flags') }}">{{ flag['question_id'] }}</a><br>
+                <a class="question-link" href="{{ url_for('teacher_question_preview', question_id=flag['question_id'], return_to='question_flags', filter=selected_filter, category=selected_category) }}">{{ flag['question_id'] }}</a><br>
                 {% if flag['question_stem'] %}
-                  <a class="question-link" style="font-weight:600;font-size:12px;" href="{{ url_for('teacher_question_preview', question_id=flag['question_id'], return_to='question_flags') }}">
+                  <a class="question-link" style="font-weight:600;font-size:12px;" href="{{ url_for('teacher_question_preview', question_id=flag['question_id'], return_to='question_flags', filter=selected_filter, category=selected_category) }}">
                     {{ flag['question_stem'][:90] }}{{ '...' if flag['question_stem']|length > 90 else '' }}
                   </a><br>
                 {% endif %}
@@ -3346,10 +3507,14 @@ def question_flags_review():
                 <div class="muted">{{ format_ts(flag['escalated_at']) }}</div>
               {% else %}
                 <form method="post" action="{{ url_for('resolve_question_flag', flag_id=flag['flag_id']) }}">
+                  <input type="hidden" name="filter" value="{{ selected_filter }}">
+                  <input type="hidden" name="category" value="{{ selected_category }}">
                   <textarea name="resolution_note" placeholder="Resolution note"></textarea>
                   <button class="btn" type="submit" style="margin-top:6px;">Mark Resolved</button>
                 </form>
                 <form method="post" action="{{ url_for('escalate_question_flag', flag_id=flag['flag_id']) }}" style="margin-top:10px;">
+                  <input type="hidden" name="filter" value="{{ selected_filter }}">
+                  <input type="hidden" name="category" value="{{ selected_category }}">
                   <textarea name="escalation_note" placeholder="Optional note for RootED Support"></textarea>
                   <button class="btn btn-secondary" type="submit" style="margin-top:6px;">Send to RootED Support</button>
                 </form>
@@ -3359,7 +3524,7 @@ def question_flags_review():
         {% endfor %}
       </table>
     {% else %}
-      <div class="empty">No question flags are available for your classes yet.</div>
+      <div class="empty">{{ empty_message }}</div>
     {% endif %}
   </div>
 </div>
@@ -3369,6 +3534,12 @@ def question_flags_review():
         flags=flags,
         format_ts=format_ts,
         category_label=question_flag_category_label,
+        category_options=question_flag_category_filter_options(),
+        status_filters=QUESTION_FLAG_STATUS_FILTERS,
+        status_counts=status_counts,
+        selected_filter=selected_filter,
+        selected_category=selected_category,
+        empty_message=empty_message,
     )
 
 
@@ -3376,6 +3547,8 @@ def question_flags_review():
 @require_teacher
 def resolve_question_flag(flag_id):
     conn = get_conn()
+    selected_filter = normalize_question_flag_status_filter(request.form.get("filter"))
+    selected_category = normalize_question_flag_category_filter(request.form.get("category"))
     flag = get_question_flag_by_id(conn, flag_id)
     if not flag:
         abort(404)
@@ -3397,13 +3570,15 @@ def resolve_question_flag(flag_id):
     )
     conn.commit()
     flash("Flag marked resolved.")
-    return redirect(url_for("question_flags_review"))
+    return redirect(url_for("question_flags_review", filter=selected_filter, category=selected_category))
 
 
 @app.post("/teacher/question_flags/<flag_id>/escalate")
 @require_teacher
 def escalate_question_flag(flag_id):
     conn = get_conn()
+    selected_filter = normalize_question_flag_status_filter(request.form.get("filter"))
+    selected_category = normalize_question_flag_category_filter(request.form.get("category"))
     flag = get_question_flag_by_id(conn, flag_id)
     if not flag:
         abort(404)
@@ -3425,7 +3600,7 @@ def escalate_question_flag(flag_id):
     )
     conn.commit()
     flash("Flag sent to RootED Support.")
-    return redirect(url_for("question_flags_review"))
+    return redirect(url_for("question_flags_review", filter=selected_filter, category=selected_category))
 
 
 def get_any_question_id(conn, objective_id):
@@ -5158,6 +5333,10 @@ def index():
         row for row in dashboard_student_rows if row["category"] == "mastered"
     ]
     active_standard_rows = get_active_standard_summary(conn, selected_period)
+    question_flags_action_count = teacher_actionable_question_flag_count(
+        conn,
+        session.get("user_id"),
+    )
 
     for o in objs:
         per_student = (
@@ -5227,9 +5406,14 @@ def index():
     </a>
 
     <a href="{{ url_for('question_flags_review') }}"
-       class="btn btn-secondary"
+       class="btn btn-secondary btn-with-badge"
        style="text-decoration:none;">
-      Question Flags
+      <span>Question Flags</span>
+      {% if question_flags_action_count %}
+        <span class="action-badge" aria-label="{{ question_flags_action_count }} open question report{{ '' if question_flags_action_count == 1 else 's' }} requiring action">
+          {{ question_flags_action_count }}
+        </span>
+      {% endif %}
     </a>
 
     <form action="{{ url_for('logout') }}" method="get" style="margin:0;">
@@ -5253,6 +5437,8 @@ def index():
   .btn-accent{background:#8a6234}
   .btn-secondary{background:#eef4ec;color:#2f5138;border:1px solid #c8d9c4}
   .btn-ghost{background:transparent;color:#6b4f3a;border:1px solid #dacdbb}
+  .btn-with-badge{display:inline-flex;align-items:center;gap:7px}
+  .action-badge{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;padding:0 6px;border-radius:999px;background:#b42318;color:#fff;font-size:12px;font-weight:850;border:1px solid rgba(255,255,255,.7)}
   input,select{padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px}
   .toolbar{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
   .headerbar{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px}
@@ -6150,6 +6336,7 @@ def index():
         engine_ok=engine_ok,
         engine_checks=engine_checks,
         recent_errors=recent_errors,
+        question_flags_action_count=question_flags_action_count,
         all_users=all_users,
         class_sections=class_sections,
         class_rosters=class_rosters,

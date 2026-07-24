@@ -164,6 +164,47 @@ class QuestionFlaggingTests(unittest.TestCase):
     def table_count(self, table):
         return self.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
 
+    def insert_flag(
+        self,
+        flag_id,
+        *,
+        question_id="Q1A",
+        objective_id="MS-LS1-1A",
+        standard_id="MS-LS1-1",
+        reporter_user_id=1,
+        reporter_role="teacher",
+        class_id=None,
+        student_id=None,
+        category="other",
+        comment="Seeded flag.",
+        status="open",
+        created_ts=123457,
+    ):
+        self.conn.execute(
+            """
+            INSERT INTO question_flags
+              (flag_id, question_id, objective_id, standard_id, reporter_user_id,
+               reporter_role, class_id, student_id, category, comment, page_context,
+               created_ts, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'test_seed', ?, ?)
+            """,
+            (
+                flag_id,
+                question_id,
+                objective_id,
+                standard_id,
+                reporter_user_id,
+                reporter_role,
+                class_id,
+                student_id,
+                category,
+                comment,
+                created_ts,
+                status,
+            ),
+        )
+        self.conn.commit()
+
     def test_student_flag_submission_records_context(self):
         self.login_as(3, "student1", "student")
 
@@ -232,7 +273,7 @@ class QuestionFlaggingTests(unittest.TestCase):
 
         flags_page = self.client.get("/teacher/question_flags")
         self.assertIn(
-            b"/teacher/question_preview?question_id=Q1B&amp;return_to=question_flags",
+            b"/teacher/question_preview?question_id=Q1B&amp;return_to=question_flags&amp;filter=current&amp;category=all",
             flags_page.data,
         )
 
@@ -246,7 +287,7 @@ class QuestionFlaggingTests(unittest.TestCase):
         self.assertIn(b'<option value="MS-LS1-1B" selected>', preview.data)
         self.assertIn(b'<option value="Q1B" selected>', preview.data)
         self.assertIn(b"Back to Question Flags", preview.data)
-        self.assertIn(b'href="/teacher/question_flags"', preview.data)
+        self.assertIn(b'href="/teacher/question_flags?filter=current&amp;category=all"', preview.data)
 
     def test_flag_review_shows_missing_question_without_fallback_link(self):
         self.conn.execute(
@@ -297,6 +338,151 @@ class QuestionFlaggingTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Flag comments must be 500 characters or fewer.", response.data)
         self.assertEqual(self.table_count("question_flags"), 0)
+
+    def test_dashboard_badge_shows_authorized_open_flag_count_only(self):
+        self.insert_flag("QF-OPEN-OWN", reporter_user_id=1, status="open")
+        self.insert_flag(
+            "QF-OPEN-CLASS",
+            reporter_user_id=3,
+            reporter_role="student",
+            class_id="C1",
+            student_id="S1",
+            status="open",
+        )
+        self.insert_flag("QF-RESOLVED", reporter_user_id=1, status="teacher_resolved")
+        self.insert_flag("QF-ESCALATED", reporter_user_id=1, status="escalated")
+        self.insert_flag("QF-OTHER-TEACHER", reporter_user_id=2, status="open")
+        self.insert_flag(
+            "QF-OTHER-CLASS",
+            reporter_user_id=3,
+            reporter_role="student",
+            class_id="C2",
+            student_id="S2",
+            status="open",
+        )
+        self.login_as(1, "teacher1", "teacher")
+
+        page = self.client.get("/dashboard")
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"Question Flags", page.data)
+        self.assertIn(b"2 open question reports requiring action", page.data)
+        self.assertIn(b'<span class="action-badge"', page.data)
+
+    def test_dashboard_badge_absent_when_no_authorized_open_flags(self):
+        self.insert_flag("QF-RESOLVED", reporter_user_id=1, status="teacher_resolved")
+        self.insert_flag("QF-ESCALATED", reporter_user_id=1, status="escalated")
+        self.insert_flag("QF-OTHER-TEACHER", reporter_user_id=2, status="open")
+        self.login_as(1, "teacher1", "teacher")
+
+        page = self.client.get("/dashboard")
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"Question Flags", page.data)
+        self.assertNotIn(b'<span class="action-badge"', page.data)
+
+    def test_question_flags_default_current_filter_shows_only_open(self):
+        self.insert_flag("QF-OPEN", reporter_user_id=1, status="open", comment="Open flag.")
+        self.insert_flag("QF-RESOLVED", reporter_user_id=1, status="teacher_resolved", comment="Resolved flag.")
+        self.insert_flag("QF-SENT", reporter_user_id=1, status="escalated", comment="Sent flag.")
+        self.login_as(1, "teacher1", "teacher")
+
+        page = self.client.get("/teacher/question_flags")
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b'aria-current="page"', page.data)
+        self.assertIn(b"Open flag.", page.data)
+        self.assertNotIn(b"Resolved flag.", page.data)
+        self.assertNotIn(b"Sent flag.", page.data)
+
+    def test_status_filters_show_expected_status_groups_and_fallback(self):
+        for flag_id, status, comment in [
+            ("QF-OPEN", "open", "Open flag."),
+            ("QF-TEACHER-RESOLVED", "teacher_resolved", "Teacher resolved flag."),
+            ("QF-FIXED", "fixed", "Fixed flag."),
+            ("QF-CLOSED", "closed", "Closed flag."),
+            ("QF-ESCALATED", "escalated", "Escalated flag."),
+            ("QF-OWNER", "owner_reviewing", "Owner reviewing flag."),
+        ]:
+            self.insert_flag(flag_id, reporter_user_id=1, status=status, comment=comment)
+        self.login_as(1, "teacher1", "teacher")
+
+        resolved_page = self.client.get("/teacher/question_flags?filter=resolved")
+        sent_page = self.client.get("/teacher/question_flags?filter=sent")
+        fallback_page = self.client.get("/teacher/question_flags?filter=definitely_wrong")
+
+        self.assertIn(b"Teacher resolved flag.", resolved_page.data)
+        self.assertIn(b"Fixed flag.", resolved_page.data)
+        self.assertIn(b"Closed flag.", resolved_page.data)
+        self.assertNotIn(b"Open flag.", resolved_page.data)
+        self.assertIn(b"Escalated flag.", sent_page.data)
+        self.assertIn(b"Owner reviewing flag.", sent_page.data)
+        self.assertNotIn(b"Open flag.", sent_page.data)
+        self.assertIn(b"Open flag.", fallback_page.data)
+        self.assertNotIn(b"Escalated flag.", fallback_page.data)
+
+    def test_tab_counts_honor_authorization_and_category_filter(self):
+        self.insert_flag("QF-OPEN", reporter_user_id=1, status="open", category="visual_problem")
+        self.insert_flag("QF-SENT", reporter_user_id=1, status="escalated", category="visual_problem")
+        self.insert_flag("QF-OTHER-CATEGORY", reporter_user_id=1, status="open", category="other")
+        self.insert_flag("QF-OTHER-TEACHER", reporter_user_id=2, status="open", category="visual_problem")
+        self.login_as(1, "teacher1", "teacher")
+
+        page = self.client.get("/teacher/question_flags?filter=current&category=visual_problem")
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"Current", page.data)
+        self.assertIn(b"Sent to RootED", page.data)
+        self.assertIn(b"Seeded flag.", page.data)
+        self.assertNotIn(b"QF-OTHER-CATEGORY", page.data)
+        self.assertNotIn(b"QF-OTHER-TEACHER", page.data)
+        self.assertIn(b"filter=sent&amp;category=visual_problem", page.data)
+
+    def test_category_filters_use_codes_and_show_friendly_labels(self):
+        categories = [
+            ("incorrect_answer", "The answer looks wrong"),
+            ("confusing_question", "This question is confusing"),
+            ("visual_problem", "The picture or model has a problem"),
+            ("display_problem", "Something does not look right on my screen"),
+            ("accessibility_problem", "This question is hard to read or use"),
+            ("duplicate_question", "I have already seen this question"),
+            ("other", "Something else"),
+        ]
+        for index, (code, _label) in enumerate(categories):
+            self.insert_flag(
+                f"QF-CAT-{index}",
+                reporter_user_id=1,
+                status="open",
+                category=code,
+                comment=f"Category {code}",
+                created_ts=123457 + index,
+            )
+        self.login_as(1, "teacher1", "teacher")
+
+        for code, label in categories:
+            page = self.client.get(f"/teacher/question_flags?category={code}")
+            self.assertEqual(page.status_code, 200)
+            self.assertIn(label.encode(), page.data)
+            self.assertIn(f"Category {code}".encode(), page.data)
+
+        invalid_page = self.client.get("/teacher/question_flags?category=bad_code")
+        self.assertIn(b"All categories", invalid_page.data)
+        self.assertIn(b"Category incorrect_answer", invalid_page.data)
+        self.assertIn(b"Category other", invalid_page.data)
+
+    def test_status_and_category_filters_work_together_with_empty_states(self):
+        self.insert_flag("QF-SENT-VISUAL", reporter_user_id=1, status="escalated", category="visual_problem")
+        self.insert_flag("QF-OPEN-OTHER", reporter_user_id=1, status="open", category="other")
+        self.login_as(1, "teacher1", "teacher")
+
+        sent_visual = self.client.get("/teacher/question_flags?filter=sent&category=visual_problem")
+        current_visual = self.client.get("/teacher/question_flags?filter=current&category=visual_problem")
+        resolved = self.client.get("/teacher/question_flags?filter=resolved")
+
+        self.assertIn(b"Seeded flag.", sent_visual.data)
+        self.assertNotIn(b"QF-OPEN-OTHER", sent_visual.data)
+        self.assertIn(b"No current reports match The picture or model has a problem.", current_visual.data)
+        self.assertIn(b"No resolved reports.", resolved.data)
 
     def test_student_friendly_category_labels_appear_and_form_is_hidden(self):
         self.login_as(3, "student1", "student")
@@ -606,6 +792,56 @@ class QuestionFlaggingTests(unittest.TestCase):
         self.assertEqual(after["progress_state"], before["progress_state"])
         self.assertEqual(after["student_objective_state"], before["student_objective_state"])
         self.assertEqual(self.flag_rows()[0]["status"], "escalated")
+
+    def test_resolve_and_escalate_move_flags_between_filters_and_update_badge(self):
+        self.insert_flag(
+            "QF-TO-RESOLVE",
+            reporter_user_id=3,
+            reporter_role="student",
+            class_id="C1",
+            student_id="S1",
+            category="confusing_question",
+            comment="Resolve me.",
+            status="open",
+        )
+        self.insert_flag(
+            "QF-TO-SEND",
+            reporter_user_id=1,
+            reporter_role="teacher",
+            category="visual_problem",
+            comment="Send me.",
+            status="open",
+            created_ts=123458,
+        )
+        self.login_as(1, "teacher1", "teacher")
+
+        before_dashboard = self.client.get("/dashboard")
+        self.client.post(
+            "/teacher/question_flags/QF-TO-RESOLVE/resolve",
+            data={
+                "filter": "current",
+                "category": "all",
+                "resolution_note": "Handled in class.",
+            },
+        )
+        self.client.post(
+            "/teacher/question_flags/QF-TO-SEND/escalate",
+            data={
+                "filter": "current",
+                "category": "all",
+                "escalation_note": "Needs RootED Support.",
+            },
+        )
+        current = self.client.get("/teacher/question_flags?filter=current")
+        resolved = self.client.get("/teacher/question_flags?filter=resolved")
+        sent = self.client.get("/teacher/question_flags?filter=sent")
+        after_dashboard = self.client.get("/dashboard")
+
+        self.assertIn(b"2 open question reports requiring action", before_dashboard.data)
+        self.assertIn(b"No open question reports.", current.data)
+        self.assertIn(b"Resolve me.", resolved.data)
+        self.assertIn(b"Send me.", sent.data)
+        self.assertNotIn(b'<span class="action-badge"', after_dashboard.data)
 
     def test_flagging_does_not_change_adaptive_or_progress_state(self):
         before = {
