@@ -8,6 +8,7 @@ from flask import (
     url_for,
     flash,
     abort,
+    g,
 )
 import sqlite3
 import time
@@ -251,7 +252,7 @@ oauth.register(
     client_kwargs={"scope": "openid email profile"},
 )
 
-# ---------- Auth decorators ----------
+# ---------- Authorization helpers / decorators ----------
 def is_sso_provider_enabled(provider: str) -> bool:
     return (
         (provider == "google" and ENABLE_GOOGLE_AUTH)
@@ -259,30 +260,100 @@ def is_sso_provider_enabled(provider: str) -> bool:
     )
 
 
-def require_login(f):
+def current_user():
+    """Return the active database user for this request, never a session role."""
+    if hasattr(g, "_rooted_current_user"):
+        return g._rooted_current_user
+
+    user_id = session.get("user_id")
+    if not user_id:
+        g._rooted_current_user = None
+        return None
+
+    conn = get_conn()
+    try:
+        user = conn.execute(
+            "SELECT * FROM users WHERE id = ? AND is_active = 1",
+            (user_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    if not user or user["role"] not in ("teacher", "student"):
+        g._rooted_current_user = None
+        return None
+
+    g._rooted_current_user = user
+    return user
+
+
+def has_platform_role(platform_role: str, user=None) -> bool:
+    if platform_role != "owner":
+        return False
+    user = user or current_user()
+    if not user:
+        return False
+
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            """
+            SELECT 1
+            FROM user_platform_roles
+            WHERE user_id = ?
+              AND platform_role = ?
+              AND revoked_at IS NULL
+            LIMIT 1
+            """,
+            (user["id"], platform_role),
+        ).fetchone()
+    finally:
+        conn.close()
+    return row is not None
+
+
+def is_teacher(user=None) -> bool:
+    user = user or current_user()
+    return bool(user and user["role"] == "teacher")
+
+
+def is_student(user=None) -> bool:
+    user = user or current_user()
+    return bool(user and user["role"] == "student")
+
+
+def is_owner(user=None) -> bool:
+    return has_platform_role("owner", user)
+
+
+def login_required(f):
     @wraps(f)
     def wrapper(*args, **kwargs):
-        if "user_id" not in session or "role" not in session:
+        user = current_user()
+        if not user:
+            session.clear()
             flash("Please log in first.")
             return redirect(url_for("login"))
-        if session.get("role") not in ("teacher", "student"):
-            session.clear()
-            flash("Session error. Please log in again.")
-            return redirect(url_for("login"))
+        session["role"] = user["role"]
+        session["username"] = user["username"]
         return f(*args, **kwargs)
 
     return wrapper
 
 
-def require_teacher(f):
+def teacher_required(f):
     @wraps(f)
     def wrapper(*args, **kwargs):
-        if "user_id" not in session or "role" not in session:
+        user = current_user()
+        if not user:
+            session.clear()
             flash("Please log in as a teacher.")
             return redirect(url_for("login"))
-        if session.get("role") != "teacher":
+        session["role"] = user["role"]
+        session["username"] = user["username"]
+        if not is_teacher(user):
             flash("Teacher access only.")
-            if session.get("role") == "student":
+            if is_student(user):
                 return redirect(url_for("student_view"))
             return redirect(url_for("login"))
         return f(*args, **kwargs)
@@ -290,20 +361,47 @@ def require_teacher(f):
     return wrapper
 
 
-def require_student(f):
+def student_required(f):
     @wraps(f)
     def wrapper(*args, **kwargs):
-        if "user_id" not in session or "role" not in session:
+        user = current_user()
+        if not user:
+            session.clear()
             flash("Please log in as a student.")
             return redirect(url_for("login"))
-        if session.get("role") != "student":
+        session["role"] = user["role"]
+        session["username"] = user["username"]
+        if not is_student(user):
             flash("Student access only.")
-            if session.get("role") == "teacher":
+            if is_teacher(user):
                 return redirect(url_for("index"))
             return redirect(url_for("login"))
         return f(*args, **kwargs)
 
     return wrapper
+
+
+def owner_required(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        user = current_user()
+        if not user:
+            session.clear()
+            flash("Please log in first.")
+            return redirect(url_for("login"))
+        session["role"] = user["role"]
+        session["username"] = user["username"]
+        if not is_owner(user):
+            abort(403)
+        return f(*args, **kwargs)
+
+    return wrapper
+
+
+# Backward-compatible names used by the existing routes.
+require_login = login_required
+require_teacher = teacher_required
+require_student = student_required
 
 
 # ---------- Schema ----------
@@ -738,6 +836,72 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
           last_login_ts     INTEGER,
           FOREIGN KEY(linked_student_id) REFERENCES students(student_id) ON DELETE SET NULL
         )
+        """
+    )
+
+    platform_role_table = conn.execute(
+        """
+        SELECT 1
+        FROM sqlite_master
+        WHERE type = 'table' AND name = 'user_platform_roles'
+        """
+    ).fetchone()
+    if platform_role_table:
+        platform_role_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(user_platform_roles)")
+        }
+        if "grant_id" not in platform_role_columns:
+            conn.execute(
+                "ALTER TABLE user_platform_roles RENAME TO user_platform_roles_legacy"
+            )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_platform_roles (
+          grant_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id       INTEGER NOT NULL,
+          platform_role TEXT NOT NULL CHECK(platform_role IN ('owner')),
+          granted_at    INTEGER NOT NULL,
+          granted_by    INTEGER,
+          revoked_at    INTEGER,
+          revoked_by    INTEGER,
+          grant_note    TEXT,
+          revoke_note   TEXT,
+          FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE RESTRICT,
+          FOREIGN KEY(granted_by) REFERENCES users(id) ON DELETE SET NULL,
+          FOREIGN KEY(revoked_by) REFERENCES users(id) ON DELETE SET NULL
+        )
+        """
+    )
+    legacy_platform_role_table = conn.execute(
+        """
+        SELECT 1
+        FROM sqlite_master
+        WHERE type = 'table' AND name = 'user_platform_roles_legacy'
+        """
+    ).fetchone()
+    if legacy_platform_role_table:
+        conn.execute(
+            """
+            INSERT INTO user_platform_roles
+              (user_id, platform_role, granted_at, grant_note)
+            SELECT user_id, platform_role, granted_at,
+                   'Migrated from Owner Role Phase 1'
+            FROM user_platform_roles_legacy
+            """
+        )
+        conn.execute("DROP TABLE user_platform_roles_legacy")
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_user_platform_roles_active
+        ON user_platform_roles(user_id, platform_role)
+        WHERE revoked_at IS NULL
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_user_platform_roles_history
+        ON user_platform_roles(platform_role, revoked_at, user_id, granted_at)
         """
     )
 
@@ -4519,10 +4683,9 @@ def sso_callback(provider):
         return redirect(url_for("login"))
 
     conn = get_conn()
-    # Decide default role based on email
+    # New SSO users never receive elevated classroom or platform authority
+    # based on their email address.
     default_role = "student"
-    if email and email.lower() == "lrbrowning89@gmail.com".lower():
-        default_role = "teacher"
 
     user = get_or_create_sso_user(
         conn,

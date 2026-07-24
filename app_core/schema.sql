@@ -161,6 +161,31 @@ CREATE INDEX IF NOT EXISTS idx_question_flags_question_status
   ON question_flags(question_id, status);
 
 -- -------------------------
+-- Platform authority
+-- -------------------------
+CREATE TABLE IF NOT EXISTS user_platform_roles (
+  grant_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id       INTEGER NOT NULL,
+  platform_role TEXT NOT NULL CHECK (platform_role IN ('owner')),
+  granted_at    INTEGER NOT NULL,
+  granted_by    INTEGER,
+  revoked_at    INTEGER,
+  revoked_by    INTEGER,
+  grant_note    TEXT,
+  revoke_note   TEXT,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT,
+  FOREIGN KEY (granted_by) REFERENCES users(id) ON DELETE SET NULL,
+  FOREIGN KEY (revoked_by) REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_user_platform_roles_active
+  ON user_platform_roles(user_id, platform_role)
+  WHERE revoked_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_user_platform_roles_history
+  ON user_platform_roles(platform_role, revoked_at, user_id, granted_at);
+
+-- -------------------------
 -- Teacher-authored maps & graph
 -- -------------------------
 CREATE TABLE IF NOT EXISTS lists (
