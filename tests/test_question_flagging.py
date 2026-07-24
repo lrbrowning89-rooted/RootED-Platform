@@ -218,6 +218,66 @@ class QuestionFlaggingTests(unittest.TestCase):
         self.assertIn(b"teacher_question_preview", page.data)
         self.assertIn(b"The picture or model has a problem", page.data)
 
+    def test_flag_question_link_opens_exact_teacher_preview_question(self):
+        self.login_as(1, "teacher1", "teacher")
+        self.client.post(
+            "/question_flags",
+            data={
+                "question_id": "Q1B",
+                "category": "visual_problem",
+                "comment": "Diagram did not load.",
+                "page_context": "teacher_question_preview",
+            },
+        )
+
+        flags_page = self.client.get("/teacher/question_flags")
+        self.assertIn(
+            b"/teacher/question_preview?question_id=Q1B&amp;return_to=question_flags",
+            flags_page.data,
+        )
+
+        preview = self.client.get(
+            "/teacher/question_preview?question_id=Q1B&return_to=question_flags"
+        )
+
+        self.assertEqual(preview.status_code, 200)
+        self.assertIn(b"Launch question 1B", preview.data)
+        self.assertNotIn(b"Launch question 1A</p>", preview.data)
+        self.assertIn(b'<option value="MS-LS1-1B" selected>', preview.data)
+        self.assertIn(b'<option value="Q1B" selected>', preview.data)
+        self.assertIn(b"Back to Question Flags", preview.data)
+        self.assertIn(b'href="/teacher/question_flags"', preview.data)
+
+    def test_flag_review_shows_missing_question_without_fallback_link(self):
+        self.conn.execute(
+            """
+            INSERT INTO question_flags
+              (flag_id, question_id, objective_id, standard_id, reporter_user_id,
+               reporter_role, category, comment, page_context, created_ts, status)
+            VALUES ('QF-MISSING', 'Q_RETIRED', 'MS-LS1-1A', 'MS-LS1-1', 1,
+                    'teacher', 'other', 'Historical flag.', 'teacher_question_preview',
+                    123457, 'open')
+            """
+        )
+        self.conn.commit()
+        self.login_as(1, "teacher1", "teacher")
+
+        flags_page = self.client.get("/teacher/question_flags")
+        invalid_preview = self.client.get(
+            "/teacher/question_preview?question_id=Q_RETIRED&return_to=question_flags"
+        )
+
+        self.assertEqual(flags_page.status_code, 200)
+        self.assertIn(b"Q_RETIRED", flags_page.data)
+        self.assertIn(b"Question no longer available", flags_page.data)
+        self.assertNotIn(
+            b"/teacher/question_preview?question_id=Q_RETIRED",
+            flags_page.data,
+        )
+        self.assertEqual(invalid_preview.status_code, 200)
+        self.assertIn(b"No questions are available to preview yet.", invalid_preview.data)
+        self.assertNotIn(b"Launch question 1A</p>", invalid_preview.data)
+
     def test_teacher_preview_rejects_oversized_comment(self):
         self.login_as(1, "teacher1", "teacher")
         page = self.client.get("/teacher/question_preview?question_id=Q1A")
@@ -319,6 +379,10 @@ class QuestionFlaggingTests(unittest.TestCase):
 
         self.assertEqual(page.status_code, 200)
         self.assertNotIn(b"Q1B", page.data)
+        self.assertNotIn(
+            b"/teacher/question_preview?question_id=Q1B&amp;return_to=question_flags",
+            page.data,
+        )
 
     def test_invalid_question_rejected(self):
         self.login_as(3, "student1", "student")

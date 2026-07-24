@@ -2511,10 +2511,13 @@ def teacher_authorized_for_flag(conn: sqlite3.Connection, flag_row) -> bool:
 def get_question_flags_for_teacher(conn: sqlite3.Connection, teacher_user_id: int | None):
     if not teacher_user_id:
         return []
+    objective_placeholders = sql_placeholders(LAUNCH_OBJECTIVE_IDS)
     rows = conn.execute(
-        """
+        f"""
         SELECT qf.*,
                COALESCE(o.objective_text, '') AS objective_text,
+               q.question_id AS live_question_id,
+               q.stem AS question_stem,
                cs.name AS class_name,
                cs.teacher_user_id AS class_teacher_user_id,
                COUNT(*) OVER (PARTITION BY qf.question_id) AS question_flag_count,
@@ -2522,6 +2525,8 @@ def get_question_flags_for_teacher(conn: sqlite3.Connection, teacher_user_id: in
                    OVER (PARTITION BY qf.question_id) AS question_open_count
         FROM question_flags qf
         LEFT JOIN objectives o ON o.objective_id = qf.objective_id
+        LEFT JOIN questions q ON q.question_id = qf.question_id
+             AND q.objective_id IN ({objective_placeholders})
         LEFT JOIN class_sections cs ON cs.class_id = qf.class_id
         WHERE qf.reporter_user_id = ?
            OR qf.class_id IN (
@@ -2536,7 +2541,7 @@ def get_question_flags_for_teacher(conn: sqlite3.Connection, teacher_user_id: in
                  END,
                  qf.created_ts DESC
         """,
-        (teacher_user_id, teacher_user_id),
+        (*LAUNCH_OBJECTIVE_IDS, teacher_user_id, teacher_user_id),
     ).fetchall()
     return rows
 
@@ -3003,6 +3008,9 @@ def teacher_question_preview():
 
     selected_objective_id = request.args.get("objective_id")
     selected_question_id = request.args.get("question_id")
+    return_to = request.args.get("return_to")
+    back_url = url_for("question_flags_review") if return_to == "question_flags" else url_for("index")
+    back_label = "Back to Question Flags" if return_to == "question_flags" else "Back to Dashboard"
 
     if not selected_question_id:
         selected_question_id = get_first_preview_question_id(
@@ -3066,7 +3074,7 @@ def teacher_question_preview():
       <h2 style="margin:0;">Question Preview</h2>
       <p class="muted" style="margin:2px 0 0 0;">Read-only student rendering for teacher review.</p>
     </div>
-    <a class="btn btn-muted" href="{{ url_for('index') }}">Back to Dashboard</a>
+    <a class="btn btn-muted" href="{{ back_url }}">{{ back_label }}</a>
   </div>
 
   {% with msgs = get_flashed_messages() %}
@@ -3140,7 +3148,7 @@ def teacher_question_preview():
       <form class="flag-form" method="post" action="{{ url_for('submit_question_flag') }}">
         <input type="hidden" name="question_id" value="{{ current_question['question_id'] }}">
         <input type="hidden" name="page_context" value="teacher_question_preview">
-        <input type="hidden" name="next" value="{{ url_for('teacher_question_preview', question_id=current_question['question_id']) }}">
+        <input type="hidden" name="next" value="{{ url_for('teacher_question_preview', question_id=current_question['question_id'], return_to=return_to) if return_to else url_for('teacher_question_preview', question_id=current_question['question_id']) }}">
         <div class="muted">Question {{ current_question['question_id'] }} | Objective {{ current_question['objective_id'] }}</div>
         <label>Category
           <select name="category" required>
@@ -3194,6 +3202,9 @@ def teacher_question_preview():
         current_model_asset=current_model_asset,
         flag_categories=QUESTION_FLAG_CATEGORIES,
         flag_comment_max_length=QUESTION_FLAG_COMMENT_MAX_LENGTH,
+        back_url=back_url,
+        back_label=back_label,
+        return_to=return_to,
     )
 
 
@@ -3248,6 +3259,8 @@ def question_flags_review():
   .muted{color:#6b7280;font-size:12px}
   .empty{border:1px dashed #c8d9c4;border-radius:8px;padding:12px;background:#fbf8ef;color:#53665a}
   .flash{background:#e7f7ee;border:1px solid #a8e0bf;color:#0f6b3a;padding:10px 12px;border-radius:8px;margin:10px 0;font-size:14px}
+  .question-link{color:#1d4ed8;font-weight:800;text-decoration:none}
+  .question-link:hover{text-decoration:underline}
 </style>
 <div class="page">
   <div class="topbar">
@@ -3286,7 +3299,17 @@ def question_flags_review():
           <tr>
             <td><span class="pill pill-{{ flag['status'] }}">{{ flag['status'].replace('_', ' ') }}</span></td>
             <td>
-              <strong>{{ flag['question_id'] }}</strong><br>
+              {% if flag['live_question_id'] %}
+                <a class="question-link" href="{{ url_for('teacher_question_preview', question_id=flag['question_id'], return_to='question_flags') }}">{{ flag['question_id'] }}</a><br>
+                {% if flag['question_stem'] %}
+                  <a class="question-link" style="font-weight:600;font-size:12px;" href="{{ url_for('teacher_question_preview', question_id=flag['question_id'], return_to='question_flags') }}">
+                    {{ flag['question_stem'][:90] }}{{ '...' if flag['question_stem']|length > 90 else '' }}
+                  </a><br>
+                {% endif %}
+              {% else %}
+                <strong>{{ flag['question_id'] }}</strong><br>
+                <span class="muted">Question no longer available</span><br>
+              {% endif %}
               <span class="muted">{{ flag['standard_id'] }}</span>
               {% if flag['question_flag_count'] > 1 %}
                 <br><span class="muted">{{ flag['question_flag_count'] }} total flag(s), {{ flag['question_open_count'] or 0 }} open</span>
