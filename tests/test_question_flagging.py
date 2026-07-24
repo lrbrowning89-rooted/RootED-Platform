@@ -272,10 +272,26 @@ class QuestionFlaggingTests(unittest.TestCase):
         )
 
         flags_page = self.client.get("/teacher/question_flags")
+        preview_url = (
+            b"/teacher/question_preview?question_id=Q1B&amp;return_to=question_flags"
+            b"&amp;filter=current&amp;category=all"
+        )
         self.assertIn(
-            b"/teacher/question_preview?question_id=Q1B&amp;return_to=question_flags&amp;filter=current&amp;category=all",
+            preview_url,
             flags_page.data,
         )
+        self.assertEqual(flags_page.data.count(preview_url), 2)
+        self.assertIn(b'<article class="question-reference"', flags_page.data)
+        self.assertIn(b'<div class="question-reference-label">Question</div>', flags_page.data)
+        self.assertIn(
+            b'<a class="question-reference-stem question-reference-stem-link"',
+            flags_page.data,
+        )
+        self.assertIn(b"Launch question 1B", flags_page.data)
+        self.assertIn(b"MS-LS1-1B", flags_page.data)
+        self.assertIn(b"Cells form tissues.", flags_page.data)
+        self.assertIn(b"Q1B", flags_page.data)
+        self.assertEqual(flags_page.data.count(b"Launch question 1B"), 1)
 
         preview = self.client.get(
             "/teacher/question_preview?question_id=Q1B&return_to=question_flags"
@@ -283,11 +299,36 @@ class QuestionFlaggingTests(unittest.TestCase):
 
         self.assertEqual(preview.status_code, 200)
         self.assertIn(b"Launch question 1B", preview.data)
+        self.assertIn(b"Cells form tissues.", preview.data)
+        self.assertIn(b"Q1B", preview.data)
         self.assertNotIn(b"Launch question 1A</p>", preview.data)
         self.assertIn(b'<option value="MS-LS1-1B" selected>', preview.data)
         self.assertIn(b'<option value="Q1B" selected>', preview.data)
         self.assertIn(b"Back to Question Flags", preview.data)
         self.assertIn(b'href="/teacher/question_flags?filter=current&amp;category=all"', preview.data)
+
+    def test_question_reference_uses_fallback_when_objective_title_missing(self):
+        self.conn.execute(
+            "UPDATE objectives SET objective_text = '' WHERE objective_id = 'MS-LS1-1B'"
+        )
+        self.conn.commit()
+        self.insert_flag(
+            "QF-NO-TITLE",
+            question_id="Q1B",
+            objective_id="MS-LS1-1B",
+            reporter_user_id=1,
+            comment="Missing title check.",
+        )
+        self.login_as(1, "teacher1", "teacher")
+
+        page = self.client.get("/teacher/question_flags")
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"Launch question 1B", page.data)
+        self.assertIn(b"MS-LS1-1B", page.data)
+        self.assertIn(b"Q1B", page.data)
+        self.assertNotIn(b"No objective text", page.data)
+        self.assertNotIn(b"Cells form tissues.", page.data)
 
     def test_flag_review_shows_missing_question_without_fallback_link(self):
         self.conn.execute(
@@ -311,6 +352,8 @@ class QuestionFlaggingTests(unittest.TestCase):
         self.assertEqual(flags_page.status_code, 200)
         self.assertIn(b"Q_RETIRED", flags_page.data)
         self.assertIn(b"Question no longer available", flags_page.data)
+        self.assertIn(b'<article class="question-reference question-reference-missing"', flags_page.data)
+        self.assertIn(b"MS-LS1-1A", flags_page.data)
         self.assertNotIn(
             b"/teacher/question_preview?question_id=Q_RETIRED",
             flags_page.data,
@@ -318,6 +361,31 @@ class QuestionFlaggingTests(unittest.TestCase):
         self.assertEqual(invalid_preview.status_code, 200)
         self.assertIn(b"No questions are available to preview yet.", invalid_preview.data)
         self.assertNotIn(b"Launch question 1A</p>", invalid_preview.data)
+
+    def test_question_reference_escapes_long_text_without_malformed_markup(self):
+        long_stem = "This is a very long question stem " * 20 + "<script>alert('x')</script>"
+        long_title = "Long objective title " * 20 + "<b>not bold</b>"
+        self.conn.execute(
+            "UPDATE questions SET stem = ? WHERE question_id = 'Q1A'",
+            (long_stem,),
+        )
+        self.conn.execute(
+            "UPDATE objectives SET objective_text = ? WHERE objective_id = 'MS-LS1-1A'",
+            (long_title,),
+        )
+        self.conn.commit()
+        self.insert_flag("QF-LONG", reporter_user_id=1, comment="Long text check.")
+        self.login_as(1, "teacher1", "teacher")
+
+        page = self.client.get("/teacher/question_flags")
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"This is a very long question stem", page.data)
+        self.assertIn(b"Long objective title", page.data)
+        self.assertIn(b"&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt;", page.data)
+        self.assertIn(b"&lt;b&gt;not bold&lt;/b&gt;", page.data)
+        self.assertNotIn(b"<script>alert", page.data)
+        self.assertNotIn(b"<b>not bold</b>", page.data)
 
     def test_teacher_preview_rejects_oversized_comment(self):
         self.login_as(1, "teacher1", "teacher")
@@ -483,6 +551,140 @@ class QuestionFlaggingTests(unittest.TestCase):
         self.assertNotIn(b"QF-OPEN-OTHER", sent_visual.data)
         self.assertIn(b"No current reports match The picture or model has a problem.", current_visual.data)
         self.assertIn(b"No resolved reports.", resolved.data)
+
+    def test_record_attempt_uses_shared_question_reference_and_content_first_labels(self):
+        self.login_as(1, "teacher1", "teacher")
+
+        page = self.client.get(
+            "/dashboard?objective_id=MS-LS1-1B&question_id=Q1B&response=C"
+        )
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b'<article class="question-reference"', page.data)
+        self.assertIn(b'<div class="question-reference-label">Question</div>', page.data)
+        self.assertIn(b"Launch question 1B", page.data)
+        self.assertIn(b"MS-LS1-1B", page.data)
+        self.assertIn(b"Cells form tissues.", page.data)
+        self.assertIn(b"Q1B", page.data)
+        self.assertIn(
+            b"Launch question 1B \xe2\x80\x94 MS-LS1-1B \xe2\x80\xa2 Q1B",
+            page.data,
+        )
+        self.assertIn(
+            b"/teacher/question_preview?question_id=Q1B",
+            page.data,
+        )
+        self.assertNotIn(b"Q1B - Launch question 1B", page.data)
+        self.assertIn(b'<option value="Q1B" selected>', page.data)
+        self.assertIn(b'<option value="C" selected>', page.data)
+
+    def test_record_attempt_question_reference_falls_back_without_objective_title(self):
+        self.conn.execute(
+            "UPDATE objectives SET objective_text = '' WHERE objective_id = 'MS-LS1-1B'"
+        )
+        self.conn.commit()
+        self.login_as(1, "teacher1", "teacher")
+
+        page = self.client.get(
+            "/dashboard?objective_id=MS-LS1-1B&question_id=Q1B"
+        )
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"Launch question 1B", page.data)
+        self.assertIn(b"MS-LS1-1B", page.data)
+        self.assertIn(b"Q1B", page.data)
+        self.assertNotIn(b"Cells form tissues.", page.data)
+        self.assertNotIn(b"No objective text", page.data)
+
+    def test_record_attempt_missing_question_rejected_and_state_preserved(self):
+        self.login_as(1, "teacher1", "teacher")
+        before = {
+            "attempts": self.table_count("attempts"),
+            "responses": self.table_count("responses"),
+            "progress_state": [
+                tuple(row)
+                for row in self.conn.execute(
+                    "SELECT * FROM progress_state ORDER BY student_id, standard_id"
+                ).fetchall()
+            ],
+            "student_objective_state": [
+                tuple(row)
+                for row in self.conn.execute(
+                    "SELECT * FROM student_objective_state ORDER BY student_id, standard_id"
+                ).fetchall()
+            ],
+        }
+
+        response = self.client.post(
+            "/dashboard",
+            data={
+                "action": "save_attempt",
+                "student_id": "S1",
+                "objective_id": "MS-LS1-1A",
+                "class_objective": "MS-LS1-1A",
+                "period": "ALL",
+                "question_id": "Q_RETIRED",
+                "response": "B",
+            },
+            follow_redirects=True,
+        )
+
+        after = {
+            "attempts": self.table_count("attempts"),
+            "responses": self.table_count("responses"),
+            "progress_state": [
+                tuple(row)
+                for row in self.conn.execute(
+                    "SELECT * FROM progress_state ORDER BY student_id, standard_id"
+                ).fetchall()
+            ],
+            "student_objective_state": [
+                tuple(row)
+                for row in self.conn.execute(
+                    "SELECT * FROM student_objective_state ORDER BY student_id, standard_id"
+                ).fetchall()
+            ],
+        }
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            b"Selected question is no longer available. Choose an available launch question before saving an attempt.",
+            response.data,
+        )
+        self.assertIn(b"Question no longer available", response.data)
+        self.assertIn(b"Q_RETIRED", response.data)
+        self.assertIn(b'<option value="Q_RETIRED" selected>', response.data)
+        self.assertIn(b'<option value="B" selected>', response.data)
+        self.assertEqual(after, before)
+
+    def test_record_attempt_success_still_records_selected_question(self):
+        self.login_as(1, "teacher1", "teacher")
+
+        response = self.client.post(
+            "/dashboard",
+            data={
+                "action": "save_attempt",
+                "student_id": "S1",
+                "objective_id": "MS-LS1-1B",
+                "class_objective": "MS-LS1-1B",
+                "period": "ALL",
+                "question_id": "Q1B",
+                "response": "A",
+            },
+            follow_redirects=False,
+        )
+        attempt = self.conn.execute(
+            "SELECT * FROM attempts WHERE question_id = 'Q1B'"
+        ).fetchone()
+        response_row = self.conn.execute(
+            "SELECT * FROM responses WHERE question_id = 'Q1B'"
+        ).fetchone()
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIsNotNone(attempt)
+        self.assertIsNotNone(response_row)
+        self.assertEqual(attempt["student_id"], "S1")
+        self.assertEqual(response_row["correct"], 1)
 
     def test_student_friendly_category_labels_appear_and_form_is_hidden(self):
         self.login_as(3, "student1", "student")

@@ -25,6 +25,7 @@ from functools import wraps
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.exceptions import HTTPException
 from authlib.integrations.flask_client import OAuth
+from markupsafe import Markup
 
 from app_core.config import (
     ALLOW_SSO_AUTO_CREATE,
@@ -101,6 +102,16 @@ QUESTION_FLAG_STATUS_FILTERS = {
 }
 QUESTION_FLAG_DEFAULT_STATUS_FILTER = "current"
 QUESTION_FLAG_DEFAULT_CATEGORY_FILTER = "all"
+QUESTION_REFERENCE_CSS = """
+  .question-reference{display:grid;gap:5px;max-width:520px}
+  .question-reference-label{font-size:11px;font-weight:850;color:#6b7280;text-transform:uppercase;letter-spacing:.04em}
+  .question-reference-stem{display:block;color:#1f2937;font-weight:850;line-height:1.35;overflow-wrap:anywhere}
+  .question-reference-stem-link{text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:3px}
+  .question-reference-meta{display:block;color:#6b7280;font-size:12px;line-height:1.35;overflow-wrap:anywhere}
+  .question-reference-meta-link{text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:3px}
+  .question-reference-stem-link:focus,.question-reference-meta-link:focus{outline:3px solid #93c5fd;outline-offset:2px;border-radius:4px}
+  .question-reference-missing .question-reference-stem{color:#4b5563}
+"""
 OBSOLETE_LAUNCH_OBJECTIVE_IDS = (
     "MS-LS1-2C",
     "MS-LS1-2D",
@@ -2424,6 +2435,77 @@ def question_flag_category_filter_options():
     return ((QUESTION_FLAG_DEFAULT_CATEGORY_FILTER, "All categories"), *QUESTION_FLAG_CATEGORIES)
 
 
+def question_reference_meta_text(
+    objective_code: str | None,
+    objective_title: str | None,
+    question_id: str | None,
+) -> str:
+    objective_code = (objective_code or "").strip()
+    objective_title = (objective_title or "").strip()
+    question_id = (question_id or "").strip()
+    if objective_code and objective_title:
+        return f"{objective_code} — {objective_title} • {question_id}"
+    if objective_code:
+        return f"{objective_code} • {question_id}"
+    return question_id
+
+
+def question_selector_label(question_row, max_stem_length: int = 90) -> str:
+    stem = (row_get(question_row, "stem", None) or "").strip()
+    objective_code = row_get(question_row, "objective_id", None)
+    question_id = row_get(question_row, "question_id", None)
+    if stem and len(stem) > max_stem_length:
+        stem = stem[: max_stem_length - 3].rstrip() + "..."
+    if not stem:
+        stem = "Question stem unavailable"
+    return f"{stem} — {objective_code} • {question_id}"
+
+
+def render_question_reference(
+    *,
+    question_stem: str | None,
+    objective_code: str | None,
+    objective_title: str | None,
+    question_id: str | None,
+    preview_url: str | None = None,
+    missing: bool = False,
+) -> Markup:
+    meta_text = question_reference_meta_text(objective_code, objective_title, question_id)
+    html = """
+<article class="question-reference{% if missing %} question-reference-missing{% endif %}" aria-label="Question reference">
+  <div class="question-reference-label">Question</div>
+  {% if missing %}
+    <div class="question-reference-stem question-reference-stem-missing">Question no longer available</div>
+    <div class="question-reference-meta">{{ meta_text }}</div>
+  {% else %}
+    <a class="question-reference-stem question-reference-stem-link" href="{{ preview_url }}">{{ question_stem or 'Question stem unavailable' }}</a>
+    <a class="question-reference-meta question-reference-meta-link" href="{{ preview_url }}">{{ meta_text }}</a>
+  {% endif %}
+</article>
+    """
+    return Markup(
+        render_template_string(
+            html,
+            question_stem=question_stem,
+            meta_text=meta_text,
+            preview_url=preview_url,
+            missing=missing or not preview_url,
+        ).strip()
+    )
+
+
+def question_reference_for_flag(flag, preview_url: str | None = None) -> Markup:
+    question_exists = bool(row_get(flag, "live_question_id", None))
+    return render_question_reference(
+        question_stem=row_get(flag, "question_stem", None),
+        objective_code=row_get(flag, "objective_id", None),
+        objective_title=row_get(flag, "objective_text", None),
+        question_id=row_get(flag, "question_id", None),
+        preview_url=preview_url if question_exists else None,
+        missing=not question_exists,
+    )
+
+
 def current_student_id_for_flag(conn: sqlite3.Connection) -> str | None:
     if session.get("role") != "student":
         return None
@@ -2975,10 +3057,20 @@ def get_questions_for_objective(conn, oid):
         return []
     return conn.execute(
         """
-        SELECT question_id, stem, choice_a, choice_b, choice_c, choice_d, answer_key
-        FROM questions
-        WHERE TRIM(UPPER(objective_id)) = TRIM(UPPER(?))
-        ORDER BY question_id
+        SELECT q.question_id,
+               q.objective_id,
+               q.stem,
+               q.choice_a,
+               q.choice_b,
+               q.choice_c,
+               q.choice_d,
+               q.answer_key,
+               COALESCE(o.standard_id, '') AS standard_id,
+               COALESCE(o.objective_text, '') AS objective_text
+        FROM questions q
+        LEFT JOIN objectives o ON o.objective_id = q.objective_id
+        WHERE TRIM(UPPER(q.objective_id)) = TRIM(UPPER(?))
+        ORDER BY q.question_id
         """,
         (oid,),
     ).fetchall()
@@ -2997,6 +3089,7 @@ def get_preview_question(conn, question_id):
                q.choice_b,
                q.choice_c,
                q.choice_d,
+               q.answer_key,
                COALESCE(o.standard_id, '') AS standard_id,
                COALESCE(o.objective_text, '') AS objective_text
         FROM questions q
@@ -3210,7 +3303,7 @@ def teacher_question_preview():
       <select name="question_id" onchange="this.form.submit()">
         {% for q in qrows %}
           <option value="{{ q['question_id'] }}" {% if q['question_id'] == selected_question_id %}selected{% endif %}>
-            {{ (q['stem'][:80] if q['stem'] else q['question_id']) }}{{ ('...' if q['stem'] and (q['stem']|length)>80 else '') }} ({{ q['question_id'] }})
+            {{ question_selector_label(q) }}
           </option>
         {% endfor %}
       </select>
@@ -3226,11 +3319,16 @@ def teacher_question_preview():
   </div>
 
   {% if current_question %}
-    <h3>
-      Objective: {{ current_question['objective_id'] }}
-      <span class="muted">({{ current_question['standard_id'] }})</span>
-    </h3>
+    <h3>Question</h3>
     <p>{{ current_question['stem'] }}</p>
+    <p class="muted">
+      {{ question_reference_meta_text(
+           current_question['objective_id'],
+           current_question['objective_text'],
+           current_question['question_id']
+         ) }}
+      <span>({{ current_question['standard_id'] }})</span>
+    </p>
     {% if current_model_asset %}
       <figure class="model-asset">
         {% if current_model_asset.title %}
@@ -3258,7 +3356,13 @@ def teacher_question_preview():
         <input type="hidden" name="question_id" value="{{ current_question['question_id'] }}">
         <input type="hidden" name="page_context" value="teacher_question_preview">
         <input type="hidden" name="next" value="{{ url_for('teacher_question_preview', question_id=current_question['question_id'], return_to=return_to, filter=flag_filter, category=flag_category) if return_to else url_for('teacher_question_preview', question_id=current_question['question_id']) }}">
-        <div class="muted">Question {{ current_question['question_id'] }} | Objective {{ current_question['objective_id'] }}</div>
+        <div class="muted">
+          {{ question_reference_meta_text(
+               current_question['objective_id'],
+               current_question['objective_text'],
+               current_question['question_id']
+             ) }}
+        </div>
         <label>Category
           <select name="category" required>
             {% for code, label in flag_categories %}
@@ -3316,6 +3420,8 @@ def teacher_question_preview():
         return_to=return_to,
         flag_filter=flag_filter,
         flag_category=flag_category,
+        question_reference_meta_text=question_reference_meta_text,
+        question_selector_label=question_selector_label,
     )
 
 
@@ -3390,8 +3496,7 @@ def question_flags_review():
   .muted{color:#6b7280;font-size:12px}
   .empty{border:1px dashed #c8d9c4;border-radius:8px;padding:12px;background:#fbf8ef;color:#53665a}
   .flash{background:#e7f7ee;border:1px solid #a8e0bf;color:#0f6b3a;padding:10px 12px;border-radius:8px;margin:10px 0;font-size:14px}
-  .question-link{color:#1d4ed8;font-weight:800;text-decoration:none}
-  .question-link:hover{text-decoration:underline}
+  {{ question_reference_css }}
   .filter-tabs{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 12px}
   .filter-tab{display:inline-flex;gap:6px;align-items:center;text-decoration:none;border:1px solid #c8d9c4;border-radius:999px;padding:7px 10px;color:#2f5138;background:#eef4ec;font-weight:750;font-size:13px}
   .filter-tab[aria-current="page"]{background:#2f6f4e;color:#fff;border-color:#2f6f4e}
@@ -3448,7 +3553,6 @@ def question_flags_review():
         <tr>
           <th>Status</th>
           <th>Question</th>
-          <th>Objective</th>
           <th>Category</th>
           <th>Reporter</th>
           <th>Context</th>
@@ -3460,25 +3564,13 @@ def question_flags_review():
           <tr>
             <td><span class="pill pill-{{ flag['status'] }}">{{ flag['status'].replace('_', ' ') }}</span></td>
             <td>
-              {% if flag['live_question_id'] %}
-                <a class="question-link" href="{{ url_for('teacher_question_preview', question_id=flag['question_id'], return_to='question_flags', filter=selected_filter, category=selected_category) }}">{{ flag['question_id'] }}</a><br>
-                {% if flag['question_stem'] %}
-                  <a class="question-link" style="font-weight:600;font-size:12px;" href="{{ url_for('teacher_question_preview', question_id=flag['question_id'], return_to='question_flags', filter=selected_filter, category=selected_category) }}">
-                    {{ flag['question_stem'][:90] }}{{ '...' if flag['question_stem']|length > 90 else '' }}
-                  </a><br>
-                {% endif %}
-              {% else %}
-                <strong>{{ flag['question_id'] }}</strong><br>
-                <span class="muted">Question no longer available</span><br>
-              {% endif %}
-              <span class="muted">{{ flag['standard_id'] }}</span>
+              {{ question_reference_for_flag(
+                   flag,
+                   url_for('teacher_question_preview', question_id=flag['question_id'], return_to='question_flags', filter=selected_filter, category=selected_category)
+                 ) }}
               {% if flag['question_flag_count'] > 1 %}
                 <br><span class="muted">{{ flag['question_flag_count'] }} total flag(s), {{ flag['question_open_count'] or 0 }} open</span>
               {% endif %}
-            </td>
-            <td>
-              <strong>{{ flag['objective_id'] }}</strong><br>
-              <span class="muted">{{ flag['objective_text'] or 'No objective text' }}</span>
             </td>
             <td>{{ category_label(flag['category']) }}</td>
             <td>{{ flag['reporter_role'] }}</td>
@@ -3534,6 +3626,8 @@ def question_flags_review():
         flags=flags,
         format_ts=format_ts,
         category_label=question_flag_category_label,
+        question_reference_for_flag=question_reference_for_flag,
+        question_reference_css=Markup(QUESTION_REFERENCE_CSS),
         category_options=question_flag_category_filter_options(),
         status_filters=QUESTION_FLAG_STATUS_FILTERS,
         status_counts=status_counts,
@@ -5174,11 +5268,8 @@ def index():
     if request.method == "POST" and request.form.get("action") == "save_attempt":
         student_id = request.form.get("student_id") or "S1"
         objective_id = request.form.get("objective_id")
-        qid = request.form.get("question_id")
+        qid = (request.form.get("question_id") or "").strip()
         resp = request.form.get("response")
-
-        if not qid and objective_id:
-            qid = get_any_question_id(conn, objective_id)
 
         keep_obj = request.values.get("class_objective") or request.values.get(
             "objective_id"
@@ -5187,24 +5278,26 @@ def index():
             ordered_objectives = get_objectives(conn)
             keep_obj = ordered_objectives[0]["objective_id"] if ordered_objectives else None
         keep_period = request.values.get("period", "ALL")
+        redirect_args = {
+            "class_objective": keep_obj,
+            "period": keep_period,
+            "student_id": student_id,
+            "objective_id": objective_id or keep_obj,
+            "question_id": qid,
+            "response": resp or "",
+        }
 
-        if not qid:
-            flash(
-                "No question available for that objective. Please add a question first."
-            )
+        question = get_preview_question(conn, qid)
+        if not question:
+            flash("Selected question is no longer available. Choose an available launch question before saving an attempt.")
             return redirect(
                 url_for(
                     "index",
-                    class_objective=keep_obj,
-                    period=keep_period,
-                    student_id=student_id,
+                    **redirect_args,
                 )
             )
 
-        row = conn.execute(
-            "SELECT answer_key FROM questions WHERE question_id=?", (qid,)
-        ).fetchone()
-        correct = 1 if row and row["answer_key"] == resp else 0
+        correct = 1 if question["answer_key"] == resp else 0
 
         std_id, lvl, _ = record_attempt_and_response(
             conn,
@@ -5212,7 +5305,7 @@ def index():
             question_id=qid,
             response=(resp or f"Quick:{correct}"),
             is_correct=correct,
-            objective_id=objective_id,
+            objective_id=question["objective_id"],
             attempt_prefix="TA",
         )
         conn.commit()
@@ -5247,6 +5340,32 @@ def index():
         if current_obj_for_questions
         else []
     )
+    attempt_question_id = (request.values.get("question_id") or "").strip()
+    attempt_question_ids = {row["question_id"] for row in qrows}
+    if not attempt_question_id and qrows:
+        attempt_question_id = qrows[0]["question_id"]
+    selected_attempt_question = next(
+        (row for row in qrows if row["question_id"] == attempt_question_id),
+        None,
+    )
+    attempt_question_reference = render_question_reference(
+        question_stem=row_get(selected_attempt_question, "stem", None),
+        objective_code=(
+            row_get(selected_attempt_question, "objective_id", None)
+            or current_obj_for_questions
+        ),
+        objective_title=row_get(selected_attempt_question, "objective_text", None),
+        question_id=attempt_question_id,
+        preview_url=(
+            url_for("teacher_question_preview", question_id=attempt_question_id)
+            if selected_attempt_question
+            else None
+        ),
+        missing=bool(attempt_question_id and attempt_question_id not in attempt_question_ids),
+    ) if attempt_question_id else None
+    selected_attempt_response = request.values.get("response", "A")
+    if selected_attempt_response not in ("A", "B", "C", "D"):
+        selected_attempt_response = "A"
     preview_objective_id = request.values.get("preview_objective_id", class_obj)
     if not is_launch_objective_id(preview_objective_id):
         preview_objective_id = class_obj
@@ -5439,6 +5558,8 @@ def index():
   .btn-ghost{background:transparent;color:#6b4f3a;border:1px solid #dacdbb}
   .btn-with-badge{display:inline-flex;align-items:center;gap:7px}
   .action-badge{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;padding:0 6px;border-radius:999px;background:#b42318;color:#fff;font-size:12px;font-weight:850;border:1px solid rgba(255,255,255,.7)}
+  {{ question_reference_css }}
+  .selected-question-reference{margin:10px 0 12px;padding:10px;border:1px solid #e5e7eb;border-radius:8px;background:#f9fafb}
   input,select{padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px}
   .toolbar{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
   .headerbar{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px}
@@ -5718,7 +5839,7 @@ def index():
             <select name="preview_question_id" onchange="this.form.submit()">
               {% for q in preview_qrows %}
                 <option value="{{q['question_id']}}" {% if q['question_id'] == preview_question_id %}selected{% endif %}>
-                  {{ (q['stem'][:90] if q['stem'] else q['question_id']) }}{{ ('...' if q['stem'] and (q['stem']|length)>90 else '') }} ({{q['question_id']}})
+                  {{ question_selector_label(q) }}
                 </option>
               {% endfor %}
             </select>
@@ -5838,6 +5959,7 @@ def index():
         <input type="hidden" name="student_id" value="{{active_student}}">
         <input type="hidden" name="class_objective" value="{{class_obj}}">
         <input type="hidden" name="period" value="{{selected_period}}">
+        <input type="hidden" name="response" value="{{selected_attempt_response}}">
         <label>Objective
           <select name="objective_id" onchange="this.form.submit()">
             {% for o in objs %}
@@ -5852,7 +5974,9 @@ def index():
 
       <form method="post">
         <input type="hidden" name="action" value="save_attempt">
-        <input type="hidden" name="objective_id" value="{{ request.values.get('objective_id', class_obj) }}">
+        <input type="hidden" name="objective_id" value="{{ current_obj_for_questions }}">
+        <input type="hidden" name="class_objective" value="{{class_obj}}">
+        <input type="hidden" name="period" value="{{selected_period}}">
 
         <label>Student
           <select name="student_id">
@@ -5869,28 +5993,36 @@ def index():
         </label>
 
         {% if qrows %}
-          <p><em>Showing questions for objective: {{ request.values.get('objective_id', class_obj) }}</em></p>
           <label>Question
-            <select name="question_id">
+            <select name="question_id" onchange="this.form.method='get'; this.form.action='{{ url_for('index') }}#teacher-tools'; this.form.submit()">
+              {% if attempt_question_id and not selected_attempt_question %}
+                <option value="{{ attempt_question_id }}" selected>
+                  Question no longer available — {{ question_reference_meta_text(current_obj_for_questions, '', attempt_question_id) }}
+                </option>
+              {% endif %}
               {% for q in qrows %}
-                <option value="{{q['question_id']}}">
-                  {{q['question_id']}} - {{ (q['stem'][:60] if q['stem'] else '') }}{{ ('...' if q['stem'] and (q['stem']|length)>60 else '') }}
+                <option value="{{q['question_id']}}" {% if q['question_id'] == attempt_question_id %}selected{% endif %}>
+                  {{ question_selector_label(q) }}
                 </option>
               {% endfor %}
             </select>
           </label>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 10px 0;">
-            {% for q in qrows %}
-              <a class="btn-mini"
-                 style="background:#4b5563;color:#fff;text-decoration:none;"
-                 href="{{ url_for('teacher_question_preview', question_id=q['question_id']) }}"
-                 target="_blank">Preview {{ q['question_id'] }}</a>
-            {% endfor %}
+          <div class="selected-question-reference">
+            {{ attempt_question_reference }}
           </div>
           <label>Response
-            <select name="response"><option>A</option><option>B</option><option>C</option><option>D</option></select>
+            <select name="response">
+              {% for option in ['A', 'B', 'C', 'D'] %}
+                <option value="{{ option }}" {% if option == selected_attempt_response %}selected{% endif %}>{{ option }}</option>
+              {% endfor %}
+            </select>
           </label>
           <p><button class="btn" type="submit">Save Attempt</button></p>
+        {% elif attempt_question_reference %}
+          <div class="selected-question-reference">
+            {{ attempt_question_reference }}
+          </div>
+          <p>No available launch question is selected. Choose an available question before saving an attempt.</p>
         {% else %}
           <p>No questions for this objective.</p>
         {% endif %}
@@ -6319,6 +6451,12 @@ def index():
         mastered_rows=mastered_rows,
         active_standard_rows=active_standard_rows,
         qrows=qrows,
+        current_obj_for_questions=current_obj_for_questions,
+        attempt_question_id=attempt_question_id,
+        attempt_question_reference=attempt_question_reference,
+        selected_attempt_response=selected_attempt_response,
+        question_selector_label=question_selector_label,
+        question_reference_meta_text=question_reference_meta_text,
         preview_objective_id=preview_objective_id,
         preview_qrows=preview_qrows,
         preview_question_id=preview_question_id,
@@ -6337,6 +6475,7 @@ def index():
         engine_checks=engine_checks,
         recent_errors=recent_errors,
         question_flags_action_count=question_flags_action_count,
+        question_reference_css=Markup(QUESTION_REFERENCE_CSS),
         all_users=all_users,
         class_sections=class_sections,
         class_rosters=class_rosters,
