@@ -5,10 +5,9 @@ import time
 print("LOADED adaptive_engine from:", __file__)
 
 # Match the same DB as dashboard_v5.py
-from pathlib import Path
+from app_core.config import resolve_database_path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]  # RootED/
-DB_PATH = os.environ.get("NGSS_DB", str(PROJECT_ROOT / "data" / "ngss.db"))
+DB_PATH = resolve_database_path()
 
 MASTERY = 0.90        # ≥90% to advance
 SUPER_MASTERY = 0.95  # ≥95% on remediation to return to same level

@@ -32,7 +32,8 @@ secret-free `.env.example`. Never place real credentials in `.env.example`.
 - `ENABLE_MICROSOFT_AUTH=true`
 - `MICROSOFT_CLIENT_ID`
 - `MICROSOFT_CLIENT_SECRET`
-- `MICROSOFT_TENANT`: `common` by default; use a tenant ID to restrict sign-in
+- `MICROSOFT_TENANT`: `common` by default; use `organizations` to allow only
+  work/school accounts, or a tenant ID to restrict sign-in to one organization
 - `ALLOW_SSO_AUTO_CREATE=true`: creates pending, restricted RootED accounts after valid OIDC login
 
 Local maintenance credentials are never stored in source control. The
@@ -48,6 +49,21 @@ For Microsoft multi-tenant access, register the app as supporting organizational
 accounts in any Microsoft Entra ID tenant and use `MICROSOFT_TENANT=common`.
 Configure the web redirect URI above and create a client secret. Google requires
 an OAuth web client with its corresponding authorized redirect URI.
+
+Microsoft's tenant-independent discovery endpoints (`common`, `organizations`,
+and `consumers`) publish an issuer template containing `{tenantid}`, while each
+ID token contains the concrete tenant ID in both `tid` and `iss`. RootED follows
+Microsoft's documented validation procedure: it requires `tid` to be a GUID,
+substitutes that value into the discovery issuer template, requires an exact
+match with `iss`, and checks that the selected signing key is scoped to the same
+issuer. Authlib continues to validate the signature, audience, nonce, expiry,
+and other standard OIDC claims. A concrete tenant ID uses that tenant's
+discovery document and Authlib's normal exact issuer validation.
+
+Use `MICROSOFT_TENANT=organizations` when RootED should accept Microsoft 365
+school/work accounts but not personal Microsoft accounts. Use `common` only
+when the Entra app registration is intentionally configured to accept both
+organizational and personal Microsoft accounts.
 
 Authentication creates or resolves an account with `account_role=pending`; it
 grants no teacher, student, owner, class, or subscription authority. The legacy
@@ -104,7 +120,8 @@ slash behavior used by that environment.
 - [ ] Copy the Application (client) ID into the deployment secret store.
 - [ ] Configure `MICROSOFT_CLIENT_ID`.
 - [ ] Configure `MICROSOFT_CLIENT_SECRET`.
-- [ ] Configure `MICROSOFT_TENANT=common` for multi-tenant school access.
+- [ ] Configure `MICROSOFT_TENANT=organizations` for multi-tenant school/work
+      access, or `common` only when personal Microsoft accounts are also wanted.
 - [ ] Configure `ENABLE_MICROSOFT_AUTH=true`.
 - [ ] Confirm whether tenant administrator consent is required by target
       schools or districts.

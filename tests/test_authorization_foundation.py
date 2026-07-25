@@ -8,6 +8,7 @@ import tempfile
 import unittest
 import uuid
 from pathlib import Path
+from unittest.mock import patch
 
 from werkzeug.exceptions import Forbidden
 
@@ -70,6 +71,85 @@ class AuthorizationFoundationTests(unittest.TestCase):
             "role": role,
         }
 
+    def test_microsoft_common_validates_concrete_tenant_issuer(self):
+        tenant_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        issuer = f"https://login.microsoftonline.com/{tenant_id}/v2.0"
+
+        class FakeClient:
+            def load_server_metadata(self):
+                return {
+                    "issuer": "https://login.microsoftonline.com/{tenantid}/v2.0"
+                }
+
+            def fetch_jwk_set(self):
+                return {
+                    "keys": [
+                        {
+                            "kid": "microsoft-key",
+                            "issuer": (
+                                "https://login.microsoftonline.com/"
+                                "{tenantid}/v2.0"
+                            ),
+                        }
+                    ]
+                }
+
+        class Claims(dict):
+            header = {"kid": "microsoft-key"}
+
+        claims = Claims(tid=tenant_id)
+        validator = dash.microsoft_multitenant_claims_options(FakeClient())[
+            "iss"
+        ]["validate"]
+        self.assertTrue(validator(claims, issuer))
+        self.assertFalse(
+            validator(
+                claims,
+                "https://login.microsoftonline.com/"
+                "ffffffff-1111-2222-3333-444444444444/v2.0",
+            )
+        )
+
+    def test_microsoft_common_rejects_invalid_tid_and_wrong_key_issuer(self):
+        class Claims(dict):
+            header = {"kid": "microsoft-key"}
+
+        class FakeClient:
+            def load_server_metadata(self):
+                return {
+                    "issuer": "https://login.microsoftonline.com/{tenantid}/v2.0"
+                }
+
+            def fetch_jwk_set(self):
+                return {
+                    "keys": [
+                        {
+                            "kid": "microsoft-key",
+                            "issuer": (
+                                "https://login.microsoftonline.com/"
+                                "ffffffff-1111-2222-3333-444444444444/v2.0"
+                            ),
+                        }
+                    ]
+                }
+
+        validator = dash.microsoft_multitenant_claims_options(FakeClient())[
+            "iss"
+        ]["validate"]
+        self.assertFalse(
+            validator(
+                Claims(tid="not-a-guid"),
+                "https://login.microsoftonline.com/not-a-guid/v2.0",
+            )
+        )
+        tenant_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        self.assertFalse(
+            validator(
+                Claims(tid=tenant_id),
+                f"https://login.microsoftonline.com/{tenant_id}/v2.0",
+            )
+        )
+
     def test_schema_preserves_classroom_role_and_adds_platform_roles(self):
         users_sql = self.conn.execute(
             "SELECT sql FROM sqlite_master WHERE type='table' AND name='users'"
@@ -98,9 +178,31 @@ class AuthorizationFoundationTests(unittest.TestCase):
             response = dash.app.test_client().get("/login")
             self.assertIn(b"Continue with Google", response.data)
             self.assertIn(b"Continue with Microsoft", response.data)
+            self.assertIn(b"sso-icon-google", response.data)
+            self.assertIn(b"sso-icon-microsoft", response.data)
+            self.assertEqual(response.data.count(b'aria-hidden="true"'), 2)
+            self.assertEqual(response.data.count(b'focusable="false"'), 2)
+            self.assertNotIn(b"http://www.google.com", response.data)
+            self.assertNotIn(b"https://www.microsoft.com", response.data)
         finally:
             dash.ENABLE_GOOGLE_AUTH = old_google
             dash.ENABLE_MICROSOFT_AUTH = old_microsoft
+
+    def test_restricted_onboarding_uses_returning_account_wording(self):
+        client = dash.app.test_client()
+        with client.session_transaction() as sess:
+            sess["user_id"] = 1
+            sess["username"] = "teacher1"
+            sess["role"] = "teacher"
+        response = client.get("/restricted")
+        self.assertEqual(response.status_code, 200)
+        page = response.data.decode("utf-8")
+        self.assertIn(
+            "You’re signed in successfully, but you’re not currently connected "
+            "to a class.",
+            page,
+        )
+        self.assertNotIn("Your account has been created successfully", page)
 
     def test_post_login_redirect_rejects_external_destinations(self):
         self.assertEqual(dash.safe_local_redirect("/student?from=login"), "/student?from=login")
@@ -119,6 +221,67 @@ class AuthorizationFoundationTests(unittest.TestCase):
         with dash.app.test_request_context("/"):
             dash.session["user_id"] = user["id"]
             self.assertTrue(dash.get_post_login_destination().endswith("/restricted"))
+
+    def test_google_and_microsoft_callbacks_create_pending_accounts(self):
+        tenant_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        provider_claims = {
+            "google": {
+                "sub": "google-callback-subject",
+                "email": "google-callback@example.org",
+                "email_verified": True,
+            },
+            "microsoft": {
+                "sub": "microsoft-callback-subject",
+                "tid": tenant_id,
+                "preferred_username": "microsoft-callback@example.org",
+                "xms_edov": True,
+            },
+        }
+
+        class FakeClient:
+            def __init__(self, claims):
+                self.claims = claims
+
+            def authorize_access_token(self, **_kwargs):
+                return {"userinfo": self.claims}
+
+        old_allow_create = dash.ALLOW_SSO_AUTO_CREATE
+        old_google = dash.ENABLE_GOOGLE_AUTH
+        old_microsoft = dash.ENABLE_MICROSOFT_AUTH
+        dash.ALLOW_SSO_AUTO_CREATE = True
+        dash.ENABLE_GOOGLE_AUTH = True
+        dash.ENABLE_MICROSOFT_AUTH = True
+        try:
+            for provider, claims in provider_claims.items():
+                with self.subTest(provider=provider), patch.object(
+                    dash.oauth,
+                    "create_client",
+                    return_value=FakeClient(claims),
+                ):
+                    response = dash.app.test_client().get(
+                        f"/auth/callback/{provider}"
+                    )
+                    self.assertEqual(response.status_code, 302)
+                    self.assertTrue(response.location.endswith("/restricted"))
+                    subject = claims["sub"]
+                    if provider == "microsoft":
+                        subject = f"{tenant_id}:{subject}"
+                    identity = self.conn.execute(
+                        """
+                        SELECT u.account_role, u.linked_student_id
+                        FROM user_auth_identities i
+                        JOIN users u ON u.id=i.user_id
+                        WHERE i.provider=? AND i.provider_subject=?
+                        """,
+                        (provider, subject),
+                    ).fetchone()
+                    self.assertIsNotNone(identity)
+                    self.assertEqual(identity["account_role"], "pending")
+                    self.assertIsNone(identity["linked_student_id"])
+        finally:
+            dash.ALLOW_SSO_AUTO_CREATE = old_allow_create
+            dash.ENABLE_GOOGLE_AUTH = old_google
+            dash.ENABLE_MICROSOFT_AUTH = old_microsoft
 
     def test_pending_account_cannot_bypass_instructional_routes(self):
         user = dash.resolve_sso_user(

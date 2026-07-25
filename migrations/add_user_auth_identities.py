@@ -1,7 +1,9 @@
 """Add provider-neutral OIDC identities and preserve legacy SSO links."""
 
+import argparse
 import sqlite3
 import time
+from pathlib import Path
 
 
 def migrate(conn: sqlite3.Connection) -> None:
@@ -88,4 +90,28 @@ def downgrade(conn: sqlite3.Connection) -> None:
 
 
 if __name__ == "__main__":
-    raise SystemExit("Import migrate(conn) from the deployment migration runner.")
+    parser = argparse.ArgumentParser(
+        description="Add provider-neutral OIDC identities to an existing database."
+    )
+    parser.add_argument(
+        "--database",
+        required=True,
+        type=Path,
+        help="Exact path of the existing RootED SQLite database to migrate.",
+    )
+    args = parser.parse_args()
+    database = args.database.resolve(strict=True)
+    with sqlite3.connect(database) as connection:
+        migrate(connection)
+        identity_table_exists = connection.execute(
+            """
+            SELECT 1 FROM sqlite_master
+            WHERE type='table' AND name='user_auth_identities'
+            """
+        ).fetchone()
+        integrity_result = connection.execute("PRAGMA integrity_check").fetchone()[0]
+        if not identity_table_exists or integrity_result != "ok":
+            raise RuntimeError("Migration verification failed.")
+    print(f"Migrated database: {database}")
+    print("Verified table: user_auth_identities")
+    print("SQLite integrity check: ok")

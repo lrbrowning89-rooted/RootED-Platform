@@ -31,6 +31,7 @@ from markupsafe import Markup
 
 from app_core.config import (
     ALLOW_SSO_AUTO_CREATE,
+    DATABASE_PATH,
     DEFAULT_PII_MODE,
     ENABLE_GOOGLE_AUTH,
     ENABLE_MICROSOFT_AUTH,
@@ -180,8 +181,7 @@ def next_launch_objective_id(current_objective_id: str | None) -> str | None:
 
 # ---------- Database setup ----------
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DB = os.environ.get("NGSS_DB", os.path.join(BASE_DIR, "data", "ngss.db"))
-print("APP_DB =", DB)
+DB = DATABASE_PATH
 
 # ---------- Flask app setup ----------
 app = Flask(__name__, static_folder='static', static_url_path='/static')
@@ -280,6 +280,58 @@ def is_sso_provider_enabled(provider: str) -> bool:
         (provider == "google" and ENABLE_GOOGLE_AUTH)
         or (provider == "microsoft" and ENABLE_MICROSOFT_AUTH)
     )
+
+
+def microsoft_multitenant_claims_options(client):
+    """Build Microsoft's required issuer validation for tenant-independent metadata."""
+
+    def validate_issuer(claims, issuer):
+        tenant_id = claims.get("tid")
+        if not tenant_id or not issuer:
+            return False
+        try:
+            canonical_tenant_id = str(uuid.UUID(str(tenant_id)))
+        except (ValueError, TypeError, AttributeError):
+            return False
+
+        metadata = client.load_server_metadata()
+        issuer_template = metadata.get("issuer")
+        if not issuer_template:
+            return False
+        expected_issuer = issuer_template.replace(
+            "{tenantid}", canonical_tenant_id
+        ).replace("{tenantId}", canonical_tenant_id)
+        if issuer != expected_issuer:
+            return False
+
+        # Microsoft tenant-independent JWKS entries scope each signing key to
+        # either a concrete issuer or the same {tenantid} template. Validate
+        # that scope in addition to Authlib's signature and kid checks.
+        kid = claims.header.get("kid")
+        if not kid:
+            return False
+        keys = client.fetch_jwk_set().get("keys", [])
+        for key in keys:
+            if key.get("kid") != kid:
+                continue
+            key_issuer = key.get("issuer")
+            if not key_issuer:
+                return False
+            expected_key_issuer = key_issuer.replace(
+                "{tenantid}", canonical_tenant_id
+            ).replace("{tenantId}", canonical_tenant_id)
+            return expected_key_issuer == issuer
+        return False
+
+    return {
+        "iss": {
+            "essential": True,
+            "validate": validate_issuer,
+        },
+        "tid": {
+            "essential": True,
+        },
+    }
 
 
 def current_user():
@@ -5034,6 +5086,10 @@ def login():
         .btn,
         .btn-sso-google,
         .btn-sso-ms{
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          gap:10px;
           width:100%;
           border:none;
           min-height:46px;
@@ -5042,6 +5098,11 @@ def login():
           cursor:pointer;
           font-size:15px;
           font-weight:750;
+        }
+        .sso-icon{
+          flex:0 0 20px;
+          width:20px;
+          height:20px;
         }
         .btn{
           background:var(--leaf);
@@ -5204,12 +5265,30 @@ def login():
                 <p class="sso-copy">Sign in with your school account:</p>
                 {% if enable_google_auth %}
                   <form method="get" action="{{ url_for('sso_login', provider='google') }}" class="sso-form">
-                    <button type="submit" class="btn-sso-google">Continue with Google</button>
+                    <button type="submit" class="btn-sso-google">
+                      <svg class="sso-icon sso-icon-google" aria-hidden="true" focusable="false"
+                           viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+                        <path fill="#4285F4" d="M17.64 9.205c0-.639-.057-1.252-.164-1.841H9v3.482h4.844a4.14 4.14 0 0 1-1.797 2.715v2.258h2.909c1.702-1.567 2.684-3.875 2.684-6.614Z"/>
+                        <path fill="#34A853" d="M9 18c2.43 0 4.468-.806 5.956-2.181l-2.909-2.258c-.806.54-1.835.859-3.047.859-2.344 0-4.328-1.585-5.037-3.714H.956v2.332A9 9 0 0 0 9 18Z"/>
+                        <path fill="#FBBC05" d="M3.963 10.706A5.42 5.42 0 0 1 3.681 9c0-.592.102-1.167.282-1.706V4.962H.956A9 9 0 0 0 0 9c0 1.452.347 2.827.956 4.038l3.007-2.332Z"/>
+                        <path fill="#EA4335" d="M9 3.58c1.322 0 2.508.454 3.441 1.346l2.581-2.581C13.464.892 11.426 0 9 0A9 9 0 0 0 .956 4.962l3.007 2.332C4.672 5.165 6.656 3.58 9 3.58Z"/>
+                      </svg>
+                      <span>Continue with Google</span>
+                    </button>
                   </form>
                 {% endif %}
                 {% if enable_microsoft_auth %}
                   <form method="get" action="{{ url_for('sso_login', provider='microsoft') }}" class="sso-form">
-                    <button type="submit" class="btn-sso-ms">Continue with Microsoft</button>
+                    <button type="submit" class="btn-sso-ms">
+                      <svg class="sso-icon sso-icon-microsoft" aria-hidden="true" focusable="false"
+                           viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
+                        <rect x="1" y="1" width="8" height="8" fill="#F25022"/>
+                        <rect x="11" y="1" width="8" height="8" fill="#7FBA00"/>
+                        <rect x="1" y="11" width="8" height="8" fill="#00A4EF"/>
+                        <rect x="11" y="11" width="8" height="8" fill="#FFB900"/>
+                      </svg>
+                      <span>Continue with Microsoft</span>
+                    </button>
                   </form>
                 {% endif %}
               {% endif %}
@@ -5285,7 +5364,17 @@ def sso_callback(provider):
         return redirect(url_for("login"))
 
     try:
-        token = client.authorize_access_token()
+        token_kwargs = {}
+        microsoft_tenant = os.environ.get("MICROSOFT_TENANT", "common").lower()
+        if provider == "microsoft" and microsoft_tenant in {
+            "common",
+            "organizations",
+            "consumers",
+        }:
+            token_kwargs["claims_options"] = microsoft_multitenant_claims_options(
+                client
+            )
+        token = client.authorize_access_token(**token_kwargs)
     except Exception as e:
         flash(f"SSO login failed: {e}")
         return redirect(url_for("login"))
@@ -5296,11 +5385,9 @@ def sso_callback(provider):
     email = None
     email_verified = False
 
-    # For OIDC providers, Authlib can parse the ID token:
-    try:
-        id_token = client.parse_id_token(token)
-    except Exception:
-        id_token = None
+    # authorize_access_token already validated the ID token with the original
+    # state-bound nonce and stores the validated claims in token["userinfo"].
+    id_token = token.get("userinfo")
 
     if id_token:
         # OIDC-compliant: subject + email come from ID token
@@ -5321,10 +5408,18 @@ def sso_callback(provider):
         return redirect(url_for("login"))
 
     conn = get_conn()
+    provider_subject = str(sub)
+    if provider == "microsoft":
+        tenant_id = (userinfo or {}).get("tid")
+        if not tenant_id:
+            flash("Microsoft did not return a valid tenant identifier.")
+            return redirect(url_for("login"))
+        provider_subject = f"{tenant_id}:{sub}"
+
     user = resolve_sso_user(
         conn,
         provider=provider,
-        subject=str(sub),
+        subject=provider_subject,
         email=email,
         email_verified=email_verified,
         display_name=(userinfo or {}).get("name"),
@@ -5381,7 +5476,7 @@ def restricted_onboarding():
         .account{background:#f1f6ef;padding:12px;border-radius:8px;margin:18px 0;color:#4b5563}
         </style></head><body><main>
         <h1>Welcome to RootED</h1>
-        <p>Your account has been created successfully, but you are not currently connected to a class. Enter the class code provided by your teacher to continue.</p>
+        <p>You’re signed in successfully, but you’re not currently connected to a class. Enter the class code provided by your teacher to continue.</p>
         <div class="account"><strong>{{ identity['display_name'] or user['username'] }}</strong><br>
         {{ identity['verified_email'] or '' }}</div>
         <form><label for="code">Class code</label><input id="code" disabled placeholder="Class-code entry coming soon">

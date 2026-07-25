@@ -11,6 +11,18 @@ from dotenv import load_dotenv
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(PROJECT_ROOT / ".env", override=False)
 
+def resolve_database_path() -> str:
+    """Return one absolute DB path; never pass an empty filename to SQLite."""
+    configured_database = os.environ.get("NGSS_DB", "").strip()
+    return str(
+        Path(configured_database).expanduser().resolve()
+        if configured_database
+        else (PROJECT_ROOT / "data" / "ngss.db").resolve()
+    )
+
+
+DATABASE_PATH = resolve_database_path()
+
 # FERPA defaults
 FERPA_ENFORCED = False  # Allow teachers to toggle between masked/full
 DEFAULT_PII_MODE = os.environ.get("PII_MODE", "full")  # "masked" | "full"
