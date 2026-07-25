@@ -294,6 +294,30 @@ class SsoAuthorizationAdministrationTests(unittest.TestCase):
                 0,
             )
 
+    def test_list_identities_is_read_only_and_excludes_inactive_or_revoked(self):
+        with sqlite3.connect(self.database) as connection:
+            connection.execute("UPDATE users SET is_active=0 WHERE id=2")
+            connection.execute(
+                "UPDATE user_auth_identities SET revoked_at=123 WHERE identity_id=3"
+            )
+            connection.commit()
+        result = self.run_command("list-identities", "--provider", "microsoft")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("active_non_revoked_microsoft_identities: 1", result.stdout)
+        self.assertIn("display_name: Owner Target", result.stdout)
+        self.assertIn("user_id: 1", result.stdout)
+        self.assertIn("account_role: pending", result.stdout)
+        self.assertIn("current_destination: /restricted", result.stdout)
+        self.assertIn("provider_subject: tenant:owner", result.stdout)
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT COUNT(*) FROM user_platform_roles"
+                ).fetchone()[0],
+                0,
+            )
+        self.assertFalse((self.database.parent / "backups").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

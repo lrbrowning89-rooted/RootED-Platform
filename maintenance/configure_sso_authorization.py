@@ -174,6 +174,48 @@ def print_audit(user: sqlite3.Row, state: dict) -> None:
         )
 
 
+def list_active_identities(
+    connection: sqlite3.Connection,
+    provider: str,
+) -> None:
+    rows = connection.execute(
+        """
+        SELECT u.id, u.username, u.account_role, u.role, u.is_active,
+               u.linked_student_id, i.provider, i.identity_id,
+               i.provider_subject, i.verified_email, i.display_name
+        FROM user_auth_identities i
+        JOIN users u ON u.id=i.user_id
+        WHERE i.provider=?
+          AND i.revoked_at IS NULL
+          AND u.is_active=1
+        ORDER BY i.identity_id
+        """,
+        (provider,),
+    ).fetchall()
+    print(f"active_non_revoked_{provider}_identities: {len(rows)}")
+    for user in rows:
+        state = authorization_state(connection, user)
+        if state["owner"]:
+            destination = "/owner"
+        elif user["account_role"] == "teacher" and state["classes"]:
+            destination = "/dashboard"
+        elif (
+            user["account_role"] == "student"
+            and user["linked_student_id"]
+            and state["memberships"]
+        ):
+            destination = "/student"
+        else:
+            destination = "/restricted"
+        print("---")
+        print(f"display_name: {user['display_name'] or '(not stored)'}")
+        print(f"user_id: {user['id']}")
+        print(f"provider: {user['provider']}")
+        print(f"account_role: {user['account_role'] or '(legacy fallback)'}")
+        print(f"current_destination: {destination}")
+        print(f"provider_subject: {user['provider_subject']}")
+
+
 def backup_database(connection: sqlite3.Connection, database: Path) -> Path:
     backup_dir = database.parent / "backups"
     backup_dir.mkdir(parents=True, exist_ok=True)
@@ -287,6 +329,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--db", required=True, type=Path)
     commands = parser.add_subparsers(dest="action", required=True)
 
+    identities = commands.add_parser("list-identities")
+    identities.add_argument(
+        "--provider",
+        required=True,
+        choices=("google", "microsoft"),
+    )
+
     def add_identity_selector(command, prefix: str = "") -> None:
         option_prefix = f"{prefix}-" if prefix else ""
         selector = command.add_mutually_exclusive_group(required=True)
@@ -328,6 +377,9 @@ def main() -> None:
     print(f"database: {database}")
     connection = connect_existing(database)
     try:
+        if args.action == "list-identities":
+            list_active_identities(connection, args.provider)
+            return
         user = identity_user(
             connection,
             args.provider,
