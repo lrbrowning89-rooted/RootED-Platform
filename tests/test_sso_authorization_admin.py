@@ -31,6 +31,7 @@ class SsoAuthorizationAdministrationTests(unittest.TestCase):
                   provider TEXT NOT NULL,
                   provider_subject TEXT NOT NULL,
                   verified_email TEXT,
+                  display_name TEXT,
                   revoked_at INTEGER
                 );
                 CREATE TABLE user_platform_roles (
@@ -66,9 +67,12 @@ class SsoAuthorizationAdministrationTests(unittest.TestCase):
                   (2, 'teacher-target', 'student', 'pending', 1, NULL),
                   (3, 'pending-user', 'student', 'pending', 1, NULL);
                 INSERT INTO user_auth_identities VALUES
-                  (1, 1, 'microsoft', 'tenant:owner', 'owner@example.org', NULL),
-                  (2, 2, 'google', 'teacher', 'teacher@example.org', NULL),
-                  (3, 3, 'google', 'pending', 'pending@example.org', NULL);
+                  (1, 1, 'microsoft', 'tenant:owner', 'owner@example.org',
+                   'Owner Target', NULL),
+                  (2, 2, 'google', 'teacher', 'teacher@example.org',
+                   'Teacher Target', NULL),
+                  (3, 3, 'google', 'pending', 'pending@example.org',
+                   'Pending Target', NULL);
                 """
             )
 
@@ -180,6 +184,114 @@ class SsoAuthorizationAdministrationTests(unittest.TestCase):
             self.assertEqual(
                 connection.execute("SELECT COUNT(*) FROM users").fetchone()[0],
                 3,
+            )
+
+    def test_exact_microsoft_subject_grants_owner_and_masks_confirmation(self):
+        arguments = (
+            "grant-owner",
+            "--provider-subject",
+            "tenant:owner",
+            "--provider",
+            "microsoft",
+            "--actor-provider-subject",
+            "tenant:owner",
+            "--actor-provider",
+            "microsoft",
+            "--reason",
+            "Immutable subject owner grant",
+        )
+        first = self.run_command(*arguments)
+        second = self.run_command(*arguments)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertIn("matched_display_name: Owner Target", first.stdout)
+        self.assertIn("matched_provider_subject: tena...wner", first.stdout)
+        self.assertNotIn("matched_provider_subject: tenant:owner", first.stdout)
+        self.assertIn("expected_post_login_destination: /owner", second.stdout)
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT COUNT(*) FROM user_platform_roles"
+                ).fetchone()[0],
+                1,
+            )
+
+    def test_provider_subject_requires_microsoft(self):
+        result = self.run_command(
+            "audit",
+            "--provider-subject",
+            "tenant:owner",
+            "--provider",
+            "google",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "--provider-subject requires --provider microsoft",
+            result.stderr,
+        )
+
+    def test_missing_and_revoked_subjects_are_rejected(self):
+        missing = self.run_command(
+            "audit",
+            "--provider-subject",
+            "tenant:missing",
+            "--provider",
+            "microsoft",
+        )
+        self.assertNotEqual(missing.returncode, 0)
+        with sqlite3.connect(self.database) as connection:
+            connection.execute(
+                "UPDATE user_auth_identities SET revoked_at=123 WHERE identity_id=1"
+            )
+            connection.commit()
+        revoked = self.run_command(
+            "audit",
+            "--provider-subject",
+            "tenant:owner",
+            "--provider",
+            "microsoft",
+        )
+        self.assertNotEqual(revoked.returncode, 0)
+        self.assertIn("No active Microsoft SSO identity", revoked.stderr)
+
+    def test_duplicate_subject_is_refused_as_ambiguous(self):
+        with sqlite3.connect(self.database) as connection:
+            connection.execute(
+                """
+                INSERT INTO user_auth_identities
+                  (identity_id, user_id, provider, provider_subject,
+                   verified_email, display_name, revoked_at)
+                VALUES (4, 2, 'microsoft', 'tenant:owner',
+                        'mutable@example.org', 'Duplicate', NULL)
+                """
+            )
+            connection.commit()
+        result = self.run_command(
+            "audit",
+            "--provider-subject",
+            "tenant:owner",
+            "--provider",
+            "microsoft",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("refusing an ambiguous change", result.stderr)
+
+    def test_subject_lookup_never_falls_back_to_mutable_email(self):
+        result = self.run_command(
+            "audit",
+            "--provider-subject",
+            "owner@example.org",
+            "--provider",
+            "microsoft",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("No active Microsoft SSO identity", result.stderr)
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT COUNT(*) FROM user_platform_roles"
+                ).fetchone()[0],
+                0,
             )
 
 

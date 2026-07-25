@@ -19,6 +19,12 @@ def masked_email(email: str) -> str:
     return f"{local[:2]}***@{domain}" if domain else "***"
 
 
+def masked_subject(subject: str) -> str:
+    if len(subject) <= 16:
+        return f"{subject[:4]}...{subject[-4:]}"
+    return f"{subject[:8]}...{subject[-8:]}"
+
+
 def connect_existing(database: Path) -> sqlite3.Connection:
     database = database.expanduser().resolve(strict=True)
     connection = sqlite3.connect(database)
@@ -45,31 +51,54 @@ def connect_existing(database: Path) -> sqlite3.Connection:
 
 def identity_user(
     connection: sqlite3.Connection,
-    email: str,
     provider: str,
+    email: str | None = None,
+    provider_subject: str | None = None,
 ) -> sqlite3.Row:
+    if bool(email) == bool(provider_subject):
+        fail("Specify exactly one identity selector.")
+    if provider_subject:
+        if provider != "microsoft":
+            fail("--provider-subject requires --provider microsoft.")
+        where = "i.provider_subject=? AND i.provider=?"
+        parameters = (provider_subject, provider)
+        missing_message = (
+            "No active Microsoft SSO identity matched the exact provider subject."
+        )
+        ambiguous_message = (
+            "Multiple active Microsoft identities matched that provider subject; "
+            "refusing an ambiguous change."
+        )
+    else:
+        where = "lower(trim(i.verified_email))=lower(trim(?)) AND i.provider=?"
+        parameters = (email, provider)
+        missing_message = (
+            f"No active verified SSO identity matched {masked_email(email or '')}. "
+            "Sign in with that provider account first."
+        )
+        ambiguous_message = (
+            "Multiple active identities matched that verified email; "
+            "refusing an ambiguous change."
+        )
     rows = connection.execute(
-        """
-        SELECT DISTINCT u.id, u.username, u.account_role, u.role, u.is_active,
-               u.linked_student_id, i.provider, i.identity_id
+        f"""
+        SELECT u.id, u.username, u.account_role, u.role, u.is_active,
+               u.linked_student_id, i.provider, i.identity_id,
+               i.provider_subject, i.verified_email, i.display_name
         FROM user_auth_identities i
         JOIN users u ON u.id=i.user_id
-        WHERE lower(trim(i.verified_email))=lower(trim(?))
-          AND i.provider=?
+        WHERE {where}
           AND i.revoked_at IS NULL
         """,
-        (email, provider),
+        parameters,
     ).fetchall()
     user_ids = {row["id"] for row in rows}
     if not rows:
-        fail(
-            f"No active verified SSO identity matched {masked_email(email)}. "
-            "Sign in with that provider account first."
-        )
+        fail(missing_message)
     if len(user_ids) != 1:
-        fail("Multiple users matched that verified email; refusing an ambiguous change.")
+        fail(ambiguous_message)
     if len(rows) != 1:
-        fail("Multiple active provider identities matched; refusing an ambiguous change.")
+        fail(ambiguous_message)
     user = rows[0]
     if int(user["is_active"]) != 1:
         fail("The matched RootED account is inactive.")
@@ -106,7 +135,7 @@ def authorization_state(connection: sqlite3.Connection, user: sqlite3.Row) -> di
     return {"owner": owner, "classes": classes, "memberships": memberships}
 
 
-def print_audit(email: str, user: sqlite3.Row, state: dict) -> None:
+def print_audit(user: sqlite3.Row, state: dict) -> None:
     if state["owner"]:
         expected_destination = "/owner"
     elif user["account_role"] == "teacher" and state["classes"]:
@@ -119,8 +148,17 @@ def print_audit(email: str, user: sqlite3.Row, state: dict) -> None:
         expected_destination = "/student"
     else:
         expected_destination = "/restricted"
-    print(f"email: {masked_email(email)}")
+    print(
+        "verified_email: "
+        + (
+            masked_email(user["verified_email"])
+            if user["verified_email"]
+            else "(not stored)"
+        )
+    )
     print(f"matched_identity_provider: {user['provider']}")
+    print(f"matched_display_name: {user['display_name'] or '(not stored)'}")
+    print(f"matched_provider_subject: {masked_subject(user['provider_subject'])}")
     print(f"user_id: {user['id']}")
     print(f"is_active: {int(user['is_active'])}")
     print(f"account_role: {user['account_role'] or '(legacy fallback)'}")
@@ -242,21 +280,33 @@ def configure_teacher(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Audit or configure RootED authority by active verified SSO email. "
+            "Audit or configure RootED authority by active verified SSO identity. "
             "This command never creates users or identities."
         )
     )
     parser.add_argument("--db", required=True, type=Path)
     commands = parser.add_subparsers(dest="action", required=True)
 
+    def add_identity_selector(command, prefix: str = "") -> None:
+        option_prefix = f"{prefix}-" if prefix else ""
+        selector = command.add_mutually_exclusive_group(required=True)
+        selector.add_argument(
+            f"--{option_prefix}email",
+            dest=f"{prefix}_email" if prefix else "email",
+        )
+        selector.add_argument(
+            f"--{option_prefix}provider-subject",
+            dest=f"{prefix}_provider_subject" if prefix else "provider_subject",
+        )
+
     audit = commands.add_parser("audit")
-    audit.add_argument("--email", required=True)
+    add_identity_selector(audit)
     audit.add_argument("--provider", required=True, choices=("google", "microsoft"))
 
     owner = commands.add_parser("grant-owner")
-    owner.add_argument("--email", required=True)
+    add_identity_selector(owner)
     owner.add_argument("--provider", required=True, choices=("google", "microsoft"))
-    owner.add_argument("--actor-email", required=True)
+    add_identity_selector(owner, "actor")
     owner.add_argument(
         "--actor-provider",
         required=True,
@@ -265,7 +315,7 @@ def parse_args() -> argparse.Namespace:
     owner.add_argument("--reason", required=True)
 
     teacher = commands.add_parser("configure-teacher")
-    teacher.add_argument("--email", required=True)
+    add_identity_selector(teacher)
     teacher.add_argument("--provider", required=True, choices=("google", "microsoft"))
     teacher.add_argument("--class-name", required=True)
     teacher.add_argument("--class-period", default="Setup")
@@ -278,16 +328,22 @@ def main() -> None:
     print(f"database: {database}")
     connection = connect_existing(database)
     try:
-        user = identity_user(connection, args.email, args.provider)
+        user = identity_user(
+            connection,
+            args.provider,
+            email=getattr(args, "email", None),
+            provider_subject=getattr(args, "provider_subject", None),
+        )
         before = authorization_state(connection, user)
-        print_audit(args.email, user, before)
+        print_audit(user, before)
         if args.action == "audit":
             return
         if args.action == "grant-owner":
             actor = identity_user(
                 connection,
-                args.actor_email,
                 args.actor_provider,
+                email=args.actor_email,
+                provider_subject=args.actor_provider_subject,
             )
             grant_owner(connection, database, user, actor, args.reason.strip())
         else:
@@ -298,8 +354,13 @@ def main() -> None:
                 args.class_name.strip(),
                 args.class_period.strip(),
             )
-        after_user = identity_user(connection, args.email, args.provider)
-        print_audit(args.email, after_user, authorization_state(connection, after_user))
+        after_user = identity_user(
+            connection,
+            args.provider,
+            email=getattr(args, "email", None),
+            provider_subject=getattr(args, "provider_subject", None),
+        )
+        print_audit(after_user, authorization_state(connection, after_user))
     finally:
         connection.close()
 
