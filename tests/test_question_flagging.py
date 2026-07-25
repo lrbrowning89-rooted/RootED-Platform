@@ -49,7 +49,9 @@ class QuestionFlaggingTests(unittest.TestCase):
 
     def clear_tables(self):
         for table in [
+            "access_authorization_audit_log",
             "question_flags",
+            "user_instructional_authorizations",
             "student_objective_state",
             "progress_state",
             "responses",
@@ -123,6 +125,14 @@ class QuestionFlaggingTests(unittest.TestCase):
                 ("C1", 1, "Period 1", "1", "AAA111", now, now),
                 ("C2", 2, "Period 2", "2", "BBB222", now, now),
             ],
+        )
+        self.conn.executemany(
+            """
+            INSERT INTO user_instructional_authorizations
+              (user_id, instructional_role, granted_at, grant_note)
+            VALUES (?, 'teacher', ?, 'Test teacher authorization')
+            """,
+            [(1, now), (2, now)],
         )
         self.conn.executemany(
             "INSERT INTO class_enrollments (class_id, student_id, enrolled_at, enrolled_by) VALUES (?, ?, ?, 'self')",

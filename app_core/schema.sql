@@ -204,6 +204,53 @@ CREATE INDEX IF NOT EXISTS idx_user_platform_roles_history
   ON user_platform_roles(platform_role, revoked_at, user_id, granted_at);
 
 -- -------------------------
+-- Instructional authorization
+-- -------------------------
+CREATE TABLE IF NOT EXISTS user_instructional_authorizations (
+  authorization_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id            INTEGER NOT NULL,
+  instructional_role TEXT NOT NULL CHECK(instructional_role IN ('teacher')),
+  granted_at         INTEGER NOT NULL,
+  granted_by         INTEGER,
+  revoked_at         INTEGER,
+  revoked_by         INTEGER,
+  grant_note         TEXT,
+  revoke_note        TEXT,
+  FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE RESTRICT,
+  FOREIGN KEY(granted_by) REFERENCES users(id) ON DELETE SET NULL,
+  FOREIGN KEY(revoked_by) REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_user_instructional_authorizations_active
+  ON user_instructional_authorizations(user_id, instructional_role)
+  WHERE revoked_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_user_instructional_authorizations_history
+  ON user_instructional_authorizations(
+    instructional_role, revoked_at, user_id, granted_at
+  );
+
+CREATE TABLE IF NOT EXISTS access_authorization_audit_log (
+  audit_id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  actor_user_id     INTEGER NOT NULL,
+  target_user_id    INTEGER NOT NULL,
+  action            TEXT NOT NULL CHECK(action IN ('teacher_authorized')),
+  authorization_id  INTEGER,
+  outcome           TEXT NOT NULL CHECK(outcome IN ('granted', 'already_granted')),
+  created_at        INTEGER NOT NULL,
+  request_ip        TEXT,
+  user_agent        TEXT,
+  FOREIGN KEY(actor_user_id) REFERENCES users(id) ON DELETE RESTRICT,
+  FOREIGN KEY(target_user_id) REFERENCES users(id) ON DELETE RESTRICT,
+  FOREIGN KEY(authorization_id)
+    REFERENCES user_instructional_authorizations(authorization_id)
+    ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS idx_access_authorization_audit_target
+  ON access_authorization_audit_log(target_user_id, created_at, audit_id);
+
+-- -------------------------
 -- Teacher-authored maps & graph
 -- -------------------------
 CREATE TABLE IF NOT EXISTS lists (

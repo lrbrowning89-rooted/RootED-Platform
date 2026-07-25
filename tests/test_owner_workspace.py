@@ -49,8 +49,10 @@ class OwnerWorkspaceTests(unittest.TestCase):
 
     def clear_tables(self):
         for table in [
+            "access_authorization_audit_log",
             "question_flag_events",
             "question_flags",
+            "user_instructional_authorizations",
             "user_platform_roles",
             "student_objective_state",
             "progress_state",
@@ -118,6 +120,14 @@ class OwnerWorkspaceTests(unittest.TestCase):
             VALUES (?, 'owner', ?, 1, 'Test owner')
             """,
             [(1, now), (4, now)],
+        )
+        self.conn.executemany(
+            """
+            INSERT INTO user_instructional_authorizations
+              (user_id, instructional_role, granted_at, granted_by, grant_note)
+            VALUES (?, 'teacher', ?, 1, 'Test teacher')
+            """,
+            [(1, now), (2, now)],
         )
         self.conn.execute(
             """
@@ -249,7 +259,7 @@ class OwnerWorkspaceTests(unittest.TestCase):
         self.assertIn(b"RootED Owner Workspace", response.data)
         self.assertIn(b"Escalated Question Flags", response.data)
         self.assertIn(b"owner_teacher", response.data)
-        self.assertIn(b"Teacher Dashboard", response.data)
+        self.assertIn(b"Teacher Workspace", response.data)
         self.assertIn(b">2</span>", response.data)
         self.assertNotIn(b"Subscriptions", response.data)
         self.assertNotIn(b"Organizations", response.data)

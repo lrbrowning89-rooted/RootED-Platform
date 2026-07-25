@@ -21,6 +21,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 import traceback
 import secrets
+import hmac
 from functools import wraps
 from urllib.parse import urlsplit
 
@@ -394,9 +395,34 @@ def has_platform_role(platform_role: str, user=None) -> bool:
     return row is not None
 
 
-def is_teacher(user=None) -> bool:
+def has_instructional_authorization(
+    instructional_role: str, user=None
+) -> bool:
+    if instructional_role != "teacher":
+        return False
     user = user or current_user()
-    return bool(user and account_role(user) == "teacher")
+    if not user:
+        return False
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            """
+            SELECT 1
+            FROM user_instructional_authorizations
+            WHERE user_id = ?
+              AND instructional_role = ?
+              AND revoked_at IS NULL
+            LIMIT 1
+            """,
+            (user["id"], instructional_role),
+        ).fetchone()
+    finally:
+        conn.close()
+    return row is not None
+
+
+def is_teacher(user=None) -> bool:
+    return has_instructional_authorization("teacher", user)
 
 
 def is_student(user=None) -> bool:
@@ -410,16 +436,15 @@ def is_owner(user=None) -> bool:
 
 def can_access_teacher_tools(user=None) -> bool:
     user = user or current_user()
-    if not is_teacher(user):
-        return False
-    conn = get_conn()
-    try:
-        return conn.execute(
-            "SELECT 1 FROM class_sections WHERE teacher_user_id=? AND is_active=1 LIMIT 1",
-            (user["id"],),
-        ).fetchone() is not None
-    finally:
-        conn.close()
+    return is_teacher(user)
+
+
+def effective_session_role(user=None) -> str | None:
+    """Compatibility value for existing views; never an authorization source."""
+    user = user or current_user()
+    if is_teacher(user):
+        return "teacher"
+    return account_role(user)
 
 
 def can_access_student_instruction(user=None) -> bool:
@@ -445,7 +470,7 @@ def get_post_login_destination(user=None) -> str:
     if is_owner(user):
         return url_for("owner_home")
     if can_access_teacher_tools(user):
-        return url_for("index")
+        return url_for("teacher_home")
     if can_access_student_instruction(user):
         return url_for("student_view")
     return url_for("restricted_onboarding")
@@ -471,7 +496,7 @@ def login_required(f):
             session.clear()
             flash("Please log in first.")
             return redirect(url_for("login"))
-        session["role"] = account_role(user)
+        session["role"] = effective_session_role(user)
         session["username"] = user["username"]
         return f(*args, **kwargs)
 
@@ -486,7 +511,7 @@ def teacher_required(f):
             session.clear()
             flash("Please log in as a teacher.")
             return redirect(url_for("login"))
-        session["role"] = account_role(user)
+        session["role"] = effective_session_role(user)
         session["username"] = user["username"]
         if not can_access_teacher_tools(user):
             flash("Teacher access only.")
@@ -504,7 +529,7 @@ def student_required(f):
             session.clear()
             flash("Please log in as a student.")
             return redirect(url_for("login"))
-        session["role"] = account_role(user)
+        session["role"] = effective_session_role(user)
         session["username"] = user["username"]
         if not can_access_student_instruction(user):
             flash("Student access only.")
@@ -523,7 +548,7 @@ def instruction_required(f):
             session.clear()
             flash("Please log in first.")
             return redirect(url_for("login"))
-        session["role"] = account_role(user)
+        session["role"] = effective_session_role(user)
         session["username"] = user["username"]
         if not (
             can_access_teacher_tools(user)
@@ -544,7 +569,7 @@ def owner_required(f):
             session.clear()
             flash("Please log in first.")
             return redirect(url_for("login"))
-        session["role"] = account_role(user)
+        session["role"] = effective_session_role(user)
         session["username"] = user["username"]
         if not is_owner(user):
             abort(403)
@@ -1125,6 +1150,86 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_user_platform_roles_history
         ON user_platform_roles(platform_role, revoked_at, user_id, granted_at)
         """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_instructional_authorizations (
+          authorization_id  INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id           INTEGER NOT NULL,
+          instructional_role TEXT NOT NULL CHECK(instructional_role IN ('teacher')),
+          granted_at        INTEGER NOT NULL,
+          granted_by        INTEGER,
+          revoked_at        INTEGER,
+          revoked_by        INTEGER,
+          grant_note        TEXT,
+          revoke_note       TEXT,
+          FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE RESTRICT,
+          FOREIGN KEY(granted_by) REFERENCES users(id) ON DELETE SET NULL,
+          FOREIGN KEY(revoked_by) REFERENCES users(id) ON DELETE SET NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_user_instructional_authorizations_active
+        ON user_instructional_authorizations(user_id, instructional_role)
+        WHERE revoked_at IS NULL
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_user_instructional_authorizations_history
+        ON user_instructional_authorizations(
+          instructional_role, revoked_at, user_id, granted_at
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS access_authorization_audit_log (
+          audit_id          INTEGER PRIMARY KEY AUTOINCREMENT,
+          actor_user_id     INTEGER NOT NULL,
+          target_user_id    INTEGER NOT NULL,
+          action            TEXT NOT NULL
+                            CHECK(action IN ('teacher_authorized')),
+          authorization_id  INTEGER,
+          outcome           TEXT NOT NULL
+                            CHECK(outcome IN ('granted', 'already_granted')),
+          created_at        INTEGER NOT NULL,
+          request_ip        TEXT,
+          user_agent        TEXT,
+          FOREIGN KEY(actor_user_id) REFERENCES users(id) ON DELETE RESTRICT,
+          FOREIGN KEY(target_user_id) REFERENCES users(id) ON DELETE RESTRICT,
+          FOREIGN KEY(authorization_id)
+            REFERENCES user_instructional_authorizations(authorization_id)
+            ON DELETE RESTRICT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_access_authorization_audit_target
+        ON access_authorization_audit_log(target_user_id, created_at, audit_id)
+        """
+    )
+    # Preserve existing teacher access while moving the source of truth away
+    # from the legacy role fields. Pending accounts are authorized explicitly.
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO user_instructional_authorizations
+          (user_id, instructional_role, granted_at, grant_note)
+        SELECT id, 'teacher', COALESCE(last_login_ts, ?),
+               'Backfilled from existing teacher authorization'
+        FROM users
+        WHERE COALESCE(account_role, role) = 'teacher'
+          AND NOT EXISTS (
+            SELECT 1
+            FROM user_instructional_authorizations existing
+            WHERE existing.user_id = users.id
+              AND existing.instructional_role = 'teacher'
+          )
+        """,
+        (int(time.time()),),
     )
 
     # ---------- Diagnostic Arena Basic Tables ----------
@@ -4174,6 +4279,139 @@ def escalate_question_flag(flag_id):
 
 
 # ---------- Owner workspace ----------
+def owner_csrf_token() -> str:
+    token = session.get("owner_csrf_token")
+    if not token:
+        token = secrets.token_urlsafe(32)
+        session["owner_csrf_token"] = token
+    return token
+
+
+def require_owner_csrf() -> None:
+    supplied = request.form.get("csrf_token", "")
+    expected = session.get("owner_csrf_token", "")
+    if not supplied or not expected or not hmac.compare_digest(supplied, expected):
+        abort(400, description="Invalid or expired form token.")
+
+
+def get_people_access_rows(conn: sqlite3.Connection):
+    rows = conn.execute(
+        """
+        SELECT
+          u.id AS user_id,
+          COALESCE(
+            (
+              SELECT i.display_name
+              FROM user_auth_identities i
+              WHERE i.user_id = u.id AND i.revoked_at IS NULL
+                    AND i.display_name IS NOT NULL
+              ORDER BY i.last_login_at DESC, i.identity_id DESC
+              LIMIT 1
+            ),
+            u.username
+          ) AS display_name,
+          COALESCE(
+            (
+              SELECT GROUP_CONCAT(provider, ', ')
+              FROM (
+                SELECT DISTINCT i.provider AS provider
+                FROM user_auth_identities i
+                WHERE i.user_id = u.id AND i.revoked_at IS NULL
+                ORDER BY i.provider
+              )
+            ),
+            CASE WHEN u.sso_provider IS NULL THEN 'local' ELSE u.sso_provider END
+          ) AS authentication_provider,
+          COALESCE(
+            (
+              SELECT i.verified_email
+              FROM user_auth_identities i
+              WHERE i.user_id = u.id AND i.revoked_at IS NULL
+                    AND i.verified_email IS NOT NULL
+              ORDER BY i.last_login_at DESC, i.identity_id DESC
+              LIMIT 1
+            ),
+            u.sso_email
+          ) AS verified_email,
+          CASE
+            WHEN u.account_role = 'pending'
+             AND NOT EXISTS (
+               SELECT 1 FROM user_platform_roles p
+               WHERE p.user_id=u.id AND p.platform_role='owner'
+                 AND p.revoked_at IS NULL
+             )
+             AND NOT EXISTS (
+               SELECT 1 FROM user_instructional_authorizations a
+               WHERE a.user_id=u.id AND a.instructional_role='teacher'
+                 AND a.revoked_at IS NULL
+             )
+             AND NOT EXISTS (
+               SELECT 1
+               FROM class_enrollments ce
+               JOIN class_sections cs ON cs.class_id=ce.class_id
+               WHERE ce.student_id=u.linked_student_id AND cs.is_active=1
+             )
+            THEN 'Pending'
+            ELSE 'Active'
+          END AS account_status,
+          CASE WHEN EXISTS (
+            SELECT 1 FROM user_platform_roles p
+            WHERE p.user_id = u.id
+              AND p.platform_role = 'owner'
+              AND p.revoked_at IS NULL
+          ) THEN 'Owner' ELSE 'None' END AS platform_authority,
+          CASE WHEN EXISTS (
+            SELECT 1 FROM user_instructional_authorizations a
+            WHERE a.user_id = u.id
+              AND a.instructional_role = 'teacher'
+              AND a.revoked_at IS NULL
+          ) THEN 'Teacher' ELSE 'None' END AS instructional_authorization,
+          (
+            SELECT COUNT(*) FROM class_sections cs
+            WHERE cs.teacher_user_id = u.id AND cs.is_active = 1
+          ) AS active_teacher_class_count,
+          (
+            SELECT COUNT(*)
+            FROM class_enrollments ce
+            JOIN class_sections cs ON cs.class_id = ce.class_id
+            WHERE ce.student_id = u.linked_student_id AND cs.is_active = 1
+          ) AS active_student_membership_count,
+          CASE
+            WHEN u.last_login_ts IS NULL THEN (
+              SELECT MAX(i.last_login_at) FROM user_auth_identities i
+              WHERE i.user_id=u.id AND i.revoked_at IS NULL
+            )
+            WHEN (
+              SELECT MAX(i.last_login_at) FROM user_auth_identities i
+              WHERE i.user_id=u.id AND i.revoked_at IS NULL
+            ) > u.last_login_ts THEN (
+              SELECT MAX(i.last_login_at) FROM user_auth_identities i
+              WHERE i.user_id=u.id AND i.revoked_at IS NULL
+            )
+            ELSE u.last_login_ts
+          END AS last_sign_in
+        FROM users u
+        WHERE u.is_active = 1
+        GROUP BY u.id
+        ORDER BY display_name COLLATE NOCASE, u.id
+        """
+    ).fetchall()
+
+    people = []
+    for row in rows:
+        person = dict(row)
+        if person["platform_authority"] == "Owner":
+            person["expected_destination"] = "/owner"
+        elif person["instructional_authorization"] == "Teacher":
+            person["expected_destination"] = "/teacher"
+        elif person["active_student_membership_count"]:
+            person["expected_destination"] = "/student"
+        else:
+            person["expected_destination"] = "/restricted"
+        people.append(person)
+    return people
+
+
 @app.get("/owner")
 @owner_required
 def owner_home():
@@ -4204,8 +4442,9 @@ def owner_home():
     </div>
     <div class="actions">
       {% if is_teacher_user %}
-        <a class="btn btn-secondary" href="{{ url_for('index') }}">Teacher Dashboard</a>
+        <a class="btn btn-secondary" href="{{ url_for('teacher_home') }}">Teacher Workspace</a>
       {% endif %}
+      <a class="btn btn-secondary" href="{{ url_for('owner_people_access') }}">People &amp; Access</a>
       <a class="btn btn-secondary" href="{{ url_for('logout') }}">Sign Out</a>
     </div>
   </header>
@@ -4225,7 +4464,7 @@ def owner_home():
     <h2>Account</h2>
     <dl class="account">
       <dt>Username</dt><dd>{{ user['username'] }}</dd>
-      <dt>Classroom role</dt><dd>{{ user['role'] }}</dd>
+      <dt>Instructional authorization</dt><dd>{{ 'Teacher' if is_teacher_user else 'None' }}</dd>
       <dt>Platform authority</dt><dd>Owner</dd>
     </dl>
   </section>
@@ -4237,6 +4476,184 @@ def owner_home():
         user=user,
         is_teacher_user=is_teacher(user),
     )
+
+
+@app.get("/owner/people-access")
+@owner_required
+def owner_people_access():
+    conn = get_conn()
+    try:
+        people = get_people_access_rows(conn)
+    finally:
+        conn.close()
+    return render_template_string(
+        """
+<!doctype html>
+<title>RootED People &amp; Access</title>
+<style>
+body{font-family:Arial,Helvetica,sans-serif;margin:0;background:#fbfaf4;color:#1f2937}
+.page{max-width:1440px;margin:auto;padding:24px}.top{display:flex;justify-content:space-between;gap:16px;align-items:center}
+h1{color:#234b35;margin-bottom:6px}.muted{color:#647067;font-size:13px}
+.btn{display:inline-block;background:#2f6f4e;color:#fff;text-decoration:none;border:0;padding:8px 12px;border-radius:8px;font-weight:700}
+.btn-secondary{background:#eef4ec;color:#2f5138;border:1px solid #c8d9c4}
+.table-wrap{overflow:auto;margin-top:18px;background:#fff;border:1px solid #e2decf;border-radius:12px}
+table{border-collapse:collapse;width:100%;font-size:13px}th,td{padding:11px 12px;text-align:left;border-bottom:1px solid #ebe8de;white-space:nowrap}
+th{background:#eef4ec;color:#234b35}.name{font-weight:700}.empty{color:#7a837b}
+</style>
+<main class="page">
+  <div class="top">
+    <div><h1>People &amp; Access</h1><p class="muted">Protected account-administration information. Owner access only.</p></div>
+    <a class="btn btn-secondary" href="{{ url_for('owner_home') }}">Owner Workspace</a>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>Display name</th><th>User ID</th><th>Authentication provider</th>
+        <th>Verified email</th><th>Account status</th><th>Platform authority</th>
+        <th>Instructional authorization</th><th>Active teacher classes</th>
+        <th>Active student memberships</th><th>Expected destination</th>
+        <th>Last sign-in</th><th>Action</th>
+      </tr></thead>
+      <tbody>
+      {% for person in people %}
+        <tr>
+          <td class="name">{{ person.display_name }}</td>
+          <td>{{ person.user_id }}</td><td>{{ person.authentication_provider }}</td>
+          <td>{{ person.verified_email or '—' }}</td><td>{{ person.account_status }}</td>
+          <td>{{ person.platform_authority }}</td><td>{{ person.instructional_authorization }}</td>
+          <td>{{ person.active_teacher_class_count }}</td>
+          <td>{{ person.active_student_membership_count }}</td>
+          <td>{{ person.expected_destination }}</td>
+          <td>{{ format_ts(person.last_sign_in) or 'Not recorded' }}</td>
+          <td>
+            {% if person.instructional_authorization == 'Teacher' %}
+              <span class="empty">Authorized</span>
+            {% else %}
+              <a class="btn" href="{{ url_for('owner_confirm_teacher_authorization', user_id=person.user_id) }}">Authorize as Teacher</a>
+            {% endif %}
+          </td>
+        </tr>
+      {% else %}<tr><td colspan="12" class="empty">No active or pending accounts.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</main>
+        """,
+        people=people,
+        format_ts=format_ts,
+    )
+
+
+@app.get("/owner/people-access/<int:user_id>/authorize-teacher")
+@owner_required
+def owner_confirm_teacher_authorization(user_id):
+    conn = get_conn()
+    try:
+        target = conn.execute(
+            """
+            SELECT u.id,
+                   COALESCE(
+                     (SELECT i.display_name FROM user_auth_identities i
+                      WHERE i.user_id=u.id AND i.revoked_at IS NULL
+                      ORDER BY i.last_login_at DESC, i.identity_id DESC LIMIT 1),
+                     u.username
+                   ) AS display_name,
+                   EXISTS(
+                     SELECT 1 FROM user_instructional_authorizations a
+                     WHERE a.user_id=u.id AND a.instructional_role='teacher'
+                       AND a.revoked_at IS NULL
+                   ) AS already_teacher
+            FROM users u WHERE u.id=? AND u.is_active=1
+            """,
+            (user_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if not target:
+        abort(404)
+    return render_template_string(
+        """
+<!doctype html><title>Confirm Teacher Authorization</title>
+<style>body{font-family:Arial;margin:40px;background:#fbfaf4;color:#1f2937}.card{max-width:620px;margin:auto;background:#fff;padding:24px;border:1px solid #e2decf;border-radius:12px}.actions{display:flex;gap:10px;margin-top:20px}.btn{background:#2f6f4e;color:#fff;border:0;padding:10px 14px;border-radius:8px;text-decoration:none;font-weight:700;cursor:pointer}.secondary{background:#eef4ec;color:#2f5138;border:1px solid #c8d9c4}</style>
+<main class="card"><h1>Confirm Teacher Authorization</h1>
+  <p>You are authorizing <strong>{{ target['display_name'] }}</strong> (User ID {{ target['id'] }}) to access the Teacher Workspace and create classes.</p>
+  <p>This will not change identity information, Owner authority, class membership, or subscription entitlement.</p>
+  {% if target['already_teacher'] %}<p>This account is already authorized. Confirming again is safe and will not create a duplicate grant.</p>{% endif %}
+  <div class="actions">
+    <form method="post" action="{{ url_for('owner_authorize_teacher', user_id=target['id']) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="btn" type="submit">Confirm Authorization</button>
+    </form>
+    <a class="btn secondary" href="{{ url_for('owner_people_access') }}">Cancel</a>
+  </div>
+</main>
+        """,
+        target=target,
+        csrf_token=owner_csrf_token(),
+    )
+
+
+@app.post("/owner/people-access/<int:user_id>/authorize-teacher")
+@owner_required
+def owner_authorize_teacher(user_id):
+    require_owner_csrf()
+    actor_user_id = current_user()["id"]
+    conn = get_conn()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        target = conn.execute(
+            "SELECT id FROM users WHERE id=? AND is_active=1",
+            (user_id,),
+        ).fetchone()
+        if not target:
+            conn.rollback()
+            abort(404)
+        authorization = conn.execute(
+            """
+            SELECT authorization_id
+            FROM user_instructional_authorizations
+            WHERE user_id=? AND instructional_role='teacher' AND revoked_at IS NULL
+            """,
+            (user_id,),
+        ).fetchone()
+        outcome = "already_granted"
+        if not authorization:
+            cursor = conn.execute(
+                """
+                INSERT INTO user_instructional_authorizations
+                  (user_id, instructional_role, granted_at, granted_by, grant_note)
+                VALUES (?, 'teacher', ?, ?, 'Authorized in Owner People & Access')
+                """,
+                (user_id, int(time.time()), actor_user_id),
+            )
+            authorization_id = cursor.lastrowid
+            outcome = "granted"
+        else:
+            authorization_id = authorization["authorization_id"]
+        conn.execute(
+            """
+            INSERT INTO access_authorization_audit_log
+              (actor_user_id, target_user_id, action, authorization_id,
+               outcome, created_at, request_ip, user_agent)
+            VALUES (?, ?, 'teacher_authorized', ?, ?, ?, ?, ?)
+            """,
+            (
+                actor_user_id, user_id, authorization_id, outcome, int(time.time()),
+                request.remote_addr, request.user_agent.string[:500],
+            ),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    flash(
+        "Teacher authorization granted."
+        if outcome == "granted"
+        else "This account was already authorized as a teacher."
+    )
+    return redirect(url_for("owner_people_access"))
 
 
 @app.get("/owner/question-flags")
@@ -4830,7 +5247,7 @@ def login():
 
             session["user_id"] = user["id"]
             session["username"] = user["username"]
-            session["role"] = account_role(user)
+            session["role"] = effective_session_role(user)
             flash(f"Welcome, {user['username']}!")
             session["current_mode"] = "home"
             session["locked_payload"] = None
@@ -5434,7 +5851,7 @@ def sso_callback(provider):
     # Write login info to session (same as local login)
     session["user_id"] = user["id"]
     session["username"] = user["username"]
-    session["role"] = account_role(user)
+    session["role"] = effective_session_role(user)
 
     flash(f"Welcome, {user['username']} (SSO via {provider})!")
 
@@ -6067,6 +6484,12 @@ def public_landing():
 
 
 # ---------- Teacher dashboard ----------
+@app.get("/teacher")
+@require_teacher
+def teacher_home():
+    return redirect(url_for("index"))
+
+
 @app.route("/dashboard", methods=["GET", "POST"])
 @require_teacher
 def index():

@@ -68,10 +68,17 @@ organizational and personal Microsoft accounts.
 Authentication creates or resolves an account with `account_role=pending`; it
 grants no teacher, student, owner, class, or subscription authority. The legacy
 `users.role=student` value remains only as a temporary database compatibility
-field and is not used to authorize pending accounts. Owner access requires an active
-`user_platform_roles` grant. Teacher access requires the teacher role plus an
-active class section. Student instruction requires a linked roster student plus
+field and is not used to authorize pending accounts. Owner access requires an
+active `user_platform_roles` grant. Teacher access requires an active
+`user_instructional_authorizations` Teacher grant; a class is not required
+because an authorized teacher must be able to enter the workspace and create
+their first class. Student instruction requires a linked roster student plus
 enrollment in an active class. Everyone else is sent to `/restricted`.
+
+Post-login routing keeps these authorities independent: Owner accounts land at
+`/owner` (including Owner + Teacher accounts), Teacher-only accounts land at
+`/teacher`, enrolled Students land at `/student`, and accounts without an
+applicable authorization or membership land at `/restricted`.
 
 ## Migration and rollback
 
@@ -149,8 +156,8 @@ slash behavior used by that environment.
 - [ ] A pending account cannot open `/dashboard` directly.
 - [ ] A pending account cannot open `/student` directly.
 - [ ] A pending account cannot open teacher, diagnostic, or instructional routes.
-- [ ] A teacher with an active class can open the teacher dashboard.
-- [ ] A teacher without an active class is redirected to restricted onboarding.
+- [ ] An account with an active Teacher authorization can open `/teacher`.
+- [ ] An authorized teacher without a class can create their first class.
 - [ ] A student with active class enrollment can open the student experience.
 - [ ] A student without active enrollment is redirected to restricted onboarding.
 - [ ] An owner with an active owner grant can open `/owner` without class membership.

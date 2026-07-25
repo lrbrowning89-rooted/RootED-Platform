@@ -32,6 +32,8 @@ class AuthorizationFoundationTests(unittest.TestCase):
         self.conn = sqlite3.connect(TEST_DB)
         self.conn.row_factory = sqlite3.Row
         dash.ensure_schema(self.conn)
+        self.conn.execute("DELETE FROM access_authorization_audit_log")
+        self.conn.execute("DELETE FROM user_instructional_authorizations")
         self.conn.execute("DELETE FROM user_platform_roles")
         self.conn.execute("DELETE FROM users")
         self.conn.executemany(
@@ -46,6 +48,14 @@ class AuthorizationFoundationTests(unittest.TestCase):
                 (3, "disabled_teacher", "teacher", 0),
                 (4, "operator", "teacher", 1),
             ],
+        )
+        self.conn.executemany(
+            """
+            INSERT INTO user_instructional_authorizations
+              (user_id, instructional_role, granted_at, grant_note)
+            VALUES (?, 'teacher', 123456, 'Test teacher authorization')
+            """,
+            [(1,), (3,), (4,)],
         )
         self.conn.commit()
         dash.app.config.update(TESTING=True)
@@ -301,7 +311,10 @@ class AuthorizationFoundationTests(unittest.TestCase):
         question_post = client.post("/question_flags", data={"question_id": "Q1"})
         self.assertEqual(question_post.status_code, 302)
         self.assertTrue(question_post.location.endswith("/restricted"))
-        for nonexistent_path in ("/teacher", "/questions", "/adaptive"):
+        teacher_home = client.get("/teacher")
+        self.assertEqual(teacher_home.status_code, 302)
+        self.assertTrue(teacher_home.location.endswith("/restricted"))
+        for nonexistent_path in ("/questions", "/adaptive"):
             with self.subTest(path=nonexistent_path):
                 self.assertEqual(client.get(nonexistent_path).status_code, 404)
 
