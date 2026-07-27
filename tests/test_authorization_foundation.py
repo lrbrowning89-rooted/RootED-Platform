@@ -198,7 +198,7 @@ class AuthorizationFoundationTests(unittest.TestCase):
             dash.ENABLE_GOOGLE_AUTH = old_google
             dash.ENABLE_MICROSOFT_AUTH = old_microsoft
 
-    def test_restricted_onboarding_uses_returning_account_wording(self):
+    def test_restricted_onboarding_uses_student_enrollment_wording(self):
         client = dash.app.test_client()
         with client.session_transaction() as sess:
             sess["user_id"] = 1
@@ -208,11 +208,11 @@ class AuthorizationFoundationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         page = response.data.decode("utf-8")
         self.assertIn(
-            "You’re signed in successfully, but you’re not currently connected "
-            "to a class.",
+            "Your account is ready. Enter the class code provided by your "
+            "teacher to begin learning.",
             page,
         )
-        self.assertNotIn("Your account has been created successfully", page)
+        self.assertNotIn("Class-code entry coming soon", page)
 
     def test_post_login_redirect_rejects_external_destinations(self):
         self.assertEqual(dash.safe_local_redirect("/student?from=login"), "/student?from=login")

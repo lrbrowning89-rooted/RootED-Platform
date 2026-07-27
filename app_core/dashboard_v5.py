@@ -5217,6 +5217,161 @@ def require_owner_csrf() -> None:
         abort(400, description="Invalid or expired form token.")
 
 
+def student_onboarding_csrf_token() -> str:
+    token = session.get("student_onboarding_csrf_token")
+    if not token:
+        token = secrets.token_urlsafe(32)
+        session["student_onboarding_csrf_token"] = token
+    return token
+
+
+def require_student_onboarding_csrf() -> None:
+    supplied = request.form.get("csrf_token", "")
+    expected = session.get("student_onboarding_csrf_token", "")
+    if not supplied or not expected or not hmac.compare_digest(supplied, expected):
+        abort(400, description="Invalid or expired form token.")
+
+
+def _activate_student_account_for_membership(
+    conn: sqlite3.Connection,
+    user_id: int,
+    student_id: str,
+) -> None:
+    conn.execute(
+        """
+        UPDATE users
+        SET account_role='student', linked_student_id=?
+        WHERE id=? AND is_active=1
+        """,
+        (student_id, user_id),
+    )
+
+
+def enroll_authenticated_user_by_code(
+    conn: sqlite3.Connection,
+    user,
+    submitted_code: str | None,
+) -> tuple[str, str]:
+    """Join one authenticated pending/student account to one active class."""
+    code = normalize_join_code(submitted_code)
+    if not code:
+        return "error", "Enter a class code to continue."
+    if len(code) != 6 or any(character not in CLASS_CODE_ALPHABET for character in code):
+        return "error", "Enter a valid class code."
+
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        class_row = conn.execute(
+            """
+            SELECT class_id, name, class_period, is_active
+            FROM class_sections
+            WHERE join_code=?
+            """,
+            (code,),
+        ).fetchone()
+        if not class_row:
+            conn.rollback()
+            return "error", "We couldn’t find an active class with that code."
+        if int(class_row["is_active"] or 0) != 1:
+            conn.rollback()
+            return "error", "That class is no longer accepting students."
+
+        student_id = user["linked_student_id"]
+        if student_id:
+            active_membership = conn.execute(
+                """
+                SELECT ce.class_id
+                FROM class_enrollments ce
+                JOIN class_sections cs ON cs.class_id=ce.class_id
+                WHERE ce.student_id=? AND ce.is_active=1 AND cs.is_active=1
+                LIMIT 1
+                """,
+                (student_id,),
+            ).fetchone()
+            if active_membership:
+                conn.rollback()
+                if active_membership["class_id"] == class_row["class_id"]:
+                    return "existing", "You’re already connected to this class."
+                return (
+                    "error",
+                    "Your account is already connected to another active class.",
+                )
+        else:
+            student_id = f"USR-{user['id']}"
+            if conn.execute(
+                "SELECT 1 FROM students WHERE student_id=?",
+                (student_id,),
+            ).fetchone():
+                student_id = f"S{uuid.uuid4().hex}"
+            identity = conn.execute(
+                """
+                SELECT display_name
+                FROM user_auth_identities
+                WHERE user_id=? AND revoked_at IS NULL
+                ORDER BY last_login_at DESC LIMIT 1
+                """,
+                (user["id"],),
+            ).fetchone()
+            display_name = (
+                (identity["display_name"] if identity else None)
+                or user["username"]
+                or ""
+            ).strip()
+            first_name, _, last_name = display_name.partition(" ")
+            conn.execute(
+                """
+                INSERT INTO students
+                  (student_id, first_name, last_name, grade, class_period)
+                VALUES (?, ?, ?, NULL, ?)
+                """,
+                (
+                    student_id,
+                    first_name,
+                    last_name,
+                    class_row["class_period"],
+                ),
+            )
+
+        existing = conn.execute(
+            """
+            SELECT is_active
+            FROM class_enrollments
+            WHERE class_id=? AND student_id=?
+            """,
+            (class_row["class_id"], student_id),
+        ).fetchone()
+        now = int(time.time())
+        if existing:
+            conn.execute(
+                """
+                UPDATE class_enrollments
+                SET is_active=1, reactivated_at=?, reactivated_by_user_id=NULL,
+                    archive_reason=NULL
+                WHERE class_id=? AND student_id=?
+                """,
+                (now, class_row["class_id"], student_id),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO class_enrollments
+                  (class_id, student_id, enrolled_at, enrolled_by, is_active)
+                VALUES (?, ?, ?, 'self', 1)
+                """,
+                (class_row["class_id"], student_id, now),
+            )
+        _activate_student_account_for_membership(
+            conn,
+            int(user["id"]),
+            student_id,
+        )
+        conn.commit()
+        return "joined", "You’re connected. Welcome to class!"
+    except Exception:
+        conn.rollback()
+        raise
+
+
 def get_people_access_rows(conn: sqlite3.Connection):
     rows = conn.execute(
         """
@@ -7083,12 +7238,37 @@ def sso_callback(provider):
     )
 
 
-@app.get("/restricted")
+@app.route("/restricted", methods=["GET", "POST"])
 @login_required
 def restricted_onboarding():
     user = current_user()
     conn = get_conn()
     try:
+        if request.method == "POST":
+            if is_teacher(user) or is_owner(user):
+                abort(403)
+            if account_role(user) not in ("pending", "student"):
+                abort(403)
+            require_student_onboarding_csrf()
+            try:
+                outcome, message = enroll_authenticated_user_by_code(
+                    conn,
+                    user,
+                    request.form.get("join_code"),
+                )
+            except Exception:
+                logger.exception(
+                    "Student self-enrollment failed for user_id=%s",
+                    user["id"],
+                )
+                flash("We couldn’t connect you to that class. Please try again.")
+                return redirect(url_for("restricted_onboarding"))
+            flash(message)
+            if outcome == "joined":
+                session["current_mode"] = "home"
+                return redirect(url_for("student_view"))
+            return redirect(url_for("restricted_onboarding"))
+
         identity = conn.execute(
             """
             SELECT provider, verified_email, display_name
@@ -7111,18 +7291,39 @@ def restricted_onboarding():
         input,button{box-sizing:border-box;width:100%;padding:12px;border-radius:8px;font:inherit}input{border:1px solid #cbd8cd}
         button{margin-top:10px;border:0;background:#2f6f4e;color:white;font-weight:700}a{color:#24543d;font-weight:700}
         .account{background:#f1f6ef;padding:12px;border-radius:8px;margin:18px 0;color:#4b5563}
+        .message{background:#fff7df;border:1px solid #ead9a5;padding:11px 12px;border-radius:8px;margin:14px 0;color:#624b12}
+        .help{color:#4b5563;font-size:14px;line-height:1.45}
         </style></head><body><main>
         <h1>Welcome to RootED</h1>
-        <p>You’re signed in successfully, but you’re not currently connected to a class. Enter the class code provided by your teacher to continue.</p>
+        <p>Your account is ready. Enter the class code provided by your teacher to begin learning.</p>
         <div class="account"><strong>{{ identity['display_name'] or user['username'] }}</strong><br>
         {{ identity['verified_email'] or '' }}</div>
-        <form><label for="code">Class code</label><input id="code" disabled placeholder="Class-code entry coming soon">
-        <button type="button" disabled>Connect to class</button></form>
+        {% with messages = get_flashed_messages() %}
+          {% if messages %}
+            <div class="message" role="alert">{{ messages[-1] }}</div>
+          {% endif %}
+        {% endwith %}
+        <form method="post" id="join-class-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <label for="code">Class code</label>
+          <input id="code" name="join_code" placeholder="Enter your class code"
+                 autocomplete="off" autocapitalize="characters" required>
+          <button type="submit" id="join-class-button">Join class</button>
+        </form>
+        <p class="help">Don’t have a class code? Ask your teacher for the code to join your classroom.</p>
         <p><a href="{{ url_for('logout') }}">Sign out</a></p>
+        <script>
+        document.getElementById("join-class-form").addEventListener("submit", function () {
+          const button = document.getElementById("join-class-button");
+          button.disabled = true;
+          button.textContent = "Joining…";
+        });
+        </script>
         </main></body></html>
         """,
         user=user,
         identity=identity or {"display_name": None, "verified_email": None},
+        csrf_token=student_onboarding_csrf_token(),
     )
 
 
