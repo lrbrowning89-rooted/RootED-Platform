@@ -22,6 +22,8 @@ CREATE TABLE IF NOT EXISTS objectives (
   objective_id   TEXT PRIMARY KEY,
   standard_id    TEXT NOT NULL,
   objective_text TEXT,
+  display_name   TEXT,
+  student_description TEXT,
   order_in_band  INTEGER,
   FOREIGN KEY (standard_id) REFERENCES standards(standard_id) ON DELETE CASCADE
 );
@@ -103,6 +105,12 @@ CREATE TABLE IF NOT EXISTS class_enrollments (
   student_id  TEXT NOT NULL,
   enrolled_at INTEGER NOT NULL,
   enrolled_by TEXT NOT NULL DEFAULT 'self',
+  is_active   INTEGER NOT NULL DEFAULT 1,
+  archived_at INTEGER,
+  archived_by_user_id INTEGER,
+  archive_reason TEXT,
+  reactivated_at INTEGER,
+  reactivated_by_user_id INTEGER,
   PRIMARY KEY (class_id, student_id),
   FOREIGN KEY (class_id) REFERENCES class_sections(class_id) ON DELETE CASCADE,
   FOREIGN KEY (student_id) REFERENCES students(student_id) ON DELETE CASCADE
@@ -250,6 +258,38 @@ CREATE TABLE IF NOT EXISTS access_authorization_audit_log (
 CREATE INDEX IF NOT EXISTS idx_access_authorization_audit_target
   ON access_authorization_audit_log(target_user_id, created_at, audit_id);
 
+CREATE TABLE IF NOT EXISTS authorization_lifecycle_audit_log (
+  audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  actor_user_id INTEGER NOT NULL,
+  target_user_id INTEGER NOT NULL,
+  action TEXT NOT NULL CHECK(action IN ('teacher_revoked')),
+  authorization_id INTEGER,
+  outcome TEXT NOT NULL CHECK(outcome IN ('revoked', 'already_revoked', 'blocked_active_classes')),
+  reason TEXT,
+  created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS account_lifecycle_audit_log (
+  audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  actor_user_id INTEGER NOT NULL,
+  target_user_id INTEGER NOT NULL,
+  action TEXT NOT NULL CHECK(action IN ('account_deactivated', 'account_reactivated')),
+  outcome TEXT NOT NULL CHECK(outcome IN ('deactivated', 'reactivated', 'already_deactivated', 'already_active', 'blocked_last_owner')),
+  reason TEXT,
+  created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS class_membership_audit_log (
+  audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  actor_user_id INTEGER NOT NULL,
+  class_id TEXT NOT NULL,
+  student_id TEXT NOT NULL,
+  action TEXT NOT NULL CHECK(action IN ('membership_archived')),
+  outcome TEXT NOT NULL CHECK(outcome IN ('archived', 'already_archived')),
+  reason TEXT,
+  created_at INTEGER NOT NULL
+);
+
 -- -------------------------
 -- Teacher-authored maps & graph
 -- -------------------------
@@ -291,8 +331,10 @@ CREATE TABLE IF NOT EXISTS responses (
   question_id TEXT NOT NULL,
   correct     INTEGER NOT NULL,           -- 1 or 0
   ts          INTEGER NOT NULL,
+  routing_level_attempt_id TEXT,
   FOREIGN KEY (student_id)  REFERENCES students(student_id)   ON DELETE CASCADE,
-  FOREIGN KEY (question_id) REFERENCES questions(question_id) ON DELETE CASCADE
+  FOREIGN KEY (question_id) REFERENCES questions(question_id) ON DELETE CASCADE,
+  FOREIGN KEY (routing_level_attempt_id) REFERENCES routing_level_attempts(attempt_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_responses_student_std_lvl_ts
@@ -333,6 +375,77 @@ CREATE TABLE IF NOT EXISTS progress_state (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_progress_state_unique
   ON progress_state(student_id, standard_id);
+
+-- Authoritative evidence boundary for cumulative mastery at one routing level.
+CREATE TABLE IF NOT EXISTS routing_level_attempts (
+  attempt_id TEXT PRIMARY KEY,
+  student_id TEXT NOT NULL,
+  standard_id TEXT NOT NULL,
+  objective_id TEXT NOT NULL,
+  level INTEGER NOT NULL CHECK(level BETWEEN 1 AND 3),
+  status TEXT NOT NULL DEFAULT 'active'
+    CHECK(status IN ('active', 'closed', 'invalidated')),
+  started_at INTEGER NOT NULL,
+  ended_at INTEGER,
+  end_reason TEXT,
+  final_correct_count INTEGER,
+  final_response_count INTEGER,
+  final_score REAL,
+  FOREIGN KEY(student_id) REFERENCES students(student_id) ON DELETE CASCADE,
+  FOREIGN KEY(standard_id) REFERENCES standards(standard_id) ON DELETE CASCADE,
+  FOREIGN KEY(objective_id) REFERENCES objectives(objective_id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_routing_level_attempt_active_student
+  ON routing_level_attempts(student_id) WHERE status = 'active';
+
+CREATE INDEX IF NOT EXISTS idx_responses_routing_level_attempt
+  ON responses(routing_level_attempt_id, id);
+
+-- Presentation-only growth state. It never drives adaptive routing.
+CREATE TABLE IF NOT EXISTS student_growth_progress (
+  attempt_id TEXT PRIMARY KEY,
+  student_id TEXT NOT NULL,
+  standard_id TEXT NOT NULL,
+  objective_id TEXT NOT NULL,
+  visible_stage INTEGER NOT NULL DEFAULT 1 CHECK(visible_stage BETWEEN 1 AND 4),
+  presentation_state TEXT NOT NULL DEFAULT 'strengthening'
+    CHECK(presentation_state IN ('growing', 'strengthening', 'reviewing', 'complete')),
+  is_active INTEGER NOT NULL DEFAULT 1,
+  started_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  completed_at INTEGER,
+  FOREIGN KEY(student_id) REFERENCES students(student_id) ON DELETE CASCADE,
+  FOREIGN KEY(standard_id) REFERENCES standards(standard_id) ON DELETE CASCADE,
+  FOREIGN KEY(objective_id) REFERENCES objectives(objective_id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_student_growth_active
+  ON student_growth_progress(student_id) WHERE is_active = 1;
+
+CREATE TABLE IF NOT EXISTS student_question_deliveries (
+  submission_token TEXT PRIMARY KEY,
+  student_id TEXT NOT NULL,
+  growth_attempt_id TEXT NOT NULL,
+  standard_id TEXT NOT NULL,
+  objective_id TEXT NOT NULL,
+  level INTEGER NOT NULL,
+  question_id TEXT NOT NULL,
+  sequence_number INTEGER NOT NULL,
+  served_at INTEGER NOT NULL,
+  consumed_at INTEGER,
+  invalidated_at INTEGER,
+  FOREIGN KEY(student_id) REFERENCES students(student_id) ON DELETE CASCADE,
+  FOREIGN KEY(growth_attempt_id) REFERENCES student_growth_progress(attempt_id) ON DELETE CASCADE,
+  FOREIGN KEY(question_id) REFERENCES questions(question_id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_student_question_delivery_active
+  ON student_question_deliveries(student_id)
+  WHERE consumed_at IS NULL AND invalidated_at IS NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_student_question_delivery_sequence
+  ON student_question_deliveries(growth_attempt_id, level, sequence_number);
 
 -- Links MS standard → lower-band remediation standards (3–5, then K–2, etc.)
 CREATE TABLE IF NOT EXISTS remediation_links (

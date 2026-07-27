@@ -80,6 +80,13 @@ Post-login routing keeps these authorities independent: Owner accounts land at
 `/teacher`, enrolled Students land at `/student`, and accounts without an
 applicable authorization or membership land at `/restricted`.
 
+Owners manage account activation and Teacher instructional grants from People
+& Access. Teacher revocation preserves grant history and is blocked while the
+Teacher owns active classes. Account deactivation is reversible and preserves
+identities, grants, memberships, and educational records. Teachers do not
+manage platform accounts; they may archive only active memberships in classes
+they own.
+
 ## Migration and rollback
 
 `migrations/add_user_auth_identities.py` provides both `migrate(conn)` and

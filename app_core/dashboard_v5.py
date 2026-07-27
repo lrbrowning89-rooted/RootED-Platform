@@ -27,6 +27,7 @@ from urllib.parse import urlsplit
 
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.exceptions import HTTPException
+from werkzeug.middleware.proxy_fix import ProxyFix
 from authlib.integrations.flask_client import OAuth
 from markupsafe import Markup
 
@@ -37,7 +38,9 @@ from app_core.config import (
     ENABLE_GOOGLE_AUTH,
     ENABLE_MICROSOFT_AUTH,
     FERPA_ENFORCED,
+    SESSION_COOKIE_SECURE,
     SECRET_KEY,
+    TRUST_PROXY_HEADERS,
 )
 from app_core import adaptive_engine as ae
 
@@ -187,6 +190,22 @@ DB = DATABASE_PATH
 # ---------- Flask app setup ----------
 app = Flask(__name__, static_folder='static', static_url_path='/static')
 app.secret_key = SECRET_KEY
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SECURE=SESSION_COOKIE_SECURE,
+    # OAuth callbacks are top-level GET navigations, so Lax preserves the
+    # session state while preventing cross-site subrequests from sending it.
+    SESSION_COOKIE_SAMESITE="Lax",
+)
+if TRUST_PROXY_HEADERS:
+    # Render terminates HTTPS before forwarding to Gunicorn. Trust exactly one
+    # hosting-proxy hop so Flask generates rooted.school HTTPS callback URLs.
+    app.wsgi_app = ProxyFix(
+        app.wsgi_app,
+        x_for=1,
+        x_proto=1,
+        x_host=1,
+    )
 
 # ---------- Logging setup ----------
 LOG_DIR = os.path.join(BASE_DIR, "data")
@@ -457,7 +476,7 @@ def can_access_student_instruction(user=None) -> bool:
             """
             SELECT 1 FROM class_enrollments ce
             JOIN class_sections cs ON cs.class_id=ce.class_id
-            WHERE ce.student_id=? AND cs.is_active=1 LIMIT 1
+            WHERE ce.student_id=? AND ce.is_active=1 AND cs.is_active=1 LIMIT 1
             """,
             (user["linked_student_id"],),
         ).fetchone() is not None
@@ -585,6 +604,129 @@ require_student = student_required
 
 
 # ---------- Schema ----------
+def _backfill_routing_level_attempts(conn: sqlite3.Connection) -> None:
+    """Assign legacy accepted responses to contiguous, auditable level visits."""
+    legacy = conn.execute(
+        """
+        SELECT r.id, r.student_id, r.standard_id, r.level, r.correct, r.ts,
+               q.objective_id
+        FROM responses r
+        JOIN questions q ON q.question_id = r.question_id
+        WHERE r.routing_level_attempt_id IS NULL
+        ORDER BY r.student_id, r.ts, r.id
+        """
+    ).fetchall()
+    if not legacy:
+        return
+
+    groups = []
+    current = None
+    for row in legacy:
+        key = (
+            row["student_id"],
+            row["standard_id"],
+            row["objective_id"],
+            int(row["level"]),
+        )
+        if current is None or current["key"] != key:
+            current = {"key": key, "rows": []}
+            groups.append(current)
+        current["rows"].append(row)
+
+    last_group_by_student = {}
+    for group in groups:
+        last_group_by_student[group["key"][0]] = group
+
+    for group in groups:
+        student_id, standard_id, objective_id, level = group["key"]
+        rows = group["rows"]
+        correct_count = sum(int(row["correct"]) for row in rows)
+        response_count = len(rows)
+        score = correct_count / response_count
+        progress = conn.execute(
+            """
+            SELECT ps.current_level, sos.current_objective_id
+            FROM progress_state ps
+            LEFT JOIN student_objective_state sos
+              ON sos.student_id = ps.student_id
+             AND sos.standard_id = ps.standard_id
+             AND sos.status = 'active'
+            WHERE ps.student_id = ? AND ps.standard_id = ?
+            """,
+            (student_id, standard_id),
+        ).fetchone()
+        is_active = bool(
+            group is last_group_by_student[student_id]
+            and progress
+            and int(progress["current_level"]) == level
+            and progress["current_objective_id"] == objective_id
+        )
+        existing_active = conn.execute(
+            """
+            SELECT * FROM routing_level_attempts
+            WHERE student_id = ? AND status = 'active'
+            """,
+            (student_id,),
+        ).fetchone()
+        if (
+            is_active
+            and existing_active
+            and existing_active["standard_id"] == standard_id
+            and existing_active["objective_id"] == objective_id
+            and int(existing_active["level"]) == level
+        ):
+            conn.executemany(
+                """
+                UPDATE responses
+                SET routing_level_attempt_id = ?
+                WHERE id = ? AND routing_level_attempt_id IS NULL
+                """,
+                [(existing_active["attempt_id"], row["id"]) for row in rows],
+            )
+            continue
+        if is_active and existing_active:
+            conn.execute(
+                """
+                UPDATE routing_level_attempts
+                SET status='closed', ended_at=?, end_reason='historical_boundary'
+                WHERE attempt_id=?
+                """,
+                (int(rows[0]["ts"]), existing_active["attempt_id"]),
+            )
+        attempt_id = f"RLA{uuid.uuid4().hex}"
+        conn.execute(
+            """
+            INSERT INTO routing_level_attempts
+              (attempt_id, student_id, standard_id, objective_id, level, status,
+               started_at, ended_at, end_reason, final_correct_count,
+               final_response_count, final_score)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                attempt_id,
+                student_id,
+                standard_id,
+                objective_id,
+                level,
+                "active" if is_active else "closed",
+                int(rows[0]["ts"]),
+                None if is_active else int(rows[-1]["ts"]),
+                None if is_active else "historical_boundary",
+                None if is_active else correct_count,
+                None if is_active else response_count,
+                None if is_active else score,
+            ),
+        )
+        conn.executemany(
+            """
+            UPDATE responses
+            SET routing_level_attempt_id = ?
+            WHERE id = ? AND routing_level_attempt_id IS NULL
+            """,
+            [(attempt_id, row["id"]) for row in rows],
+        )
+
+
 def ensure_schema(conn: sqlite3.Connection) -> None:
     # Config for thresholds etc.
     conn.execute(
@@ -631,12 +773,35 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
           student_id  TEXT NOT NULL,
           enrolled_at INTEGER NOT NULL,
           enrolled_by TEXT NOT NULL DEFAULT 'self',
+          is_active   INTEGER NOT NULL DEFAULT 1,
+          archived_at INTEGER,
+          archived_by_user_id INTEGER,
+          archive_reason TEXT,
+          reactivated_at INTEGER,
+          reactivated_by_user_id INTEGER,
           PRIMARY KEY (class_id, student_id),
           FOREIGN KEY(class_id) REFERENCES class_sections(class_id) ON DELETE CASCADE,
-          FOREIGN KEY(student_id) REFERENCES students(student_id) ON DELETE CASCADE
+          FOREIGN KEY(student_id) REFERENCES students(student_id) ON DELETE CASCADE,
+          FOREIGN KEY(archived_by_user_id) REFERENCES users(id) ON DELETE SET NULL,
+          FOREIGN KEY(reactivated_by_user_id) REFERENCES users(id) ON DELETE SET NULL
         )
         """
     )
+    enrollment_columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(class_enrollments)")
+    }
+    for column_name, column_sql in [
+        ("is_active", "INTEGER NOT NULL DEFAULT 1"),
+        ("archived_at", "INTEGER"),
+        ("archived_by_user_id", "INTEGER"),
+        ("archive_reason", "TEXT"),
+        ("reactivated_at", "INTEGER"),
+        ("reactivated_by_user_id", "INTEGER"),
+    ]:
+        if column_name not in enrollment_columns:
+            conn.execute(
+                f"ALTER TABLE class_enrollments ADD COLUMN {column_name} {column_sql}"
+            )
     conn.execute(
         """
         CREATE INDEX IF NOT EXISTS idx_class_enrollments_student
@@ -662,9 +827,24 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
           objective_id   TEXT PRIMARY KEY,
           standard_id    TEXT NOT NULL,
           objective_text TEXT,
+          display_name   TEXT,
+          student_description TEXT,
           order_in_band  INTEGER,
           FOREIGN KEY(standard_id) REFERENCES standards(standard_id)
         )
+        """
+    )
+    objective_columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(objectives)")
+    }
+    for column_name in ("display_name", "student_description"):
+        if column_name not in objective_columns:
+            conn.execute(f"ALTER TABLE objectives ADD COLUMN {column_name} TEXT")
+    conn.execute(
+        """
+        UPDATE objectives SET display_name='Cell Anatomy'
+        WHERE objective_id='MS-LS1-2A'
+          AND (display_name IS NULL OR TRIM(display_name)='')
         """
     )
 
@@ -927,6 +1107,13 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         ON responses(student_id, standard_id, level, ts DESC)
         """
     )
+    response_columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(responses)").fetchall()
+    }
+    if "routing_level_attempt_id" not in response_columns:
+        conn.execute(
+            "ALTER TABLE responses ADD COLUMN routing_level_attempt_id TEXT"
+        )
 
     # Rolling-7 engine state tables
     conn.execute(
@@ -950,6 +1137,37 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         ON progress_state(student_id, standard_id)
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS routing_level_attempts (
+          attempt_id TEXT PRIMARY KEY,
+          student_id TEXT NOT NULL,
+          standard_id TEXT NOT NULL,
+          objective_id TEXT NOT NULL,
+          level INTEGER NOT NULL CHECK(level BETWEEN 1 AND 3),
+          status TEXT NOT NULL DEFAULT 'active'
+            CHECK(status IN ('active', 'closed', 'invalidated')),
+          started_at INTEGER NOT NULL,
+          ended_at INTEGER,
+          end_reason TEXT,
+          final_correct_count INTEGER,
+          final_response_count INTEGER,
+          final_score REAL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_routing_level_attempt_active_student
+        ON routing_level_attempts(student_id) WHERE status = 'active'
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_responses_routing_level_attempt
+        ON responses(routing_level_attempt_id, id)
+        """
+    )
 
     conn.execute(
         """
@@ -964,6 +1182,98 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
           FOREIGN KEY(standard_id) REFERENCES standards(standard_id) ON DELETE CASCADE,
           FOREIGN KEY(current_objective_id) REFERENCES objectives(objective_id) ON DELETE CASCADE
         )
+        """
+    )
+    _backfill_routing_level_attempts(conn)
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS student_growth_progress (
+          attempt_id TEXT PRIMARY KEY,
+          student_id TEXT NOT NULL,
+          standard_id TEXT NOT NULL,
+          objective_id TEXT NOT NULL,
+          visible_stage INTEGER NOT NULL DEFAULT 1 CHECK(visible_stage BETWEEN 1 AND 4),
+          presentation_state TEXT NOT NULL DEFAULT 'strengthening'
+            CHECK(presentation_state IN ('growing', 'strengthening', 'reviewing', 'complete')),
+          is_active INTEGER NOT NULL DEFAULT 1,
+          started_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          completed_at INTEGER,
+          FOREIGN KEY(student_id) REFERENCES students(student_id) ON DELETE CASCADE,
+          FOREIGN KEY(standard_id) REFERENCES standards(standard_id) ON DELETE CASCADE,
+          FOREIGN KEY(objective_id) REFERENCES objectives(objective_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_student_growth_active
+        ON student_growth_progress(student_id)
+        WHERE is_active = 1
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS student_question_deliveries (
+          submission_token TEXT PRIMARY KEY,
+          student_id TEXT NOT NULL,
+          growth_attempt_id TEXT NOT NULL,
+          standard_id TEXT NOT NULL,
+          objective_id TEXT NOT NULL,
+          level INTEGER NOT NULL,
+          question_id TEXT NOT NULL,
+          sequence_number INTEGER NOT NULL,
+          served_at INTEGER NOT NULL,
+          consumed_at INTEGER,
+          invalidated_at INTEGER,
+          FOREIGN KEY(student_id) REFERENCES students(student_id) ON DELETE CASCADE,
+          FOREIGN KEY(growth_attempt_id) REFERENCES student_growth_progress(attempt_id) ON DELETE CASCADE,
+          FOREIGN KEY(question_id) REFERENCES questions(question_id) ON DELETE CASCADE
+        )
+        """
+    )
+    delivery_columns = {
+        row[1]
+        for row in conn.execute(
+            "PRAGMA table_info(student_question_deliveries)"
+        ).fetchall()
+    }
+    if "sequence_number" not in delivery_columns:
+        conn.execute(
+            "ALTER TABLE student_question_deliveries ADD COLUMN sequence_number INTEGER"
+        )
+    conn.execute(
+        """
+        UPDATE student_question_deliveries
+        SET sequence_number = (
+          SELECT COUNT(*) - 1
+          FROM student_question_deliveries AS prior
+          WHERE prior.growth_attempt_id =
+                  student_question_deliveries.growth_attempt_id
+            AND prior.level = student_question_deliveries.level
+            AND (
+              prior.served_at < student_question_deliveries.served_at
+              OR (
+                prior.served_at = student_question_deliveries.served_at
+                AND prior.submission_token <=
+                    student_question_deliveries.submission_token
+              )
+            )
+        )
+        WHERE sequence_number IS NULL
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_student_question_delivery_active
+        ON student_question_deliveries(student_id)
+        WHERE consumed_at IS NULL AND invalidated_at IS NULL
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_student_question_delivery_sequence
+        ON student_question_deliveries(growth_attempt_id, level, sequence_number)
         """
     )
 
@@ -1210,6 +1520,52 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         """
         CREATE INDEX IF NOT EXISTS idx_access_authorization_audit_target
         ON access_authorization_audit_log(target_user_id, created_at, audit_id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS authorization_lifecycle_audit_log (
+          audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
+          actor_user_id INTEGER NOT NULL,
+          target_user_id INTEGER NOT NULL,
+          action TEXT NOT NULL CHECK(action IN ('teacher_revoked')),
+          authorization_id INTEGER,
+          outcome TEXT NOT NULL CHECK(outcome IN ('revoked', 'already_revoked', 'blocked_active_classes')),
+          reason TEXT,
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY(actor_user_id) REFERENCES users(id) ON DELETE RESTRICT,
+          FOREIGN KEY(target_user_id) REFERENCES users(id) ON DELETE RESTRICT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS account_lifecycle_audit_log (
+          audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
+          actor_user_id INTEGER NOT NULL,
+          target_user_id INTEGER NOT NULL,
+          action TEXT NOT NULL CHECK(action IN ('account_deactivated', 'account_reactivated')),
+          outcome TEXT NOT NULL CHECK(outcome IN ('deactivated', 'reactivated', 'already_deactivated', 'already_active', 'blocked_last_owner')),
+          reason TEXT,
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY(actor_user_id) REFERENCES users(id) ON DELETE RESTRICT,
+          FOREIGN KEY(target_user_id) REFERENCES users(id) ON DELETE RESTRICT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS class_membership_audit_log (
+          audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
+          actor_user_id INTEGER NOT NULL,
+          class_id TEXT NOT NULL,
+          student_id TEXT NOT NULL,
+          action TEXT NOT NULL CHECK(action IN ('membership_archived')),
+          outcome TEXT NOT NULL CHECK(outcome IN ('archived', 'already_archived')),
+          reason TEXT,
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY(actor_user_id) REFERENCES users(id) ON DELETE RESTRICT
+        )
         """
     )
     # Preserve existing teacher access while moving the source of truth away
@@ -2693,6 +3049,106 @@ def row_get(row, key, default=None):
     return default if value is None else value
 
 
+def close_active_routing_level_attempt(
+    conn: sqlite3.Connection,
+    student_id: str,
+    reason: str,
+    *,
+    ended_at: int | None = None,
+):
+    active = conn.execute(
+        """
+        SELECT *
+        FROM routing_level_attempts
+        WHERE student_id = ? AND status = 'active'
+        """,
+        (student_id,),
+    ).fetchone()
+    if not active:
+        return None
+    metrics = conn.execute(
+        """
+        SELECT COUNT(*) AS total, COALESCE(SUM(correct), 0) AS correct
+        FROM responses
+        WHERE routing_level_attempt_id = ?
+        """,
+        (active["attempt_id"],),
+    ).fetchone()
+    total = int(metrics["total"] or 0)
+    correct = int(metrics["correct"] or 0)
+    conn.execute(
+        """
+        UPDATE routing_level_attempts
+        SET status = 'closed', ended_at = ?, end_reason = ?,
+            final_correct_count = ?, final_response_count = ?, final_score = ?
+        WHERE attempt_id = ? AND status = 'active'
+        """,
+        (
+            ended_at or int(time.time()),
+            reason,
+            correct,
+            total,
+            (correct / total) if total else 0.0,
+            active["attempt_id"],
+        ),
+    )
+    return active
+
+
+def ensure_routing_level_attempt(
+    conn: sqlite3.Connection,
+    *,
+    student_id: str,
+    standard_id: str,
+    objective_id: str,
+    level: int,
+    boundary_reason: str = "routing_boundary",
+    started_at: int | None = None,
+):
+    active = conn.execute(
+        """
+        SELECT *
+        FROM routing_level_attempts
+        WHERE student_id = ? AND status = 'active'
+        """,
+        (student_id,),
+    ).fetchone()
+    if (
+        active
+        and active["standard_id"] == standard_id
+        and active["objective_id"] == objective_id
+        and int(active["level"]) == int(level)
+    ):
+        return active
+    if active:
+        close_active_routing_level_attempt(
+            conn,
+            student_id,
+            boundary_reason,
+            ended_at=started_at,
+        )
+    attempt_id = f"RLA{uuid.uuid4().hex}"
+    conn.execute(
+        """
+        INSERT INTO routing_level_attempts
+          (attempt_id, student_id, standard_id, objective_id, level, status, started_at)
+        VALUES (?, ?, ?, ?, ?, 'active', ?)
+        """,
+        (
+            attempt_id,
+            student_id,
+            standard_id,
+            objective_id,
+            level,
+            int(started_at or time.time()),
+        ),
+    )
+    return conn.execute(
+        "SELECT * FROM routing_level_attempts WHERE attempt_id = ?",
+        (attempt_id,),
+    ).fetchone()
+
+
 def get_students(conn, period=None):
     if period and period != "ALL":
         return conn.execute(
@@ -2759,7 +3215,7 @@ def get_class_sections_for_teacher(conn: sqlite3.Connection, teacher_user_id: in
         SELECT cs.*,
                COUNT(ce.student_id) AS enrolled_count
         FROM class_sections cs
-        LEFT JOIN class_enrollments ce ON ce.class_id = cs.class_id
+        LEFT JOIN class_enrollments ce ON ce.class_id = cs.class_id AND ce.is_active=1
         WHERE cs.teacher_user_id = ? OR cs.teacher_user_id IS NULL
         GROUP BY cs.class_id
         ORDER BY cs.is_active DESC, cs.name COLLATE NOCASE
@@ -2783,7 +3239,7 @@ def get_class_roster_map(conn: sqlite3.Connection, class_ids: list[str]) -> dict
                s.class_period
         FROM class_enrollments ce
         JOIN students s ON s.student_id = ce.student_id
-        WHERE ce.class_id IN ({placeholders})
+        WHERE ce.class_id IN ({placeholders}) AND ce.is_active=1
         ORDER BY s.last_name COLLATE NOCASE, s.first_name COLLATE NOCASE, s.student_id
         """,
         class_ids,
@@ -2820,14 +3276,25 @@ def enroll_student_by_code(
 
     existing = conn.execute(
         """
-        SELECT 1
+        SELECT is_active
         FROM class_enrollments
         WHERE class_id = ? AND student_id = ?
         """,
         (class_row["class_id"], student_id),
     ).fetchone()
     if existing:
-        return True, f"You are already enrolled in {class_row['name']}."
+        if int(existing["is_active"] or 0) == 1:
+            return True, f"You are already enrolled in {class_row['name']}."
+        conn.execute(
+            """
+            UPDATE class_enrollments
+            SET is_active=1, reactivated_at=?, reactivated_by_user_id=NULL
+            WHERE class_id=? AND student_id=?
+            """,
+            (int(time.time()), class_row["class_id"], student_id),
+        )
+        conn.commit()
+        return True, f"You rejoined {class_row['name']}."
 
     now = int(time.time())
     conn.execute(
@@ -2860,7 +3327,7 @@ def get_student_class_sections(conn: sqlite3.Connection, student_id: str):
                ce.enrolled_at
         FROM class_enrollments ce
         JOIN class_sections cs ON cs.class_id = ce.class_id
-        WHERE ce.student_id = ?
+        WHERE ce.student_id = ? AND ce.is_active=1
         ORDER BY ce.enrolled_at DESC
         """,
         (student_id,),
@@ -2881,6 +3348,7 @@ def teacher_controls_student(
         JOIN class_sections cs ON cs.class_id = ce.class_id
         WHERE ce.student_id = ?
           AND cs.teacher_user_id = ?
+          AND ce.is_active = 1
           AND cs.is_active = 1
         LIMIT 1
         """,
@@ -3025,6 +3493,7 @@ def get_default_flag_class_id(conn: sqlite3.Connection, student_id: str | None) 
         FROM class_enrollments ce
         JOIN class_sections cs ON cs.class_id = ce.class_id
         WHERE ce.student_id = ?
+          AND ce.is_active = 1
           AND cs.is_active = 1
         ORDER BY ce.enrolled_at DESC
         LIMIT 1
@@ -3053,6 +3522,8 @@ def create_question_flag(
         return False, "Choose a valid flag category.", None
 
     role = session.get("role")
+    if request.method == "GET" and role == "student":
+        feedback = session.pop("student_feedback", None)
     if role not in ("teacher", "student"):
         return False, "Please log in before flagging a question.", None
 
@@ -3452,6 +3923,12 @@ def place_student_learning_node(
     now = int(time.time())
     try:
         conn.execute("BEGIN")
+        close_active_routing_level_attempt(
+            conn,
+            student_id,
+            "teacher_placement",
+            ended_at=now,
+        )
         conn.execute(
             """
             UPDATE progress_state
@@ -3491,6 +3968,23 @@ def place_student_learning_node(
             """,
             (student_id, standard_id, objective_id, now),
         )
+        ensure_routing_level_attempt(
+            conn,
+            student_id=student_id,
+            standard_id=standard_id,
+            objective_id=objective_id,
+            level=current_level,
+            boundary_reason="teacher_placement",
+            started_at=now,
+        )
+        ensure_student_growth_attempt(
+            conn,
+            student_id,
+            standard_id,
+            objective_id,
+            force_new=True,
+            commit=False,
+        )
         conn.commit()
 
     except Exception:
@@ -3498,6 +3992,435 @@ def place_student_learning_node(
         raise
 
     return True, f"Placed {student_id} at {standard_id} / {objective_id}, Level {current_level}."
+
+
+def ensure_student_growth_attempt(
+    conn: sqlite3.Connection,
+    student_id: str,
+    standard_id: str,
+    objective_id: str,
+    *,
+    force_new: bool = False,
+    commit: bool = True,
+):
+    """Return the active presentation attempt, starting one only when learning changes."""
+    active = conn.execute(
+        """
+        SELECT *
+        FROM student_growth_progress
+        WHERE student_id = ? AND is_active = 1
+        """,
+        (student_id,),
+    ).fetchone()
+    if (
+        active
+        and not force_new
+        and active["standard_id"] == standard_id
+        and active["objective_id"] == objective_id
+    ):
+        return active
+
+    now = int(time.time())
+    if active:
+        invalidate_student_question_deliveries(
+            conn,
+            student_id,
+            growth_attempt_id=active["attempt_id"],
+            commit=False,
+        )
+        conn.execute(
+            """
+            UPDATE student_growth_progress
+            SET is_active = 0, updated_at = ?
+            WHERE attempt_id = ?
+            """,
+            (now, active["attempt_id"]),
+        )
+
+    attempt_id = f"GP{uuid.uuid4().hex}"
+    conn.execute(
+        """
+        INSERT INTO student_growth_progress
+          (attempt_id, student_id, standard_id, objective_id, visible_stage,
+           presentation_state, is_active, started_at, updated_at)
+        VALUES (?, ?, ?, ?, 1, 'growing', 1, ?, ?)
+        """,
+        (attempt_id, student_id, standard_id, objective_id, now, now),
+    )
+    if commit:
+        conn.commit()
+    return conn.execute(
+        "SELECT * FROM student_growth_progress WHERE attempt_id = ?",
+        (attempt_id,),
+    ).fetchone()
+
+
+def invalidate_student_question_deliveries(
+    conn: sqlite3.Connection,
+    student_id: str,
+    *,
+    growth_attempt_id: str | None = None,
+    commit: bool = True,
+) -> None:
+    now = int(time.time())
+    sql = """
+        UPDATE student_question_deliveries
+        SET invalidated_at = ?
+        WHERE student_id = ?
+          AND consumed_at IS NULL
+          AND invalidated_at IS NULL
+    """
+    params = [now, student_id]
+    if growth_attempt_id:
+        sql += " AND growth_attempt_id = ?"
+        params.append(growth_attempt_id)
+    conn.execute(sql, params)
+    if commit:
+        conn.commit()
+
+
+def get_or_create_student_question_delivery(
+    conn: sqlite3.Connection,
+    *,
+    student_id: str,
+    growth_attempt_id: str,
+    standard_id: str,
+    objective_id: str,
+    level: int,
+    eligible_questions,
+):
+    """Reuse one current delivery or persist the next attempt-scoped question."""
+    eligible_by_id = {row["question_id"]: row for row in eligible_questions}
+    active = conn.execute(
+        """
+        SELECT *
+        FROM student_question_deliveries
+        WHERE student_id = ?
+          AND consumed_at IS NULL
+          AND invalidated_at IS NULL
+        """,
+        (student_id,),
+    ).fetchone()
+    if (
+        active
+        and active["growth_attempt_id"] == growth_attempt_id
+        and active["standard_id"] == standard_id
+        and active["objective_id"] == objective_id
+        and int(active["level"]) == int(level)
+        and active["question_id"] in eligible_by_id
+    ):
+        return active, eligible_by_id[active["question_id"]]
+
+    if active:
+        invalidate_student_question_deliveries(conn, student_id, commit=False)
+
+    if not eligible_questions:
+        conn.commit()
+        return None, None
+
+    sequence = conn.execute(
+        """
+        SELECT MAX(sequence_number) AS last_sequence
+        FROM student_question_deliveries
+        WHERE student_id = ?
+          AND growth_attempt_id = ?
+          AND level = ?
+        """,
+        (student_id, growth_attempt_id, level),
+    ).fetchone()
+    last_sequence = row_get(sequence, "last_sequence", None)
+    if last_sequence is None:
+        growth_row = conn.execute(
+            """
+            SELECT started_at
+            FROM student_growth_progress
+            WHERE attempt_id = ?
+            """,
+            (growth_attempt_id,),
+        ).fetchone()
+        qids = list(eligible_by_id)
+        placeholders = ",".join(["?"] * len(qids))
+        historical = conn.execute(
+            f"""
+            SELECT COUNT(*) AS n
+            FROM attempts
+            WHERE student_id = ?
+              AND question_id IN ({placeholders})
+              AND timestamp >= ?
+            """,
+            [student_id, *qids, int(row_get(growth_row, "started_at", 0) or 0)],
+        ).fetchone()
+        sequence_number = int(row_get(historical, "n", 0) or 0)
+    else:
+        sequence_number = int(last_sequence) + 1
+    sequence_index = sequence_number % len(eligible_questions)
+    question = eligible_questions[sequence_index]
+    token = uuid.uuid4().hex
+    now = int(time.time())
+    conn.execute(
+        """
+        INSERT INTO student_question_deliveries
+          (submission_token, student_id, growth_attempt_id, standard_id,
+           objective_id, level, question_id, sequence_number, served_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            token,
+            student_id,
+            growth_attempt_id,
+            standard_id,
+            objective_id,
+            level,
+            question["question_id"],
+            sequence_number,
+            now,
+        ),
+    )
+    conn.commit()
+    return conn.execute(
+        "SELECT * FROM student_question_deliveries WHERE submission_token = ?",
+        (token,),
+    ).fetchone(), question
+
+
+def consume_student_question_delivery(
+    conn: sqlite3.Connection,
+    *,
+    submission_token: str,
+    student_id: str,
+    growth_attempt_id: str,
+    standard_id: str,
+    objective_id: str,
+    level: int,
+    submitted_question_id: str | None,
+    response: str,
+):
+    """Atomically consume a current delivery and record exactly one response."""
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        delivery = conn.execute(
+            """
+            SELECT d.*, q.answer_key
+            FROM student_question_deliveries d
+            JOIN questions q ON q.question_id = d.question_id
+            WHERE d.submission_token = ?
+            """,
+            (submission_token,),
+        ).fetchone()
+        valid = bool(
+            delivery
+            and delivery["student_id"] == student_id
+            and delivery["growth_attempt_id"] == growth_attempt_id
+            and delivery["standard_id"] == standard_id
+            and delivery["objective_id"] == objective_id
+            and int(delivery["level"]) == int(level)
+            and (
+                not submitted_question_id
+                or delivery["question_id"] == submitted_question_id
+            )
+            and delivery["consumed_at"] is None
+            and delivery["invalidated_at"] is None
+        )
+        if not valid:
+            conn.rollback()
+            return None
+
+        now = int(time.time())
+        consumed = conn.execute(
+            """
+            UPDATE student_question_deliveries
+            SET consumed_at = ?
+            WHERE submission_token = ?
+              AND consumed_at IS NULL
+              AND invalidated_at IS NULL
+            """,
+            (now, submission_token),
+        )
+        if consumed.rowcount != 1:
+            conn.rollback()
+            return None
+
+        correct = 1 if delivery["answer_key"] == response else 0
+        std_id, lvl, ts = record_attempt_and_response(
+            conn,
+            student_id=student_id,
+            question_id=delivery["question_id"],
+            response=response,
+            is_correct=correct,
+            objective_id=objective_id,
+            level_override=level,
+            timestamp=now,
+            attempt_prefix="ST",
+        )
+        conn.commit()
+        return {
+            "correct": correct,
+            "question_id": delivery["question_id"],
+            "standard_id": std_id,
+            "level": lvl,
+            "timestamp": ts,
+        }
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def update_student_growth_presentation(
+    conn: sqlite3.Connection,
+    attempt_id: str,
+    *,
+    correct: bool,
+    engine_decision,
+):
+    """Update presentation evidence without changing any adaptive input or decision."""
+    row = conn.execute(
+        "SELECT * FROM student_growth_progress WHERE attempt_id = ?",
+        (attempt_id,),
+    ).fetchone()
+    if not row:
+        return None
+
+    decision = engine_decision if isinstance(engine_decision, dict) else {}
+    action = decision.get("action")
+    status = decision.get("status")
+    review_actions = {
+        "drop_level",
+        "remediate_lower_band",
+        "locked",
+        "mini_pass_return",
+        "mini_pass_resume",
+    }
+    is_complete = status in ("complete", "completed") or action == "standard_complete"
+
+    stage = float(row["visible_stage"])
+    state = "growing" if correct else "strengthening"
+    if correct and not is_complete:
+        # Ten perceptible presentation positions across a typical objective.
+        # This value never feeds the adaptive engine and deliberately has no
+        # engine-unit meaning.
+        stage = min(3.85, round(stage + 0.32, 2))
+    if action in review_actions or status == "locked":
+        state = "reviewing"
+    if is_complete:
+        stage = 4
+        state = "complete"
+
+    now = int(time.time())
+    conn.execute(
+        """
+        UPDATE student_growth_progress
+        SET visible_stage = MAX(visible_stage, ?),
+            presentation_state = ?,
+            is_active = CASE WHEN ? THEN 0 ELSE is_active END,
+            completed_at = CASE WHEN ? THEN ? ELSE completed_at END,
+            updated_at = ?
+        WHERE attempt_id = ?
+        """,
+        (stage, state, is_complete, is_complete, now, now, attempt_id),
+    )
+    conn.commit()
+    return conn.execute(
+        "SELECT * FROM student_growth_progress WHERE attempt_id = ?",
+        (attempt_id,),
+    ).fetchone()
+
+
+def student_growth_view_model(row, *, reviewing: bool = False, complete: bool = False):
+    """Convert stored presentation state to an intentionally coarse UI model."""
+    stage = float(row_get(row, "visible_stage", 1) or 1)
+    state = row_get(row, "presentation_state", "growing")
+    if reviewing:
+        state = "reviewing"
+    if complete:
+        state = "complete"
+        stage = 4
+
+    messages = {
+        "growing": (
+            "Growing",
+            "You're building your understanding."
+            if stage <= 1
+            else (
+                "You're connecting these ideas."
+                if stage >= 3.7
+                else "Your understanding is growing."
+            ),
+        ),
+        "strengthening": ("Strengthening", "Let's strengthen this idea."),
+        "reviewing": ("Reviewing", "RootED is helping you review this concept."),
+        "complete": ("Completed", "This understanding has taken root."),
+    }
+    stage_classes = (
+        "growth-seed",
+        "growth-root",
+        "growth-shoot",
+        "growth-leaf",
+        "growth-branch",
+        "growth-bud",
+        "growth-canopy",
+        "growth-ready",
+        "growth-nearly",
+        "growth-strong",
+    )
+    if stage >= 4:
+        stage_class = "growth-complete"
+    else:
+        # Round upward so existing persisted growth never appears to move
+        # backward when mapped onto the smaller set of visual positions.
+        step_index = max(
+            0,
+            min(
+                len(stage_classes) - 1,
+                int(((stage - 1) / 0.32) + 0.999999),
+            ),
+        )
+        stage_class = stage_classes[step_index]
+    label, message = messages.get(state, messages["growing"])
+    return {
+        "state": "completed" if state == "complete" else state,
+        "label": label,
+        "message": message,
+        "stage_class": stage_class,
+    }
+
+
+def cumulative_plant_view_model(conn, student_id: str, standard_id: str):
+    """Derive cumulative standard growth from completed objective attempts."""
+    row = conn.execute(
+        """
+        SELECT COUNT(DISTINCT objective_id) AS completed_objectives
+        FROM student_growth_progress
+        WHERE student_id = ?
+          AND standard_id = ?
+          AND presentation_state = 'complete'
+          AND completed_at IS NOT NULL
+        """,
+        (student_id, standard_id),
+    ).fetchone()
+    completed = int(row_get(row, "completed_objectives", 0) or 0)
+    if completed <= 0:
+        plant_class = "plant-sprout"
+        visible_text = "Your learning is beginning to sprout."
+    elif completed == 1:
+        plant_class = "plant-first-branch"
+        visible_text = "Your learning plant has grown a new branch."
+    elif completed == 2:
+        plant_class = "plant-second-branch"
+        visible_text = "Your learning plant is growing more branches."
+    elif completed < 5:
+        plant_class = "plant-leafy"
+        visible_text = "Your learning plant is growing fuller."
+    else:
+        plant_class = "plant-canopy"
+        visible_text = "Your learning plant has a strong, growing canopy."
+    return {
+        "plant_class": plant_class,
+        "visible_text": visible_text,
+        "screen_reader_text": (
+            "Cumulative standard growth based on parts of this learning goal "
+            "you have completed. " + visible_text
+        ),
+    }
 
 
 # ---------- User account helpers ----------
@@ -4334,6 +5257,7 @@ def get_people_access_rows(conn: sqlite3.Connection):
             u.sso_email
           ) AS verified_email,
           CASE
+            WHEN u.is_active=0 THEN 'Deactivated'
             WHEN u.account_role = 'pending'
              AND NOT EXISTS (
                SELECT 1 FROM user_platform_roles p
@@ -4349,7 +5273,8 @@ def get_people_access_rows(conn: sqlite3.Connection):
                SELECT 1
                FROM class_enrollments ce
                JOIN class_sections cs ON cs.class_id=ce.class_id
-               WHERE ce.student_id=u.linked_student_id AND cs.is_active=1
+               WHERE ce.student_id=u.linked_student_id
+                 AND ce.is_active=1 AND cs.is_active=1
              )
             THEN 'Pending'
             ELSE 'Active'
@@ -4374,7 +5299,8 @@ def get_people_access_rows(conn: sqlite3.Connection):
             SELECT COUNT(*)
             FROM class_enrollments ce
             JOIN class_sections cs ON cs.class_id = ce.class_id
-            WHERE ce.student_id = u.linked_student_id AND cs.is_active = 1
+            WHERE ce.student_id = u.linked_student_id
+              AND ce.is_active=1 AND cs.is_active = 1
           ) AS active_student_membership_count,
           CASE
             WHEN u.last_login_ts IS NULL THEN (
@@ -4391,7 +5317,6 @@ def get_people_access_rows(conn: sqlite3.Connection):
             ELSE u.last_login_ts
           END AS last_sign_in
         FROM users u
-        WHERE u.is_active = 1
         GROUP BY u.id
         ORDER BY display_name COLLATE NOCASE, u.id
         """
@@ -4458,6 +5383,12 @@ def owner_home():
         <span class="badge" aria-label="{{ escalated_count }} escalated report{{ '' if escalated_count == 1 else 's' }} awaiting review">{{ escalated_count }}</span>
       {% endif %}
     </a>
+  </section>
+
+  <section class="card">
+    <h2>Adaptive Engine Debug</h2>
+    <p>Inspect a student's current routing attempt, cumulative evidence, decision, and delivery history.</p>
+    <a class="btn" href="{{ url_for('owner_adaptive_debug') }}">Open Adaptive Debug</a>
   </section>
 
   <section class="card">
@@ -4528,8 +5459,14 @@ th{background:#eef4ec;color:#234b35}.name{font-weight:700}.empty{color:#7a837b}
           <td>
             {% if person.instructional_authorization == 'Teacher' %}
               <span class="empty">Authorized</span>
+              <a class="btn" href="{{ url_for('owner_confirm_teacher_revocation', user_id=person.user_id) }}">Revoke Teacher</a>
             {% else %}
               <a class="btn" href="{{ url_for('owner_confirm_teacher_authorization', user_id=person.user_id) }}">Authorize as Teacher</a>
+            {% endif %}
+            {% if person.account_status == 'Deactivated' %}
+              <a class="btn" href="{{ url_for('owner_confirm_account_reactivation', user_id=person.user_id) }}">Reactivate</a>
+            {% else %}
+              <a class="btn" href="{{ url_for('owner_confirm_account_deactivation', user_id=person.user_id) }}">Deactivate</a>
             {% endif %}
           </td>
         </tr>
@@ -4653,6 +5590,259 @@ def owner_authorize_teacher(user_id):
         if outcome == "granted"
         else "This account was already authorized as a teacher."
     )
+    return redirect(url_for("owner_people_access"))
+
+
+def owner_account_target(conn, user_id):
+    return conn.execute(
+        """
+        SELECT u.*,
+               COALESCE(
+                 (SELECT i.display_name FROM user_auth_identities i
+                  WHERE i.user_id=u.id AND i.revoked_at IS NULL
+                  ORDER BY i.last_login_at DESC, i.identity_id DESC LIMIT 1),
+                 u.username
+               ) AS display_name
+        FROM users u WHERE u.id=?
+        """,
+        (user_id,),
+    ).fetchone()
+
+
+@app.get("/owner/people-access/<int:user_id>/revoke-teacher")
+@owner_required
+def owner_confirm_teacher_revocation(user_id):
+    conn = get_conn()
+    try:
+        target = owner_account_target(conn, user_id)
+        active_classes = conn.execute(
+            """
+            SELECT class_id, name FROM class_sections
+            WHERE teacher_user_id=? AND is_active=1 ORDER BY name
+            """,
+            (user_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+    if not target:
+        abort(404)
+    return render_template_string(
+        """
+<!doctype html><title>Confirm Teacher Revocation</title>
+<main style="font-family:Arial;max-width:680px;margin:40px auto">
+<h1>Confirm Teacher Revocation</h1>
+<p>Revoke Teacher Workspace access for <strong>{{ target['display_name'] }}</strong>?</p>
+{% if active_classes %}
+<p>This authorization cannot be revoked until these active classes are reassigned or archived:</p>
+<ul>{% for c in active_classes %}<li>{{ c['name'] }} ({{ c['class_id'] }})</li>{% endfor %}</ul>
+{% else %}
+<form method="post" action="{{ url_for('owner_revoke_teacher', user_id=target['id']) }}">
+<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+<label>Reason <input name="reason"></label>
+<button type="submit">Revoke Teacher Authorization</button>
+</form>
+{% endif %}
+<p><a href="{{ url_for('owner_people_access') }}">Cancel</a></p>
+</main>
+        """,
+        target=target, active_classes=active_classes, csrf_token=owner_csrf_token(),
+    )
+
+
+@app.post("/owner/people-access/<int:user_id>/revoke-teacher")
+@owner_required
+def owner_revoke_teacher(user_id):
+    require_owner_csrf()
+    actor = current_user()["id"]
+    conn = get_conn()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        target = owner_account_target(conn, user_id)
+        if not target:
+            conn.rollback()
+            abort(404)
+        active_classes = conn.execute(
+            "SELECT class_id, name FROM class_sections WHERE teacher_user_id=? AND is_active=1",
+            (user_id,),
+        ).fetchall()
+        authorization = conn.execute(
+            """
+            SELECT authorization_id FROM user_instructional_authorizations
+            WHERE user_id=? AND instructional_role='teacher' AND revoked_at IS NULL
+            """,
+            (user_id,),
+        ).fetchone()
+        outcome = "already_revoked"
+        authorization_id = None
+        if active_classes and authorization:
+            outcome = "blocked_active_classes"
+        elif authorization:
+            authorization_id = authorization["authorization_id"]
+            conn.execute(
+                """
+                UPDATE user_instructional_authorizations
+                SET revoked_at=?, revoked_by=?, revoke_note=?
+                WHERE authorization_id=? AND revoked_at IS NULL
+                """,
+                (int(time.time()), actor, request.form.get("reason", "").strip() or None,
+                 authorization_id),
+            )
+            outcome = "revoked"
+        conn.execute(
+            """
+            INSERT INTO authorization_lifecycle_audit_log
+              (actor_user_id,target_user_id,action,authorization_id,outcome,reason,created_at)
+            VALUES (?,?,'teacher_revoked',?,?,?,?)
+            """,
+            (actor, user_id, authorization_id, outcome,
+             request.form.get("reason", "").strip() or None, int(time.time())),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    if outcome == "blocked_active_classes":
+        flash("Teacher authorization was not revoked. Reassign or archive active classes first.")
+    elif outcome == "revoked":
+        flash("Teacher authorization revoked.")
+    else:
+        flash("Teacher authorization was already revoked.")
+    return redirect(url_for("owner_people_access"))
+
+
+def render_account_lifecycle_confirmation(target, action):
+    is_deactivate = action == "deactivate"
+    return render_template_string(
+        """
+<!doctype html><title>Confirm Account {{ 'Deactivation' if is_deactivate else 'Reactivation' }}</title>
+<main style="font-family:Arial;max-width:680px;margin:40px auto">
+<h1>Confirm Account {{ 'Deactivation' if is_deactivate else 'Reactivation' }}</h1>
+<p>Account: <strong>{{ target['display_name'] }}</strong></p>
+<form method="post">
+<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+{% if is_deactivate %}
+<label>Type <strong>{{ target['display_name'] }}</strong>
+<input name="confirmation" required autocomplete="off"></label>
+{% endif %}
+<p><label>Reason <input name="reason" required></label></p>
+<button type="submit">{{ 'Deactivate Account' if is_deactivate else 'Reactivate Account' }}</button>
+</form>
+<p><a href="{{ url_for('owner_people_access') }}">Cancel</a></p>
+</main>
+        """,
+        target=target, is_deactivate=is_deactivate, csrf_token=owner_csrf_token(),
+    )
+
+
+@app.get("/owner/people-access/<int:user_id>/deactivate")
+@owner_required
+def owner_confirm_account_deactivation(user_id):
+    conn = get_conn()
+    try:
+        target = owner_account_target(conn, user_id)
+    finally:
+        conn.close()
+    if not target:
+        abort(404)
+    return render_account_lifecycle_confirmation(target, "deactivate")
+
+
+@app.post("/owner/people-access/<int:user_id>/deactivate")
+@owner_required
+def owner_deactivate_account(user_id):
+    require_owner_csrf()
+    actor = current_user()["id"]
+    conn = get_conn()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        target = owner_account_target(conn, user_id)
+        if not target:
+            conn.rollback()
+            abort(404)
+        if request.form.get("confirmation", "") != target["display_name"]:
+            conn.rollback()
+            abort(400, description="The typed confirmation did not match.")
+        outcome = "already_deactivated"
+        if int(target["is_active"] or 0) == 1:
+            target_is_owner = conn.execute(
+                """
+                SELECT 1 FROM user_platform_roles
+                WHERE user_id=? AND platform_role='owner' AND revoked_at IS NULL
+                """, (user_id,),
+            ).fetchone()
+            active_owner_count = conn.execute(
+                """
+                SELECT COUNT(DISTINCT p.user_id)
+                FROM user_platform_roles p JOIN users u ON u.id=p.user_id
+                WHERE p.platform_role='owner' AND p.revoked_at IS NULL AND u.is_active=1
+                """
+            ).fetchone()[0]
+            if target_is_owner and active_owner_count <= 1:
+                outcome = "blocked_last_owner"
+            else:
+                conn.execute("UPDATE users SET is_active=0 WHERE id=?", (user_id,))
+                outcome = "deactivated"
+        conn.execute(
+            """
+            INSERT INTO account_lifecycle_audit_log
+              (actor_user_id,target_user_id,action,outcome,reason,created_at)
+            VALUES (?,?,'account_deactivated',?,?,?)
+            """,
+            (actor, user_id, outcome, request.form.get("reason", "").strip(),
+             int(time.time())),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    flash({
+        "deactivated": "Account deactivated.",
+        "already_deactivated": "Account was already deactivated.",
+        "blocked_last_owner": "Account was not deactivated because it is the only active Owner.",
+    }[outcome])
+    return redirect(url_for("owner_people_access"))
+
+
+@app.get("/owner/people-access/<int:user_id>/reactivate")
+@owner_required
+def owner_confirm_account_reactivation(user_id):
+    conn = get_conn()
+    try:
+        target = owner_account_target(conn, user_id)
+    finally:
+        conn.close()
+    if not target:
+        abort(404)
+    return render_account_lifecycle_confirmation(target, "reactivate")
+
+
+@app.post("/owner/people-access/<int:user_id>/reactivate")
+@owner_required
+def owner_reactivate_account(user_id):
+    require_owner_csrf()
+    actor = current_user()["id"]
+    conn = get_conn()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        target = owner_account_target(conn, user_id)
+        if not target:
+            conn.rollback()
+            abort(404)
+        outcome = "already_active"
+        if int(target["is_active"] or 0) == 0:
+            conn.execute("UPDATE users SET is_active=1 WHERE id=?", (user_id,))
+            outcome = "reactivated"
+        conn.execute(
+            """
+            INSERT INTO account_lifecycle_audit_log
+              (actor_user_id,target_user_id,action,outcome,reason,created_at)
+            VALUES (?,?,'account_reactivated',?,?,?)
+            """,
+            (actor, user_id, outcome, request.form.get("reason", "").strip(),
+             int(time.time())),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    flash("Account reactivated." if outcome == "reactivated" else "Account is already active.")
     return redirect(url_for("owner_people_access"))
 
 
@@ -5054,13 +6244,36 @@ def record_attempt_and_response(
     else:
         lvl = 1
 
+    if std_id != "UNKNOWN" and obj_id_for_level:
+        level_attempt = ensure_routing_level_attempt(
+            conn,
+            student_id=student_id,
+            standard_id=std_id,
+            objective_id=obj_id_for_level,
+            level=lvl,
+            started_at=ts,
+        )
+        routing_level_attempt_id = level_attempt["attempt_id"]
+    else:
+        routing_level_attempt_id = None
+
     # Insert into responses
     conn.execute(
         """
-        INSERT INTO responses (student_id, standard_id, level, question_id, correct, ts)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO responses
+          (student_id, standard_id, level, question_id, correct, ts,
+           routing_level_attempt_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
-        (student_id, std_id, lvl, question_id, is_correct, ts),
+        (
+            student_id,
+            std_id,
+            lvl,
+            question_id,
+            is_correct,
+            ts,
+            routing_level_attempt_id,
+        ),
     )
 
     return std_id, lvl, ts
@@ -5163,20 +6376,27 @@ def import_csv():
                 oid = (r.get("objective_id") or "").strip()
                 sid = (r.get("standard_id") or "").strip()
                 text = (r.get("objective_text") or "").strip()
+                objective_display_name = (r.get("display_name") or "").strip()
+                student_description = (r.get("student_description") or "").strip() or None
                 order_val = r.get("order_in_band") or ""
                 try:
                     order_val = int(order_val) if order_val != "" else None
                 except ValueError:
                     order_val = None
-                if not oid or not sid:
-                    continue
+                if not oid or not sid or not objective_display_name:
+                    raise ValueError(
+                        "Every imported objective requires objective_id, "
+                        "standard_id, and display_name."
+                    )
                 conn.execute(
                     """
                     INSERT OR REPLACE INTO objectives
-                      (objective_id, standard_id, objective_text, order_in_band)
-                    VALUES (?, ?, ?, ?)
+                      (objective_id, standard_id, objective_text, display_name,
+                       student_description, order_in_band)
+                    VALUES (?, ?, ?, ?, ?, ?)
                     """,
-                    (oid, sid, text, order_val),
+                    (oid, sid, text, objective_display_name,
+                     student_description, order_val),
                 )
 
         elif dataset == "questions":
@@ -7288,6 +8508,7 @@ def index():
                       <span style="font-size:12px;color:#6b7280;">
                         ({{ s['student_id'] }}; student period {{ s['class_period'] or 'Not set' }})
                       </span>
+                      <a class="btn-mini" href="{{ url_for('teacher_confirm_archive_enrollment', class_id=c['class_id'], student_id=s['student_id']) }}">Remove from Class</a>
                     </li>
                   {% endfor %}
                 </ul>
@@ -7588,6 +8809,7 @@ def index():
     {% endif %}
   </div>
 
+  {% if false %}
   <div class="card">
     <h2>User Accounts</h2>
     <p style="font-size:14px;color:#555;">
@@ -7671,6 +8893,7 @@ def index():
       <p><em>No users in the system yet.</em></p>
     {% endif %}
   </div>
+  {% endif %}
 
 </div> <!-- end admin setup grid -->
 
@@ -7867,6 +9090,8 @@ def student_view():
     feedback = None
 
     role = session.get("role")
+    if role == "student" and request.args.get("home") == "1":
+        session["current_mode"] = "home"
     if "current_mode" not in session:
         session["current_mode"] = "home" if role == "student" else "question"
     if "locked_payload" not in session:
@@ -8001,6 +9226,29 @@ WHERE o.standard_id = ?
             """,
             (student_id, std, objective_id, now),
         )
+        level_row = conn.execute(
+            """
+            SELECT current_level FROM progress_state
+            WHERE student_id = ? AND standard_id = ?
+            """,
+            (student_id, std),
+        ).fetchone()
+        ensure_routing_level_attempt(
+            conn,
+            student_id=student_id,
+            standard_id=std,
+            objective_id=objective_id,
+            level=int(level_row["current_level"]) if level_row else 1,
+            boundary_reason="objective_transition",
+            started_at=now,
+        )
+        ensure_student_growth_attempt(
+            conn,
+            student_id,
+            std,
+            objective_id,
+            commit=False,
+        )
         conn.commit()
 
     def get_engine_target():
@@ -8030,6 +9278,38 @@ WHERE o.standard_id = ?
         return "MS-LS1-1", 1, "MS-LS1-1A", ps
 
     current_std, current_level, objective_id, progress_row = get_engine_target()
+    objective_meta = conn.execute(
+        """
+        SELECT objective_id, objective_text, display_name, student_description
+        FROM objectives WHERE objective_id=?
+        """,
+        (objective_id,),
+    ).fetchone() if objective_id else None
+    objective_display_name = (
+        row_get(objective_meta, "display_name", None)
+        or row_get(objective_meta, "objective_text", None)
+        or "Learning Objective"
+    )
+    teacher_attribution = None
+    if role == "student" and student_id:
+        teacher_rows = conn.execute(
+            """
+            SELECT DISTINCT COALESCE(
+              (SELECT i.display_name FROM user_auth_identities i
+               WHERE i.user_id=u.id AND i.revoked_at IS NULL
+               ORDER BY i.last_login_at DESC, i.identity_id DESC LIMIT 1),
+              u.username
+            ) AS teacher_name
+            FROM class_enrollments ce
+            JOIN class_sections cs ON cs.class_id=ce.class_id
+            JOIN users u ON u.id=cs.teacher_user_id
+            WHERE ce.student_id=? AND ce.is_active=1 AND cs.is_active=1
+              AND u.is_active=1
+            """,
+            (student_id,),
+        ).fetchall()
+        if len(teacher_rows) == 1:
+            teacher_attribution = teacher_rows[0]["teacher_name"]
 
     if role == "teacher":
         requested_objective = request.values.get("objective_id")
@@ -8042,11 +9322,17 @@ WHERE o.standard_id = ?
             current_std = std_row["standard_id"] if std_row else current_std
             current_level = get_level_for_objective(conn, objective_id)
 
+    growth_attempt = (
+        ensure_student_growth_attempt(conn, student_id, current_std, objective_id)
+        if role == "student" and student_id and objective_id
+        else None
+    )
+
     # Completion page for the temporary MS-LS1-1 walkthrough.
     if progress_row and progress_row["standard_id"] == "MS-LS1-1" and progress_row["status"] == "completed":
         html_done = """
 <!doctype html>
-<title>MS-LS1-1 Complete</title>
+<title>Understanding Grown</title>
 <style>
   body{font-family:Arial, Helvetica, sans-serif;margin:24px;background:#f3f4f6}
   .card{max-width:700px;margin:0 auto 16px auto;background:#fff;border-radius:10px;padding:16px 20px;border:1px solid #e5e7eb}
@@ -8054,7 +9340,12 @@ WHERE o.standard_id = ?
 </style>
 <div class="card">
   <h2>✅ MS-LS1-1 Complete</h2>
-  <p>You completed the MS-LS1-1 walkthrough.</p>
+  <section role="status" aria-label="Growing Understanding">
+    <h2>Growing Understanding</h2>
+    <p aria-label="Completed cumulative learning plant">🌳 Your learning plant is fully rooted.</p>
+    <div role="progressbar" aria-label="Growing Understanding" aria-valuetext="This understanding has taken root." style="height:12px;background:#e1e7e2;border-radius:999px;overflow:hidden;"><div style="height:100%;width:100%;background:#2f6f4e;"></div></div>
+    <p><strong>Completed</strong> — This understanding has taken root.</p>
+  </section>
   <p style="font-size:13px;color:#555;">Logged in as <strong>{{ session.get('username', 'student') }}</strong></p>
   <p><a class="btn" href="{{ url_for('logout') }}" style="background:#dc2626;">Logout</a></p>
 </div>
@@ -8087,90 +9378,80 @@ WHERE o.standard_id = ?
         qid = request.form.get("question_id")
         resp = request.form.get("response")
 
-        if not qid and objective_id:
+        if not qid and objective_id and role == "teacher":
             qid = get_any_question_id(conn, objective_id)
 
         if qid:
-            row = conn.execute(
-                "SELECT answer_key FROM questions WHERE question_id=?",
-                (qid,),
-            ).fetchone()
-            correct = 1 if row and row["answer_key"] == resp else 0
+            if role == "student":
+                consumed_delivery = consume_student_question_delivery(
+                    conn,
+                    submission_token=request.form.get("submission_token", ""),
+                    student_id=student_id,
+                    growth_attempt_id=row_get(growth_attempt, "attempt_id", ""),
+                    standard_id=current_std,
+                    objective_id=objective_id,
+                    level=current_level,
+                    submitted_question_id=qid,
+                    response=resp,
+                )
+                if not consumed_delivery:
+                    flash(
+                        "That question was already submitted or is no longer active. "
+                        "Your current question is shown below."
+                    )
+                    return redirect(url_for("student_view"))
+                correct = consumed_delivery["correct"]
+                std_id = consumed_delivery["standard_id"]
+                lvl = consumed_delivery["level"]
+                ts = consumed_delivery["timestamp"]
+                qid = consumed_delivery["question_id"]
+            else:
+                row = conn.execute(
+                    "SELECT answer_key FROM questions WHERE question_id=?",
+                    (qid,),
+                ).fetchone()
+                correct = 1 if row and row["answer_key"] == resp else 0
+                std_id, lvl, ts = record_attempt_and_response(
+                    conn,
+                    student_id=student_id,
+                    question_id=qid,
+                    response=resp,
+                    is_correct=correct,
+                    objective_id=objective_id,
+                    attempt_prefix="ST",
+                )
+                conn.commit()
 
-            std_row = conn.execute(
-                "SELECT standard_id FROM objectives WHERE objective_id=?",
-                (objective_id,),
-            ).fetchone()
-            current_std_id = std_row["standard_id"] if std_row else current_std
-
-            level_override = current_level if role == "student" else None
-
-            std_id, lvl, ts = record_attempt_and_response(
-                conn,
-                student_id=student_id,
-                question_id=qid,
-                response=resp,
-                is_correct=correct,
-                objective_id=objective_id,
-                level_override=level_override,
-                attempt_prefix="ST",
-            )
-            conn.commit()
-
+            submitted_growth_attempt_id = row_get(growth_attempt, "attempt_id", None)
             engine_decision = None
             engine_summary = None
+            objective_transition = False
 
             if std_id != "UNKNOWN":
-                recent_count_row = conn.execute(
-                    """
-                    SELECT COUNT(*) AS n
-                    FROM responses r
-                    JOIN questions q ON q.question_id = r.question_id
-                    WHERE r.student_id = ?
-                      AND r.standard_id = ?
-                      AND r.level = ?
-                      AND q.objective_id = ?
-                    """,
-                    (student_id, std_id, lvl, objective_id),
-                ).fetchone()
+                engine_decision = ae.process_after_response(student_id, std_id)
 
-                recent_count = int(recent_count_row["n"] or 0) if recent_count_row else 0
+                if (
+                    isinstance(engine_decision, dict)
+                    and engine_decision.get("action") in ("next_standard_found", "standard_complete")
+                ):
+                    next_objective = get_next_objective_for_standard(
+                        std_id,
+                        objective_id,
+                    )
 
-                if recent_count < 7:
-                    avg_now = ae.rolling7_avg(student_id, std_id, lvl)
-                    ae.set_state(student_id, std_id, lvl, "practicing", avg_now)
-                    engine_decision = {
-                        "status": "question",
-                        "action": "collect_rolling7",
-                        "standard": std_id,
-                        "level": lvl,
-                        "avg": avg_now,
-                        "reason": f"collecting_data_{recent_count}_of_7",
-                    }
-                else:
-                    engine_decision = ae.process_after_response(student_id, std_id)
+                    if next_objective:
+                        objective_transition = True
+                        ae.set_state(student_id, std_id, 1, "practicing", 0.0)
+                        set_student_objective(student_id, std_id, next_objective)
 
-                    if (
-                        isinstance(engine_decision, dict)
-                        and engine_decision.get("action") in ("next_standard_found", "standard_complete")
-                    ):
-                        next_objective = get_next_objective_for_standard(
-                            std_id,
-                            objective_id,
-                        )
-
-                        if next_objective:
-                            ae.set_state(student_id, std_id, 1, "practicing", 0.0)
-                            set_student_objective(student_id, std_id, next_objective)
-
-                            engine_decision = {
-                                "status": "question",
-                                "action": "next_objective_found",
-                                "standard": std_id,
-                                "level": 1,
-                                "objective": next_objective,
-                                "reason": "next_objective_in_standard_found",
-                            }
+                        engine_decision = {
+                            "status": "question",
+                            "action": "next_objective_found",
+                            "standard": std_id,
+                            "level": 1,
+                            "objective": next_objective,
+                            "reason": "next_objective_in_standard_found",
+                        }
 
                 if isinstance(engine_decision, dict):
                     action = engine_decision.get("action")
@@ -8208,6 +9489,18 @@ WHERE o.standard_id = ?
                     session["locked_payload"] = None
                     session.pop("terminal_completion_payload", None)
 
+                if submitted_growth_attempt_id:
+                    update_student_growth_presentation(
+                        conn,
+                        submitted_growth_attempt_id,
+                        correct=bool(correct),
+                        engine_decision=(
+                            {"status": "complete", "action": "objective_complete"}
+                            if objective_transition
+                            else engine_decision
+                        ),
+                    )
+
             feedback = {
                 "correct": bool(correct),
                 "engine_summary": engine_summary,
@@ -8216,17 +9509,60 @@ WHERE o.standard_id = ?
 
             # Re-read engine target after response processing.
             current_std, current_level, objective_id, progress_row = get_engine_target()
+            objective_meta = conn.execute(
+                """
+                SELECT objective_id, objective_text, display_name, student_description
+                FROM objectives WHERE objective_id=?
+                """,
+                (objective_id,),
+            ).fetchone() if objective_id else None
+            objective_display_name = (
+                row_get(objective_meta, "display_name", None)
+                or row_get(objective_meta, "objective_text", None)
+                or "Learning Objective"
+            )
+            growth_attempt = (
+                ensure_student_growth_attempt(conn, student_id, current_std, objective_id)
+                if role == "student"
+                and objective_id
+                and session.get("current_mode") != "completed"
+                else growth_attempt
+            )
+            if (
+                objective_transition
+                and row_get(growth_attempt, "attempt_id", None)
+                and row_get(growth_attempt, "attempt_id", None) != submitted_growth_attempt_id
+            ):
+                session["growth_transition_attempt_id"] = growth_attempt["attempt_id"]
+            if (
+                row_get(growth_attempt, "attempt_id", None)
+                and row_get(growth_attempt, "attempt_id", None) != submitted_growth_attempt_id
+                and isinstance(engine_decision, dict)
+                and engine_decision.get("action")
+                in {"drop_level", "remediate_lower_band", "locked"}
+            ):
+                growth_attempt = update_student_growth_presentation(
+                    conn,
+                    growth_attempt["attempt_id"],
+                    correct=False,
+                    engine_decision=engine_decision,
+                )
+            if role == "student":
+                session["student_feedback"] = {"correct": bool(correct)}
+                return redirect(url_for("student_view"))
         else:
+            if role == "student":
+                flash(
+                    "That question was already submitted or is no longer active. "
+                    "Your current question is shown below."
+                )
+                return redirect(url_for("student_view"))
             feedback = {"error": "No question found for this objective."}
 
     if session.get("current_mode") == "completed":
-        terminal_payload = session.get("terminal_completion_payload") or {}
-        completed_standard = terminal_payload.get("standard", current_std)
-        completed_reason = terminal_payload.get("reason", "standard_complete")
-
         html_done = """
 <!doctype html>
-<title>Standard Complete</title>
+<title>Understanding Grown</title>
 <style>
   body{font-family:Arial, Helvetica, sans-serif;margin:24px;background:#f3f4f6}
   .card{max-width:720px;margin:0 auto;background:#fff;border-radius:10px;padding:20px 24px;border:1px solid #e5e7eb}
@@ -8235,10 +9571,13 @@ WHERE o.standard_id = ?
 </style>
 <div class="card">
   <h2>🎉 Standard Complete!</h2>
-  <p>Congratulations! You have completed all objectives for this standard.</p>
-  <p>There are no additional learning pathways assigned at this time.</p>
-  <p class="muted">Completed standard: <strong>{{ completed_standard }}</strong></p>
-  <p class="muted">Reason: {{ completed_reason }}</p>
+  <section role="status" aria-label="Growing Understanding">
+    <h2>Growing Understanding</h2>
+    <p aria-label="Completed cumulative learning plant">🌳 Your learning plant is fully rooted.</p>
+    <div role="progressbar" aria-label="Growing Understanding" aria-valuetext="This understanding has taken root." style="height:12px;background:#e1e7e2;border-radius:999px;overflow:hidden;"><div style="height:100%;width:100%;background:#2f6f4e;"></div></div>
+    <p><strong>Completed</strong> — This understanding has taken root.</p>
+  </section>
+  <p>RootED has saved your learning and will keep your existing pathway ready.</p>
 
   <form method="post" style="margin-top:16px;">
     <input type="hidden" name="action" value="return_dashboard">
@@ -8246,11 +9585,7 @@ WHERE o.standard_id = ?
   </form>
 </div>
         """
-        return render_template_string(
-            html_done,
-            completed_standard=completed_standard,
-            completed_reason=completed_reason,
-        )
+        return render_template_string(html_done)
 
     available_standards = get_available_standards(conn)
     progress_by_standard = get_progress_by_standard(conn, student_id)
@@ -8296,17 +9631,11 @@ WHERE o.standard_id = ?
             standard["status_label"] = "Review"
             standard["status_class"] = "review"
     current_standard_meta = get_standard_meta(conn, current_std)
-    response_count = get_response_count_for_level(conn, student_id, current_std, current_level)
-    rolling_avg = evidence_aware_rolling_avg(row_get(progress_row, "rolling_avg", None), response_count)
-    progress_percent = max(0, min(100, round((rolling_avg or 0.0) * 100)))
-    progress_label = (
-        f"{progress_percent}%"
-        if rolling_avg is not None
-        else "No check-ins yet"
+    growth_view = student_growth_view_model(
+        growth_attempt,
+        reviewing=session.get("current_mode") == "locked",
     )
-    progress_status = row_get(progress_row, "status", "not started")
-    response_goal = 7
-    response_percent = max(0, min(100, round((response_count / response_goal) * 100)))
+    plant_view = cumulative_plant_view_model(conn, student_id, current_std)
     current_core_idea = row_get(current_standard_meta, "core_idea", "Science")
     current_grade_band = row_get(current_standard_meta, "grade_band", "Current band")
 
@@ -8372,12 +9701,27 @@ WHERE o.standard_id = ?
   .pill-progress{background:#e6f0f6;color:#24506d}
   .pill-available{background:#f4efe5;color:#7a5729}
   .pill-review{background:#fff0cf;color:#7a4d00}
-  .stats{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
-  .stat{background:rgba(255,255,255,.72);border:1px solid rgba(47,111,78,.13);border-radius:8px;padding:12px}
-  .stat strong{display:block;font-size:22px;color:#1f3d2f;margin-top:4px}
-  .progress{height:12px;background:#e1e7e2;border-radius:999px;overflow:hidden;margin:10px 0 6px}
-  .bar{height:100%;background:linear-gradient(90deg,var(--leaf),#6b9b58);width:{{ progress_percent }}%}
-  .response-bar{height:100%;background:linear-gradient(90deg,var(--gold),#d7aa58);width:{{ response_percent }}%}
+  .growth{margin-top:14px;background:rgba(255,255,255,.72);border:1px solid rgba(47,111,78,.13);border-radius:8px;padding:14px}
+  .growth-head{display:flex;justify-content:space-between;gap:12px;align-items:center}
+  .growth-title{font-weight:850;color:#1f3d2f}
+  .growth-status{font-weight:800}
+  .growth-focus{margin:10px 0 0;color:#536259}
+  .growth-focus-label{display:block;font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase}
+  .growth-focus-text{display:block;margin-top:2px;font-size:13px;font-weight:500;line-height:1.4}
+  .plant-summary{display:flex;align-items:center;gap:10px;margin:12px 0;padding:10px;border-radius:8px;background:#f3f8ee}
+  .plant-visual{min-width:54px;font-size:24px;letter-spacing:-5px}.plant-visual span{display:none}
+  .plant-sprout .sprout,.plant-first-branch .sprout,.plant-first-branch .leaf-one,
+  .plant-second-branch .sprout,.plant-second-branch .leaf-one,.plant-second-branch .leaf-two,
+  .plant-leafy .leafy,.plant-canopy .canopy{display:inline}
+  .plant-copy{font-size:13px;color:#405348}
+  .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+  .growth-track{height:12px;background:#e1e7e2;border-radius:999px;overflow:hidden;margin:10px 0}
+  .growth-fill{height:100%;border-radius:inherit;background:#c98f35}
+  .growth.growing .growth-fill,.growth.completed .growth-fill{background:#2f6f4e}
+  .growth.reviewing .growth-fill{background:#49657a}
+  .growth-seed{width:8%}.growth-root{width:18%}.growth-shoot{width:28%}.growth-leaf{width:38%}
+  .growth-branch{width:48%}.growth-bud{width:58%}.growth-canopy{width:68%}.growth-ready{width:78%}
+  .growth-nearly{width:88%}.growth-strong{width:94%}.growth-complete{width:100%}
   .cta-panel{display:flex;flex-direction:column;justify-content:space-between;gap:16px;background:#fffefa;border:1px solid var(--line);border-radius:8px;padding:18px}
   .cta-panel h2{margin:0;color:#183629;font-size:24px}
   .cta-panel p{margin:8px 0 0;color:#4d5e55;line-height:1.5}
@@ -8441,21 +9785,27 @@ WHERE o.standard_id = ?
         {% if current_standard_meta %}
           <div class="muted">{{ current_core_idea }} | {{ current_grade_band }}</div>
         {% endif %}
-        <div class="status-row">
-          <span class="pill pill-current">{{ progress_status }}</span>
-          <span class="muted">Level {{ current_level }}</span>
-        </div>
-        <div class="stats">
-          <div class="stat">
-            <span class="muted">Rolling-7 progress</span>
-            <strong>{{ progress_label }}</strong>
-            <div class="progress" aria-label="Rolling-7 progress"><div class="bar"></div></div>
+        <div class="growth {{ growth_view.state }}" role="status" aria-live="polite">
+          <div class="growth-head">
+            <span class="growth-title">🌱 Growing Understanding</span>
+            <span class="growth-status">{{ growth_view.label }}</span>
           </div>
-          <div class="stat">
-            <span class="muted">Responses at this level</span>
-            <strong>{{ response_count }} / 7</strong>
-            <div class="progress" aria-label="Responses collected"><div class="response-bar"></div></div>
+          <p class="growth-focus">
+            <span class="growth-focus-label">Learning Goal</span>
+            <span class="growth-focus-text">{{ objective_display_name }}</span>
+          </p>
+          <div class="plant-summary">
+            <span class="plant-visual {{ plant_view.plant_class }}" aria-hidden="true">
+              <span class="sprout">🌱</span><span class="leaf-one">🍃</span><span class="leaf-two">🍃</span>
+              <span class="leafy">🌿</span><span class="canopy">🌳</span>
+            </span>
+            <span class="plant-copy">{{ plant_view.visible_text }}</span>
+            <span class="sr-only">{{ plant_view.screen_reader_text }}</span>
           </div>
+          <div class="growth-track" role="progressbar" aria-label="Growing Understanding" aria-valuetext="{{ growth_view.message }}">
+            <div class="growth-fill {{ growth_view.stage_class }}"></div>
+          </div>
+          <div>{{ growth_view.message }}</div>
         </div>
       </div>
     </div>
@@ -8510,17 +9860,9 @@ WHERE o.standard_id = ?
             <p>{{ standard.core_idea }} | {{ standard.grade_band }}</p>
             <div class="standard-meta">
               <span>{{ standard.objective_count }} objectives</span>
-              <span>{{ standard.question_count }} questions</span>
-              {% if standard.level %}
-                <span>Level {{ standard.level }}</span>
-              {% endif %}
             </div>
             {% if standard.question_count == 0 %}
               <p class="muted">Questions are not available for this standard yet.</p>
-            {% elif standard.rolling_avg is not none %}
-              <p class="muted">Latest Rolling-7 average: {{ (standard.rolling_avg * 100)|round|int }}%</p>
-            {% elif standard.response_count == 0 and standard.level %}
-              <p class="muted">No responses yet.</p>
             {% endif %}
           </section>
         {% endfor %}
@@ -8541,16 +9883,21 @@ WHERE o.standard_id = ?
             current_level=current_level,
             current_core_idea=current_core_idea,
             current_grade_band=current_grade_band,
-            progress_percent=progress_percent,
-            progress_label=progress_label,
-            response_percent=response_percent,
-            progress_status=progress_status,
-            response_count=response_count,
+            growth_view=growth_view,
+            plant_view=plant_view,
+            objective_display_name=objective_display_name,
             enrolled_classes=enrolled_classes,
         )
 
     locked_review = session.get("locked_payload") if session.get("current_mode") == "locked" else None
+    growth_view = student_growth_view_model(growth_attempt, reviewing=bool(locked_review))
+    plant_view = cumulative_plant_view_model(conn, student_id, current_std)
+    transition_announcement = (
+        session.pop("growth_transition_attempt_id", None)
+        == row_get(growth_attempt, "attempt_id", None)
+    )
     current_question = None
+    current_delivery = None
     current_model_asset = None
 
     if not locked_review and objective_id:
@@ -8582,20 +9929,33 @@ WHERE o.standard_id = ?
                 level_qrows = level_3_rows if level_3_rows else level_2_rows or level_1_rows
 
             if level_qrows:
-                qids = [row["question_id"] for row in level_qrows]
-                placeholders = ",".join(["?"] * len(qids))
-                attempt_row = conn.execute(
-                    f"""
-                    SELECT COUNT(*) AS n
-                    FROM attempts
-                    WHERE student_id = ?
-                      AND question_id IN ({placeholders})
-                    """,
-                    [student_id] + qids,
-                ).fetchone()
-                attempt_count = attempt_row["n"] if attempt_row else 0
-                question_index = attempt_count % len(level_qrows)
-                current_question = level_qrows[question_index]
+                if role == "student" and growth_attempt:
+                    current_delivery, current_question = (
+                        get_or_create_student_question_delivery(
+                            conn,
+                            student_id=student_id,
+                            growth_attempt_id=growth_attempt["attempt_id"],
+                            standard_id=current_std,
+                            objective_id=objective_id,
+                            level=current_level,
+                            eligible_questions=level_qrows,
+                        )
+                    )
+                else:
+                    qids = [row["question_id"] for row in level_qrows]
+                    placeholders = ",".join(["?"] * len(qids))
+                    attempt_row = conn.execute(
+                        f"""
+                        SELECT COUNT(*) AS n
+                        FROM attempts
+                        WHERE student_id = ?
+                          AND question_id IN ({placeholders})
+                        """,
+                        [student_id] + qids,
+                    ).fetchone()
+                    attempt_count = attempt_row["n"] if attempt_row else 0
+                    question_index = attempt_count % len(level_qrows)
+                    current_question = level_qrows[question_index]
                 resolved_asset = resolve_model_asset_for_question(
                     conn,
                     current_question["question_id"],
@@ -8604,14 +9964,14 @@ WHERE o.standard_id = ?
 
     student_html = """
 <!doctype html>
-<title>Adaptive NGSS - Student Practice</title>
+<title>RootED Learning</title>
 <style>
   body{font-family:Arial, Helvetica, sans-serif;margin:24px;background:#f3f4f6}
   .card{max-width:700px;margin:0 auto 16px auto;background:#fff;
         border-radius:10px;padding:16px 20px;border:1px solid #e5e7eb}
   .header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
-  .btn{background:#2563eb;color:#fff;border:none;padding:8px 12px;border-radius:8px;cursor:pointer}
-  .choice{margin:4px 0;}
+  .btn{background:#2f6f4e;color:#fff;border:none;padding:9px 13px;border-radius:8px;cursor:pointer;text-decoration:none;display:inline-block}
+  .choice{margin:8px 0;padding:8px;border:1px solid #e5e7eb;border-radius:8px}
   .ok{color:#16a34a}
   .bad{color:#dc2626}
   input,select,textarea{padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px}
@@ -8629,21 +9989,73 @@ WHERE o.standard_id = ?
   .enrollment-box{border:1px solid #d7dee8;border-radius:8px;background:#f8fafc;padding:12px;margin:12px 0}
   .class-chip{display:inline-block;background:#e7f7ee;color:#0f6b3a;border:1px solid #a8e0bf;border-radius:999px;padding:4px 8px;margin:3px;font-size:12px}
   .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+  :focus-visible{outline:3px solid #c98f35;outline-offset:3px}
+  .learning-meta{color:#55645b;font-size:14px;line-height:1.5}
+  .growth{margin:14px 0 18px;border:1px solid #d7e2d5;border-radius:10px;padding:14px;background:#fbfdf9}
+  .growth-head{display:flex;justify-content:space-between;align-items:center;gap:12px}
+  .growth-title{font-weight:800;color:#234b35}.growth-status{font-weight:800;color:#8a611e}
+  .growth-focus{margin:10px 0 0;color:#536259}
+  .growth-focus-label{display:block;font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase}
+  .growth-focus-text{display:block;margin-top:2px;font-size:13px;font-weight:500;line-height:1.4}
+  .assessment{margin-top:30px;padding-top:24px;border-top:1px solid #e2e8e3}
+  .assessment-label{margin:0 0 7px;color:#637067;font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase}
+  .assessment-question{margin:0 0 18px;color:#17261e;font-size:clamp(22px,3.4vw,30px);line-height:1.3;font-weight:800}
+  .transition-note{margin:10px 0;padding:9px 11px;border-left:4px solid #2f6f4e;background:#eef6ea;color:#234b35;font-weight:700}
+  .plant-summary{display:flex;align-items:center;gap:10px;margin:12px 0;padding:10px;border-radius:8px;background:#f3f8ee}
+  .plant-visual{min-width:54px;font-size:24px;letter-spacing:-5px}.plant-visual span{display:none}
+  .plant-sprout .sprout,.plant-first-branch .sprout,.plant-first-branch .leaf-one,
+  .plant-second-branch .sprout,.plant-second-branch .leaf-one,.plant-second-branch .leaf-two,
+  .plant-leafy .leafy,.plant-canopy .canopy{display:inline}
+  .plant-copy{font-size:13px;color:#405348}
+  .growth.growing .growth-status,.growth.completed .growth-status{color:#2f6f4e}
+  .growth.reviewing .growth-status{color:#49657a}
+  .growth-track{height:12px;background:#e1e7e2;border-radius:999px;overflow:hidden;margin:10px 0}
+  .growth-fill{height:100%;border-radius:inherit;background:#c98f35}
+  .growth.growing .growth-fill,.growth.completed .growth-fill{background:#2f6f4e}
+  .growth.reviewing .growth-fill{background:#49657a}
+  .growth-seed{width:8%}.growth-root{width:18%}.growth-shoot{width:28%}.growth-leaf{width:38%}
+  .growth-branch{width:48%}.growth-bud{width:58%}.growth-canopy{width:68%}.growth-ready{width:78%}
+  .growth-nearly{width:88%}.growth-strong{width:94%}.growth-complete{width:100%}
+  @media(max-width:600px){body{margin:12px}.card{padding:14px}.header{align-items:flex-start;gap:12px}}
 </style>
 
 <div class="card">
   <div class="header">
     <div>
-      <h2 style="margin:0;">Student Practice TEST-16</h2>
+      <h2 style="margin:0;color:#234b35;">RootED Learning</h2>
       <p style="font-size:13px;color:#555;margin:2px 0 0 0;">
         👩‍🎓 Logged in as <strong>{{ session.get('username', 'student') }}</strong>
-        | role = <strong>{{ session.get('role') }}</strong>
+        {% if teacher_attribution %}<br>Assigned by {{ teacher_attribution }}{% endif %}
       </p>
     </div>
-    <form action="{{ url_for('logout') }}" method="get" style="margin:0;">
-      <button type="submit" class="btn" style="background:#dc2626;">Logout</button>
-    </form>
+    <a class="btn" href="{{ url_for('student_view', home=1) }}">Back to Home</a>
   </div>
+
+  <section class="growth {{ growth_view.state }}" role="status" aria-live="polite" aria-label="Growing Understanding">
+    <div class="growth-head">
+      <span class="growth-title">🌱 Growing Understanding</span>
+      <span class="growth-status">{{ growth_view.label }}</span>
+    </div>
+    <p class="growth-focus">
+      <span class="growth-focus-label">Learning Goal</span>
+      <span class="growth-focus-text">{{ objective_display_name }}</span>
+    </p>
+    {% if transition_announcement %}
+      <p class="transition-note">A new branch of learning is beginning.</p>
+    {% endif %}
+    <div class="plant-summary">
+      <span class="plant-visual {{ plant_view.plant_class }}" aria-hidden="true">
+        <span class="sprout">🌱</span><span class="leaf-one">🍃</span><span class="leaf-two">🍃</span>
+        <span class="leafy">🌿</span><span class="canopy">🌳</span>
+      </span>
+      <span class="plant-copy">{{ plant_view.visible_text }}</span>
+      <span class="sr-only">{{ plant_view.screen_reader_text }}</span>
+    </div>
+    <div class="growth-track" role="progressbar" aria-label="Growing Understanding" aria-valuetext="{{ growth_view.message }}">
+      <div class="growth-fill {{ growth_view.stage_class }}"></div>
+    </div>
+    <div>{{ growth_view.message }}</div>
+  </section>
 
   {% with msgs = get_flashed_messages() %}
     {% if msgs %}
@@ -8655,7 +10067,7 @@ WHERE o.standard_id = ?
     {% endif %}
   {% endwith %}
 
-  {% if session.get('role') == 'student' %}
+  {% if false %}
     <div class="enrollment-box">
       <form method="post" class="toolbar" style="margin:0;">
         <input type="hidden" name="action" value="join_class">
@@ -8709,14 +10121,14 @@ WHERE o.standard_id = ?
         <p class="bad"><strong>❌ Not yet. Keep trying!</strong></p>
       {% endif %}
 
-      {% if feedback.engine_summary %}
+      {% if feedback.engine_summary and session.get('role') == 'teacher' %}
         <p style="font-size:13px;color:#555;">
           Engine (standard-level): {{ feedback.engine_summary }}
         </p>
       {% endif %}
-      <p style="font-size:13px;color:#555;">
+      {% if session.get('role') == 'teacher' %}<p style="font-size:13px;color:#555;">
         Debug target: objective={{ objective_id }}
-      </p>
+      </p>{% endif %}
       <hr>
     {% endif %}
   {% endif %}
@@ -8748,13 +10160,9 @@ WHERE o.standard_id = ?
   {% endif %}
 
   {% if current_question %}
-    <h3>
-      Objective: {{ objective_id }}
-      {% if session.get('role') == 'student' %}
-        <span style="font-size:13px;color:#666;">(engine-selected, level {{ current_level }})</span>
-      {% endif %}
-    </h3>
-    <p>{{current_question['stem']}}</p>
+    <section class="assessment" aria-labelledby="question-prompt">
+    <p class="assessment-label">Assessment question</p>
+    <h2 class="assessment-question" id="question-prompt">{{current_question['stem']}}</h2>
     {% if current_model_asset %}
       <figure class="model-asset">
         {% if current_model_asset.title %}
@@ -8769,11 +10177,16 @@ WHERE o.standard_id = ?
         {% endif %}
       </figure>
     {% endif %}
-    <form method="post">
+    <form method="post" aria-labelledby="question-prompt">
       <input type="hidden" name="action" value="answer">
+      {% if session.get('role') == 'teacher' %}
       <input type="hidden" name="student_id" value="{{student_id}}">
       <input type="hidden" name="objective_id" value="{{objective_id}}">
+      {% endif %}
       <input type="hidden" name="question_id" value="{{current_question['question_id']}}">
+      {% if session.get('role') == 'student' and current_delivery %}
+      <input type="hidden" name="submission_token" value="{{ current_delivery['submission_token'] }}">
+      {% endif %}
 
       <div class="choice"><label><input type="radio" name="response" value="A" required> A. {{current_question['choice_a']}}</label></div>
       <div class="choice"><label><input type="radio" name="response" value="B"> B. {{current_question['choice_b']}}</label></div>
@@ -8804,6 +10217,7 @@ WHERE o.standard_id = ?
         </div>
       </form>
     </div>
+    </section>
   {% else %}
     <p><em>No questions are available for this objective yet.</em></p>
   {% endif %}
@@ -8837,10 +10251,16 @@ WHERE o.standard_id = ?
         student_id=student_id,
         objective_id=objective_id,
         current_question=current_question,
+        current_delivery=current_delivery,
         current_model_asset=current_model_asset,
         feedback=feedback,
         locked_review=locked_review,
         current_level=current_level,
+        objective_display_name=objective_display_name,
+        teacher_attribution=teacher_attribution,
+        growth_view=growth_view,
+        plant_view=plant_view,
+        transition_announcement=transition_announcement,
         enrolled_classes=enrolled_classes,
         flag_categories=QUESTION_FLAG_CATEGORIES,
         flag_comment_max_length=QUESTION_FLAG_COMMENT_MAX_LENGTH,
@@ -9212,44 +10632,100 @@ def diagnostic_session_v2(session_id):
 @app.route("/user_admin", methods=["GET", "POST"])
 @require_teacher
 def user_admin():
-    conn = get_conn()
     if request.method == "GET":
-        flash("User account management is on the Teacher Dashboard.")
+        flash("Teachers manage student memberships from their class rosters.")
         return redirect(url_for("index"))
+    abort(403)
 
-    action = request.form.get("action")
-    user_id = request.form.get("user_id")
 
-    if not action or not user_id:
-        flash("Missing user action or id.")
-        return redirect(url_for("index"))
+@app.get("/teacher/classes/<class_id>/students/<student_id>/archive")
+@require_teacher
+def teacher_confirm_archive_enrollment(class_id, student_id):
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            """
+            SELECT cs.class_id, cs.name AS class_name, s.student_id,
+                   s.first_name, s.last_name
+            FROM class_sections cs
+            JOIN class_enrollments ce ON ce.class_id=cs.class_id
+            JOIN students s ON s.student_id=ce.student_id
+            WHERE cs.class_id=? AND ce.student_id=? AND ce.is_active=1
+              AND cs.teacher_user_id=?
+            """,
+            (class_id, student_id, current_user()["id"]),
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        abort(404)
+    return render_template_string(
+        """
+<!doctype html><title>Remove from Class</title>
+<main style="font-family:Arial;max-width:680px;margin:40px auto">
+<h1>Remove from Class</h1>
+<p>Archive <strong>{{ display_name(row) }}</strong>'s enrollment in <strong>{{ row['class_name'] }}</strong>?</p>
+<p>The RootED account, other classes, identities, learning records, and enrollment history will remain.</p>
+<form method="post">
+<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+<label>Reason <input name="reason"></label>
+<button type="submit">Archive Enrollment</button>
+</form>
+<p><a href="{{ url_for('index') }}#class-enrollment">Cancel</a></p>
+</main>
+        """,
+        row=row, display_name=display_name, csrf_token=owner_csrf_token(),
+    )
 
-    if action == "reset_pw":
-        new_pw = request.form.get("new_password", "").strip()
-        if not new_pw:
-            flash("New password is required.")
-        else:
-            pw_hash = generate_password_hash(new_pw)
+
+@app.post("/teacher/classes/<class_id>/students/<student_id>/archive")
+@require_teacher
+def teacher_archive_enrollment(class_id, student_id):
+    require_owner_csrf()
+    actor = current_user()["id"]
+    conn = get_conn()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        if not conn.execute(
+            "SELECT 1 FROM class_sections WHERE class_id=? AND teacher_user_id=?",
+            (class_id, actor),
+        ).fetchone():
+            conn.rollback()
+            abort(403)
+        enrollment = conn.execute(
+            "SELECT is_active FROM class_enrollments WHERE class_id=? AND student_id=?",
+            (class_id, student_id),
+        ).fetchone()
+        if not enrollment:
+            conn.rollback()
+            abort(404)
+        outcome = "already_archived"
+        if int(enrollment["is_active"] or 0) == 1:
             conn.execute(
-                "UPDATE users SET password_hash=? WHERE id=?", (pw_hash, user_id)
+                """
+                UPDATE class_enrollments
+                SET is_active=0, archived_at=?, archived_by_user_id=?,
+                    archive_reason=?
+                WHERE class_id=? AND student_id=? AND is_active=1
+                """,
+                (int(time.time()), actor, request.form.get("reason", "").strip() or None,
+                 class_id, student_id),
             )
-            conn.commit()
-            flash("Password updated.")
-    elif action == "toggle_active":
+            outcome = "archived"
         conn.execute(
             """
-            UPDATE users
-            SET is_active = CASE WHEN is_active = 1 THEN 0 ELSE 1 END
-            WHERE id=?
+            INSERT INTO class_membership_audit_log
+              (actor_user_id,class_id,student_id,action,outcome,reason,created_at)
+            VALUES (?,?,?,'membership_archived',?,?,?)
             """,
-            (user_id,),
+            (actor, class_id, student_id, outcome,
+             request.form.get("reason", "").strip() or None, int(time.time())),
         )
         conn.commit()
-        flash("User status updated.")
-    else:
-        flash("Unknown user action.")
-
-    return redirect(url_for("index"))
+    finally:
+        conn.close()
+    flash("Enrollment archived." if outcome == "archived" else "Enrollment was already archived.")
+    return redirect(url_for("index") + "#class-enrollment")
 
 
 # ---------- Admin actions ----------
@@ -9311,6 +10787,8 @@ def admin_action():
     if action == "reset_practice":
         conn.execute("DELETE FROM attempts")
         conn.execute("DELETE FROM responses")
+        conn.execute("DELETE FROM student_question_deliveries")
+        conn.execute("DELETE FROM student_growth_progress")
         conn.commit()
         flash(
             "All attempts and responses have been cleared. Students and content were kept."
@@ -9335,6 +10813,8 @@ def restore_attempts():
     try:
         conn.execute("DELETE FROM attempts")
         conn.execute("DELETE FROM responses")
+        conn.execute("DELETE FROM student_question_deliveries")
+        conn.execute("DELETE FROM student_growth_progress")
 
         text_data = file.stream.read().decode("utf-8-sig")
         reader = csv.DictReader(io.StringIO(text_data))
@@ -9850,11 +11330,273 @@ def student_overview(student_id):
     )
 
 
+@app.get("/owner/adaptive-debug")
+@owner_required
+def owner_adaptive_debug():
+    conn = get_conn()
+    attempts = conn.execute(
+        """
+        SELECT rla.*, s.first_name, s.last_name, o.objective_text
+        FROM routing_level_attempts rla
+        LEFT JOIN students s ON s.student_id=rla.student_id
+        LEFT JOIN objectives o ON o.objective_id=rla.objective_id
+        WHERE rla.status='active'
+        ORDER BY s.last_name COLLATE NOCASE, s.first_name COLLATE NOCASE,
+                 rla.started_at DESC
+        """
+    ).fetchall()
+    return render_template_string(
+        """
+<!doctype html>
+<title>RootED Adaptive Engine Debug</title>
+<style>
+body{font-family:Arial,Helvetica,sans-serif;margin:0;background:#fbfaf4;color:#1f2937}
+.page{max-width:1100px;margin:auto;padding:24px}.top{display:flex;justify-content:space-between;gap:16px;align-items:center}
+h1{color:#234b35;margin-bottom:6px}.muted{color:#647067;font-size:13px}
+.btn{display:inline-block;background:#2f6f4e;color:#fff;text-decoration:none;padding:8px 12px;border-radius:8px;font-weight:700}
+.btn-secondary{background:#eef4ec;color:#2f5138;border:1px solid #c8d9c4}
+.table-wrap{overflow:auto;margin-top:18px;background:#fff;border:1px solid #e2decf;border-radius:12px}
+table{border-collapse:collapse;width:100%;font-size:13px}th,td{padding:11px 12px;text-align:left;border-bottom:1px solid #ebe8de}
+th{background:#eef4ec;color:#234b35}.name{font-weight:700}.empty{padding:24px;color:#647067}
+</style>
+<main class="page">
+  <div class="top">
+    <div>
+      <h1>Adaptive Engine Debug</h1>
+      <p class="muted">Owner-only, read-only view of active routing-level attempts.</p>
+    </div>
+    <a class="btn btn-secondary" href="{{ url_for('owner_home') }}">Owner Workspace</a>
+  </div>
+  <div class="table-wrap">
+    {% if attempts %}
+      <table>
+        <thead><tr><th>Student</th><th>Standard</th><th>Objective</th><th>Level</th><th>Started</th><th></th></tr></thead>
+        <tbody>
+        {% for attempt in attempts %}
+          <tr>
+            <td class="name">{{ ((attempt['first_name'] or '') ~ ' ' ~ (attempt['last_name'] or ''))|trim or attempt['student_id'] }}</td>
+            <td>{{ attempt['standard_id'] }}</td>
+            <td>{{ attempt['objective_text'] or attempt['objective_id'] }}</td>
+            <td>{{ attempt['level'] }}</td>
+            <td>{{ format_ts(attempt['started_at']) }}</td>
+            <td><a class="btn" href="{{ url_for('engine_debug', student_id=attempt['student_id'], standard_id=attempt['standard_id']) }}">Inspect</a></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <div class="empty">No active routing-level attempts.</div>
+    {% endif %}
+  </div>
+</main>
+        """,
+        attempts=attempts,
+        format_ts=lambda value: time.strftime(
+            "%Y-%m-%d %H:%M:%S", time.localtime(int(value))
+        ),
+    )
+
+
 # ---------- Engine debug viewer ----------
 @app.route("/engine_debug/<student_id>/<standard_id>")
-@require_teacher
+@owner_required
 def engine_debug(student_id, standard_id):
     conn = get_conn()
+
+    student = conn.execute(
+        "SELECT * FROM students WHERE student_id=?", (student_id,)
+    ).fetchone()
+    standard = conn.execute(
+        "SELECT * FROM standards WHERE standard_id=?", (standard_id,)
+    ).fetchone()
+    if not student or not standard:
+        abort(404)
+
+    routing_attempt = conn.execute(
+        """
+        SELECT rla.*, o.objective_text
+        FROM routing_level_attempts rla
+        LEFT JOIN objectives o ON o.objective_id=rla.objective_id
+        WHERE rla.student_id=? AND rla.standard_id=? AND rla.status='active'
+        ORDER BY rla.started_at DESC
+        LIMIT 1
+        """,
+        (student_id, standard_id),
+    ).fetchone()
+
+    if routing_attempt:
+        metrics = conn.execute(
+            """
+            SELECT COUNT(*) AS response_count,
+                   COALESCE(SUM(correct), 0) AS correct_count
+            FROM responses
+            WHERE routing_level_attempt_id=?
+            """,
+            (routing_attempt["attempt_id"],),
+        ).fetchone()
+        response_count = int(metrics["response_count"])
+        correct_count = int(metrics["correct_count"])
+        incorrect_count = response_count - correct_count
+        accuracy = correct_count / response_count if response_count else 0.0
+        minimum_met = response_count >= ae.MIN_EVIDENCE
+        if not minimum_met:
+            decision = "Collecting"
+            reason = "insufficient_minimum_evidence"
+        elif accuracy >= ae.MASTERY:
+            decision = "Advance"
+            reason = "mastery_threshold_met"
+        elif accuracy >= ae.REMEDIATE:
+            decision = "Practice"
+            reason = "middle_band_continue"
+        else:
+            decision = "Remediate"
+            reason = "below_remediation_threshold"
+
+        deliveries = conn.execute(
+            """
+            SELECT
+              SUM(CASE WHEN consumed_at IS NULL AND invalidated_at IS NULL THEN 1 ELSE 0 END) AS active_count,
+              SUM(CASE WHEN consumed_at IS NOT NULL THEN 1 ELSE 0 END) AS consumed_count,
+              SUM(CASE WHEN consumed_at IS NULL AND invalidated_at IS NOT NULL THEN 1 ELSE 0 END) AS invalidated_count
+            FROM student_question_deliveries
+            WHERE student_id=? AND standard_id=? AND objective_id=? AND level=?
+              AND served_at>=?
+            """,
+            (
+                student_id,
+                standard_id,
+                routing_attempt["objective_id"],
+                routing_attempt["level"],
+                routing_attempt["started_at"],
+            ),
+        ).fetchone()
+        recent_responses = conn.execute(
+            """
+            SELECT r.*, q.stem
+            FROM responses r
+            LEFT JOIN questions q ON q.question_id=r.question_id
+            WHERE r.routing_level_attempt_id=?
+            ORDER BY r.id DESC
+            LIMIT 20
+            """,
+            (routing_attempt["attempt_id"],),
+        ).fetchall()
+    else:
+        response_count = correct_count = incorrect_count = 0
+        accuracy = 0.0
+        minimum_met = False
+        decision = "Collecting"
+        reason = "no_active_routing_level_attempt"
+        deliveries = {
+            "active_count": 0,
+            "consumed_count": 0,
+            "invalidated_count": 0,
+        }
+        recent_responses = []
+
+    return render_template_string(
+        """
+<!doctype html>
+<title>Adaptive Debug - {{ student_id }} / {{ standard_id }}</title>
+<style>
+body{font-family:Arial,Helvetica,sans-serif;margin:0;background:#fbfaf4;color:#1f2937}
+.page{max-width:1050px;margin:auto;padding:24px}.top{display:flex;justify-content:space-between;align-items:center;gap:16px}
+h1,h2{color:#234b35}.muted{color:#647067;font-size:13px}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.card{background:#fffefa;border:1px solid #e2decf;border-radius:12px;padding:18px;margin-top:16px;box-shadow:0 8px 18px rgba(47,111,78,.05)}
+.facts{display:grid;grid-template-columns:minmax(140px,max-content) 1fr;gap:8px 14px;margin:0}.facts dt{font-weight:700;color:#405b49}.facts dd{margin:0;overflow-wrap:anywhere}
+.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.metric{background:#eef4ec;border-radius:9px;padding:12px}.metric strong{display:block;font-size:22px;color:#234b35}
+.decision{display:inline-block;padding:5px 10px;border-radius:999px;background:#dcefe0;color:#1f5a38;font-weight:800}
+.responses{display:flex;flex-wrap:wrap;gap:8px;list-style:none;padding:0}.response{display:inline-flex;width:34px;height:34px;align-items:center;justify-content:center;border-radius:50%;font-weight:900}
+.correct{background:#dcefe0;color:#176638}.incorrect{background:#fbe1dd;color:#a52a22}
+.btn{display:inline-block;background:#2f6f4e;color:#fff;text-decoration:none;padding:8px 12px;border-radius:8px;font-weight:700}
+@media(max-width:720px){.grid{grid-template-columns:1fr}.metrics{grid-template-columns:repeat(2,1fr)}.top{align-items:flex-start;flex-direction:column}}
+</style>
+<main class="page">
+  <div class="top">
+    <div><h1>Adaptive Engine Debug</h1><p class="muted">Owner-only, read-only routing explanation.</p></div>
+    <a class="btn" href="{{ url_for('owner_adaptive_debug') }}">All Active Attempts</a>
+  </div>
+
+  <section class="card">
+    <h2>Routing Level Attempt</h2>
+    {% if routing_attempt %}
+      <dl class="facts">
+        <dt>Attempt ID</dt><dd>{{ routing_attempt['attempt_id'] }}</dd>
+        <dt>Student</dt><dd>{{ student_name }} ({{ student_id }})</dd>
+        <dt>Standard</dt><dd>{{ standard_id }}</dd>
+        <dt>Objective</dt><dd>{{ routing_attempt['objective_text'] or routing_attempt['objective_id'] }}</dd>
+        <dt>Routing Level</dt><dd>{{ routing_attempt['level'] }}</dd>
+      </dl>
+    {% else %}
+      <p>No active routing-level attempt exists for this student and standard.</p>
+    {% endif %}
+  </section>
+
+  <div class="grid">
+    <section class="card">
+      <h2>Cumulative Evidence</h2>
+      <div class="metrics">
+        <div class="metric"><strong>{{ response_count }}</strong>Responses</div>
+        <div class="metric"><strong>{{ correct_count }}</strong>Correct</div>
+        <div class="metric"><strong>{{ incorrect_count }}</strong>Incorrect</div>
+        <div class="metric"><strong>{{ '%.1f%%'|format(accuracy * 100) }}</strong>Accuracy</div>
+      </div>
+      <dl class="facts" style="margin-top:16px">
+        <dt>Minimum Evidence</dt><dd>{{ minimum_evidence }}</dd>
+        <dt>Met?</dt><dd>{{ 'Yes' if minimum_met else 'No' }}</dd>
+      </dl>
+    </section>
+
+    <section class="card">
+      <h2>Current Decision</h2>
+      <p><span class="decision">{{ decision }}</span></p>
+      <dl class="facts"><dt>Reason</dt><dd><code>{{ reason }}</code></dd></dl>
+    </section>
+  </div>
+
+  <section class="card">
+    <h2>Deliveries</h2>
+    <div class="metrics">
+      <div class="metric"><strong>{{ deliveries['active_count'] or 0 }}</strong>Active</div>
+      <div class="metric"><strong>{{ deliveries['consumed_count'] or 0 }}</strong>Consumed</div>
+      <div class="metric"><strong>{{ deliveries['invalidated_count'] or 0 }}</strong>Invalidated</div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Recent Responses</h2>
+    {% if recent_responses %}
+      <ol class="responses" aria-label="Recent accepted responses, newest first">
+      {% for response in recent_responses %}
+        <li class="response {{ 'correct' if response['correct'] else 'incorrect' }}"
+            aria-label="{{ 'Correct' if response['correct'] else 'Incorrect' }}"
+            title="{{ response['question_id'] }}">{{ '✓' if response['correct'] else '✕' }}</li>
+      {% endfor %}
+      </ol>
+    {% else %}
+      <p class="muted">No accepted responses in this routing-level attempt.</p>
+    {% endif %}
+  </section>
+</main>
+        """,
+        student_id=student_id,
+        standard_id=standard_id,
+        student_name=(
+            f"{student['first_name'] or ''} {student['last_name'] or ''}".strip()
+            or student_id
+        ),
+        routing_attempt=routing_attempt,
+        response_count=response_count,
+        correct_count=correct_count,
+        incorrect_count=incorrect_count,
+        accuracy=accuracy,
+        minimum_evidence=ae.MIN_EVIDENCE,
+        minimum_met=minimum_met,
+        decision=decision,
+        reason=reason,
+        deliveries=deliveries,
+        recent_responses=recent_responses,
+    )
 
     # Basic info
     student = conn.execute(

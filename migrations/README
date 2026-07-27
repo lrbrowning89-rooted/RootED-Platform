@@ -1,1 +1,26 @@
-Generic single-database configuration.
+RootED production migrations
+============================
+
+Run migrations from the repository root with the production virtual
+environment active and `NGSS_DB` set to the absolute path of the existing
+SQLite database. Use module invocation so repository imports resolve
+consistently:
+
+    python -m migrations.add_user_auth_identities --database "$NGSS_DB"
+    python -m migrations.add_user_platform_roles
+    python -m migrations.add_user_instructional_authorizations
+    python -m migrations.add_account_lifecycle_and_objective_display
+    python -m migrations.add_model_assets_table
+    python -m migrations.add_student_growth_progress
+    python -m migrations.add_student_question_deliveries
+    python -m migrations.add_routing_level_attempts "$NGSS_DB"
+
+Inspect production first and run only migrations that are pending. The required
+dependency order for the recent adaptive schema is:
+
+1. `student_growth_progress`
+2. `student_question_deliveries`
+3. `routing_level_attempts` and the accepted-response backfill
+
+Never run these commands until the exact `NGSS_DB` path has been confirmed and
+a readable production backup has been created.

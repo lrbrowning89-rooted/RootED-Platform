@@ -54,10 +54,13 @@ class OwnerWorkspaceTests(unittest.TestCase):
             "question_flags",
             "user_instructional_authorizations",
             "user_platform_roles",
+            "student_question_deliveries",
+            "student_growth_progress",
             "student_objective_state",
             "progress_state",
             "responses",
             "attempts",
+            "routing_level_attempts",
             "class_enrollments",
             "class_sections",
             "users",
@@ -260,9 +263,96 @@ class OwnerWorkspaceTests(unittest.TestCase):
         self.assertIn(b"Escalated Question Flags", response.data)
         self.assertIn(b"owner_teacher", response.data)
         self.assertIn(b"Teacher Workspace", response.data)
+        self.assertIn(b"Adaptive Engine Debug", response.data)
         self.assertIn(b">2</span>", response.data)
         self.assertNotIn(b"Subscriptions", response.data)
         self.assertNotIn(b"Organizations", response.data)
+
+    def test_adaptive_debug_is_owner_only(self):
+        self.login_as(2, "teacher_only", "teacher")
+        teacher_index = self.client.get("/owner/adaptive-debug")
+        teacher_detail = self.client.get("/engine_debug/S1/MS-LS1-1")
+        self.assertEqual(teacher_index.status_code, 403)
+        self.assertEqual(teacher_detail.status_code, 403)
+
+        self.login_as(3, "student_only", "student")
+        student_detail = self.client.get("/engine_debug/S1/MS-LS1-1")
+        self.assertEqual(student_detail.status_code, 403)
+
+        with self.client.session_transaction() as sess:
+            sess.clear()
+        anonymous_detail = self.client.get("/engine_debug/S1/MS-LS1-1")
+        self.assertEqual(anonymous_detail.status_code, 302)
+        self.assertIn("/login", anonymous_detail.headers["Location"])
+
+    def test_adaptive_debug_explains_active_attempt_without_mutating_state(self):
+        self.conn.execute(
+            """
+            INSERT INTO routing_level_attempts
+              (attempt_id, student_id, standard_id, objective_id, level,
+               status, started_at)
+            VALUES ('RLA-DEBUG', 'S1', 'MS-LS1-1', 'MS-LS1-1A', 1,
+                    'active', 123450)
+            """
+        )
+        self.conn.execute(
+            """
+            UPDATE responses
+            SET routing_level_attempt_id='RLA-DEBUG'
+            WHERE student_id='S1'
+            """
+        )
+        for offset, correct in enumerate([1, 1, 0, 1, 1, 1, 0], 1):
+            if offset == 1:
+                continue
+            self.conn.execute(
+                """
+                INSERT INTO responses
+                  (student_id, standard_id, level, question_id, correct, ts,
+                   routing_level_attempt_id)
+                VALUES ('S1', 'MS-LS1-1', 1, 'Q1A', ?, ?, 'RLA-DEBUG')
+                """,
+                (correct, 123456 + offset),
+            )
+        self.conn.executemany(
+            """
+            INSERT INTO student_question_deliveries
+              (submission_token, student_id, growth_attempt_id, standard_id,
+               objective_id, level, question_id, sequence_number, served_at,
+               consumed_at, invalidated_at)
+            VALUES (?, 'S1', 'GROWTH-DEBUG', 'MS-LS1-1', 'MS-LS1-1A', 1,
+                    'Q1A', ?, ?, ?, ?)
+            """,
+            [
+                ("delivery-consumed", 0, 123460, 123461, None),
+                ("delivery-active", 1, 123462, None, None),
+                ("delivery-invalid", 2, 123463, None, 123464),
+            ],
+        )
+        self.conn.commit()
+        before = self.learning_state()
+        self.login_as(1, "owner_teacher", "teacher")
+
+        index = self.client.get("/owner/adaptive-debug")
+        detail = self.client.get("/engine_debug/S1/MS-LS1-1")
+
+        self.assertEqual(index.status_code, 200)
+        self.assertIn(b"Ava One", index.data)
+        self.assertIn(b"RLA-DEBUG", detail.data)
+        self.assertIn(b"Cells are living units.", detail.data)
+        self.assertIn(b">7</strong>Responses", detail.data)
+        self.assertIn(b">5</strong>Correct", detail.data)
+        self.assertIn(b">2</strong>Incorrect", detail.data)
+        self.assertIn(b"71.4%", detail.data)
+        self.assertIn(b">Yes</dd>", detail.data)
+        self.assertIn(b">Practice</span>", detail.data)
+        self.assertIn(b"middle_band_continue", detail.data)
+        self.assertIn(b">1</strong>Active", detail.data)
+        self.assertIn(b">1</strong>Consumed", detail.data)
+        self.assertIn(b">1</strong>Invalidated", detail.data)
+        self.assertEqual(detail.data.count(b'aria-label="Correct"'), 5)
+        self.assertEqual(detail.data.count(b'aria-label="Incorrect"'), 2)
+        self.assertEqual(self.learning_state(), before)
 
     def test_teacher_dashboard_links_owner_workspace_only_for_owner(self):
         self.insert_flag("QF-ESC", status="escalated")

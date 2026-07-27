@@ -29,10 +29,17 @@ class PeopleAccessTests(unittest.TestCase):
         self.conn.row_factory = sqlite3.Row
         dash.ensure_schema(self.conn)
         for table in [
+            "authorization_lifecycle_audit_log",
+            "account_lifecycle_audit_log",
+            "class_membership_audit_log",
             "access_authorization_audit_log",
             "user_instructional_authorizations",
             "user_auth_identities",
             "user_platform_roles",
+            "responses",
+            "attempts",
+            "progress_state",
+            "student_objective_state",
             "class_enrollments",
             "class_sections",
             "users",
@@ -121,6 +128,12 @@ class PeopleAccessTests(unittest.TestCase):
         response = self.client.get(
             "/owner/people-access/2/authorize-teacher"
         )
+        self.assertEqual(response.status_code, 200)
+        with self.client.session_transaction() as sess:
+            return sess["owner_csrf_token"]
+
+    def owner_csrf_from(self, path):
+        response = self.client.get(path)
         self.assertEqual(response.status_code, 200)
         with self.client.session_transaction() as sess:
             return sess["owner_csrf_token"]
@@ -362,6 +375,186 @@ class PeopleAccessTests(unittest.TestCase):
                     """
                 ).fetchone()
             )
+
+    def test_teacher_revocation_is_historical_idempotent_and_preserves_identity(self):
+        self.login_as(1)
+        path = "/owner/people-access/3/revoke-teacher"
+        token = self.owner_csrf_from(path)
+        self.assertEqual(self.client.post(path).status_code, 400)
+        identities = self.identity_snapshot()
+        first = self.client.post(path, data={"csrf_token": token, "reason": "No longer teaching"})
+        second = self.client.post(path, data={"csrf_token": token, "reason": "Repeat"})
+        self.assertEqual(first.status_code, 302)
+        self.assertEqual(second.status_code, 302)
+        grant = self.conn.execute(
+            "SELECT * FROM user_instructional_authorizations WHERE user_id=3"
+        ).fetchone()
+        self.assertIsNotNone(grant["revoked_at"])
+        self.assertEqual(identities, self.identity_snapshot())
+        self.login_as(3)
+        self.assertTrue(self.client.get("/teacher").location.endswith("/restricted"))
+        outcomes = [
+            row[0] for row in self.conn.execute(
+                "SELECT outcome FROM authorization_lifecycle_audit_log WHERE target_user_id=3 ORDER BY audit_id"
+            )
+        ]
+        self.assertEqual(outcomes, ["revoked", "already_revoked"])
+
+    def test_teacher_revocation_blocks_active_classes_and_preserves_owner(self):
+        self.conn.execute(
+            "INSERT INTO user_platform_roles (user_id,platform_role,granted_at,granted_by) VALUES (3,'owner',123457,1)"
+        )
+        self.conn.execute(
+            """
+            INSERT INTO class_sections
+              (class_id,teacher_user_id,name,join_code,is_active,created_at,updated_at)
+            VALUES ('ACTIVE-C',3,'Active Biology','ACT123',1,1,1)
+            """
+        )
+        self.conn.commit()
+        self.login_as(1)
+        path = "/owner/people-access/3/revoke-teacher"
+        confirmation = self.client.get(path)
+        self.assertIn(b"Active Biology", confirmation.data)
+        with self.client.session_transaction() as sess:
+            token = sess["owner_csrf_token"]
+        self.client.post(path, data={"csrf_token": token})
+        self.assertIsNone(self.conn.execute(
+            "SELECT revoked_at FROM user_instructional_authorizations WHERE user_id=3"
+        ).fetchone()[0])
+        self.login_as(3)
+        self.assertEqual(self.client.get("/owner").status_code, 200)
+
+    def test_owner_deactivation_reactivation_and_last_owner_protection(self):
+        self.login_as(1)
+        path = "/owner/people-access/2/deactivate"
+        token = self.owner_csrf_from(path)
+        identities = self.identity_snapshot()
+        self.assertEqual(self.client.post(path, data={
+            "csrf_token": token, "confirmation": "wrong", "reason": "test"
+        }).status_code, 400)
+        self.client.post(path, data={
+            "csrf_token": token, "confirmation": "Pending Name", "reason": "requested"
+        })
+        self.assertEqual(self.conn.execute("SELECT is_active FROM users WHERE id=2").fetchone()[0], 0)
+        self.assertEqual(identities, self.identity_snapshot())
+        self.login_as(2)
+        self.assertTrue(self.client.get("/restricted").location.endswith("/login"))
+        self.login_as(1)
+        reactivate = "/owner/people-access/2/reactivate"
+        token = self.owner_csrf_from(reactivate)
+        self.client.post(reactivate, data={"csrf_token": token, "reason": "returning"})
+        self.assertEqual(self.conn.execute("SELECT is_active FROM users WHERE id=2").fetchone()[0], 1)
+        self_path = "/owner/people-access/1/deactivate"
+        token = self.owner_csrf_from(self_path)
+        self.client.post(self_path, data={
+            "csrf_token": token, "confirmation": "Owner Name", "reason": "mistake"
+        })
+        self.assertEqual(self.conn.execute("SELECT is_active FROM users WHERE id=1").fetchone()[0], 1)
+        outcomes = [row[0] for row in self.conn.execute(
+            "SELECT outcome FROM account_lifecycle_audit_log ORDER BY audit_id"
+        )]
+        self.assertEqual(outcomes, ["deactivated", "reactivated", "blocked_last_owner"])
+
+    def test_non_owner_cannot_revoke_or_deactivate_accounts(self):
+        self.login_as(3)
+        for path in (
+            "/owner/people-access/2/revoke-teacher",
+            "/owner/people-access/2/deactivate",
+            "/owner/people-access/2/reactivate",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(
+                    self.client.post(path, data={"csrf_token": "x"}).status_code,
+                    403,
+                )
+
+    def test_teacher_archives_only_owned_class_membership(self):
+        now = 123459
+        self.conn.executemany(
+            """
+            INSERT INTO class_sections
+              (class_id,teacher_user_id,name,join_code,is_active,created_at,updated_at)
+            VALUES (?,?,?,?,1,?,?)
+            """,
+            [
+                ("C-OWN", 3, "Owned", "OWN123", now, now),
+                ("C-OTHER", 1, "Other", "OTH123", now, now),
+            ],
+        )
+        self.conn.executemany(
+            "INSERT INTO class_enrollments (class_id,student_id,enrolled_at,enrolled_by) VALUES (?, 'STUDENT-1', ?, 'self')",
+            [("C-OWN", now), ("C-OTHER", now)],
+        )
+        self.conn.execute(
+            """
+            INSERT INTO responses
+              (student_id,standard_id,level,question_id,correct,ts)
+            VALUES ('STUDENT-1','MS-LS1-1',1,'HISTORY-Q',1,?)
+            """,
+            (now,),
+        )
+        self.conn.commit()
+        self.login_as(3)
+        self.assertEqual(
+            self.client.post(
+                "/user_admin",
+                data={"action": "toggle_active", "user_id": "4"},
+            ).status_code,
+            403,
+        )
+        path = "/teacher/classes/C-OWN/students/STUDENT-1/archive"
+        token = self.owner_csrf_from(path)
+        before_user = tuple(self.conn.execute("SELECT * FROM users WHERE id=4").fetchone())
+        self.client.post(path, data={"csrf_token": token, "reason": "left class"})
+        self.assertEqual(self.conn.execute(
+            "SELECT is_active FROM class_enrollments WHERE class_id='C-OWN'"
+        ).fetchone()[0], 0)
+        self.assertEqual(self.conn.execute(
+            "SELECT is_active FROM class_enrollments WHERE class_id='C-OTHER'"
+        ).fetchone()[0], 1)
+        self.assertEqual(before_user, tuple(self.conn.execute("SELECT * FROM users WHERE id=4").fetchone()))
+        self.assertEqual(self.conn.execute(
+            "SELECT COUNT(*) FROM responses WHERE student_id='STUDENT-1'"
+        ).fetchone()[0], 1)
+        denied = self.client.post(
+            "/teacher/classes/C-OTHER/students/STUDENT-1/archive",
+            data={"csrf_token": token},
+        )
+        self.assertEqual(denied.status_code, 403)
+        self.assertEqual(self.conn.execute(
+            "SELECT outcome FROM class_membership_audit_log"
+        ).fetchone()[0], "archived")
+
+    def test_lifecycle_objective_migration_is_idempotent(self):
+        from migrations.add_account_lifecycle_and_objective_display import run
+
+        migration_db = Path(TEST_DIR.name) / f"lifecycle_{uuid.uuid4().hex}.db"
+        with sqlite3.connect(migration_db) as conn:
+            conn.execute(
+                "CREATE TABLE objectives (objective_id TEXT PRIMARY KEY, objective_text TEXT)"
+            )
+            conn.execute(
+                "INSERT INTO objectives VALUES ('MS-LS1-2A','Cell Structures and Functions')"
+            )
+            conn.execute(
+                """
+                CREATE TABLE class_enrollments (
+                  class_id TEXT, student_id TEXT, enrolled_at INTEGER,
+                  enrolled_by TEXT
+                )
+                """
+            )
+            conn.commit()
+        run(migration_db)
+        run(migration_db)
+        with sqlite3.connect(migration_db) as conn:
+            columns = {r[1] for r in conn.execute("PRAGMA table_info(class_enrollments)")}
+            self.assertIn("is_active", columns)
+            self.assertIn("archived_at", columns)
+            self.assertEqual(conn.execute(
+                "SELECT display_name FROM objectives WHERE objective_id='MS-LS1-2A'"
+            ).fetchone()[0], "Cell Anatomy")
 
 
 if __name__ == "__main__":

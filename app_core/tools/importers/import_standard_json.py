@@ -27,10 +27,11 @@ def validate_payload(payload: Dict[str, Any]) -> Tuple[Dict[str, Any], List[Dict
 
     for i, obj in enumerate(objectives):
         require(isinstance(obj, dict), f"objectives[{i}] must be an object")
-        for k in ["objective_id", "objective_text", "order_in_band"]:
+        for k in ["objective_id", "objective_text", "display_name", "order_in_band"]:
             require(k in obj, f"objectives[{i}].{k} is required")
         require(isinstance(obj["objective_id"], str) and obj["objective_id"].strip(), f"objectives[{i}].objective_id must be a string")
         require(isinstance(obj["objective_text"], str) and obj["objective_text"].strip(), f"objectives[{i}].objective_text must be a string")
+        require(isinstance(obj["display_name"], str) and obj["display_name"].strip(), f"objectives[{i}].display_name must be a non-empty string")
         require(isinstance(obj["order_in_band"], int), f"objectives[{i}].order_in_band must be an int")
 
         if "questions" in obj:
@@ -91,6 +92,8 @@ def import_standard(conn: sqlite3.Connection, std: Dict[str, Any], objectives: L
     for obj in objectives:
         objective_id = obj["objective_id"].strip()
         objective_text = obj["objective_text"].strip()
+        display_name = obj["display_name"].strip()
+        student_description = (obj.get("student_description") or "").strip() or None
         order_in_band = int(obj["order_in_band"])
 
         if dry_run:
@@ -98,10 +101,13 @@ def import_standard(conn: sqlite3.Connection, std: Dict[str, Any], objectives: L
         else:
             conn.execute(
                 """
-                INSERT OR REPLACE INTO objectives (objective_id, standard_id, objective_text, order_in_band)
-                VALUES (?, ?, ?, ?);
+                INSERT OR REPLACE INTO objectives
+                  (objective_id, standard_id, objective_text, display_name,
+                   student_description, order_in_band)
+                VALUES (?, ?, ?, ?, ?, ?);
                 """,
-                (objective_id, standard_id, objective_text, order_in_band),
+                (objective_id, standard_id, objective_text, display_name,
+                 student_description, order_in_band),
             )
             counts["objectives_written"] += 1
 

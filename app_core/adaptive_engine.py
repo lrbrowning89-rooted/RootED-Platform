@@ -1,6 +1,7 @@
 import os
 import sqlite3
 import time
+import uuid
 
 print("LOADED adaptive_engine from:", __file__)
 
@@ -12,7 +13,8 @@ DB_PATH = resolve_database_path()
 MASTERY = 0.90        # ≥90% to advance
 SUPER_MASTERY = 0.95  # ≥95% on remediation to return to same level
 REMEDIATE = 0.70      # <70% triggers remediation
-ROLL_N = 7            # rolling window of last 7 responses
+MIN_EVIDENCE = 7      # minimum accepted responses before a routing decision
+ROLL_N = 7            # retained for diagnostic/latest-seven reporting only
 
 
 # -------------- DB helpers --------------
@@ -29,12 +31,33 @@ def log_response(student_id: str, standard_id: str, level: int,
                  question_id: str, correct: bool) -> None:
     """Call this right after you auto-grade a question."""
     with get_conn() as conn:
+        objective = conn.execute(
+            "SELECT objective_id FROM questions WHERE question_id = ?",
+            (question_id,),
+        ).fetchone()
+        attempt = _ensure_active_level_attempt(
+            conn,
+            student_id,
+            standard_id,
+            objective["objective_id"] if objective else None,
+            level,
+        )
         conn.execute(
             """
-            INSERT INTO responses (student_id, standard_id, level, question_id, correct, ts)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO responses
+              (student_id, standard_id, level, question_id, correct, ts,
+               routing_level_attempt_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (student_id, standard_id, level, question_id, 1 if correct else 0, int(time.time()))
+            (
+                student_id,
+                standard_id,
+                level,
+                question_id,
+                1 if correct else 0,
+                int(time.time()),
+                attempt["attempt_id"] if attempt else None,
+            ),
         )
 
 
@@ -72,6 +95,185 @@ def rolling7_avg(student_id: str, standard_id: str, level: int) -> float:
     if not rows:
         return 0.0
     return sum(rows) / len(rows)
+
+
+def _ensure_active_level_attempt(conn, student_id, standard_id, objective_id, level):
+    active = conn.execute(
+        """
+        SELECT * FROM routing_level_attempts
+        WHERE student_id = ? AND status = 'active'
+        """,
+        (student_id,),
+    ).fetchone()
+    if (
+        active
+        and active["standard_id"] == standard_id
+        and int(active["level"]) == int(level)
+        and (objective_id is None or active["objective_id"] == objective_id)
+    ):
+        return active
+    if objective_id is None:
+        return None
+    if active:
+        _close_level_attempt(conn, active["attempt_id"], "routing_boundary")
+    attempt_id = f"RLA{uuid.uuid4().hex}"
+    conn.execute(
+        """
+        INSERT INTO routing_level_attempts
+          (attempt_id, student_id, standard_id, objective_id, level, status, started_at)
+        VALUES (?, ?, ?, ?, ?, 'active', ?)
+        """,
+        (attempt_id, student_id, standard_id, objective_id, level, int(time.time())),
+    )
+    return conn.execute(
+        "SELECT * FROM routing_level_attempts WHERE attempt_id = ?",
+        (attempt_id,),
+    ).fetchone()
+
+
+def _close_level_attempt(conn, attempt_id, reason):
+    metrics = conn.execute(
+        """
+        SELECT COUNT(*) AS total, COALESCE(SUM(correct), 0) AS correct
+        FROM responses WHERE routing_level_attempt_id = ?
+        """,
+        (attempt_id,),
+    ).fetchone()
+    total = int(metrics["total"] or 0)
+    correct = int(metrics["correct"] or 0)
+    conn.execute(
+        """
+        UPDATE routing_level_attempts
+        SET status = 'closed', ended_at = ?, end_reason = ?,
+            final_correct_count = ?, final_response_count = ?, final_score = ?
+        WHERE attempt_id = ? AND status = 'active'
+        """,
+        (
+            int(time.time()),
+            reason,
+            correct,
+            total,
+            (correct / total) if total else 0.0,
+            attempt_id,
+        ),
+    )
+
+
+def active_level_attempt_metrics(student_id: str, standard_id: str, level: int):
+    with get_conn() as conn:
+        attempt = conn.execute(
+            """
+            SELECT * FROM routing_level_attempts
+            WHERE student_id = ? AND standard_id = ? AND level = ?
+              AND status = 'active'
+            """,
+            (student_id, standard_id, level),
+        ).fetchone()
+        if not attempt:
+            objective = conn.execute(
+                """
+                SELECT q.objective_id
+                FROM responses r
+                JOIN questions q ON q.question_id = r.question_id
+                WHERE r.student_id = ? AND r.standard_id = ? AND r.level = ?
+                  AND r.routing_level_attempt_id IS NULL
+                ORDER BY r.ts DESC, r.id DESC
+                LIMIT 1
+                """,
+                (student_id, standard_id, level),
+            ).fetchone()
+            if objective:
+                attempt = _ensure_active_level_attempt(
+                    conn,
+                    student_id,
+                    standard_id,
+                    objective["objective_id"],
+                    level,
+                )
+                conn.execute(
+                    """
+                    UPDATE responses
+                    SET routing_level_attempt_id = ?
+                    WHERE student_id = ? AND standard_id = ? AND level = ?
+                      AND routing_level_attempt_id IS NULL
+                      AND question_id IN (
+                        SELECT question_id FROM questions WHERE objective_id = ?
+                      )
+                    """,
+                    (
+                        attempt["attempt_id"],
+                        student_id,
+                        standard_id,
+                        level,
+                        objective["objective_id"],
+                    ),
+                )
+            else:
+                return None
+        conn.execute(
+            """
+            UPDATE responses
+            SET routing_level_attempt_id = ?
+            WHERE student_id = ? AND standard_id = ? AND level = ?
+              AND routing_level_attempt_id IS NULL
+              AND question_id IN (
+                SELECT question_id FROM questions WHERE objective_id = ?
+              )
+            """,
+            (
+                attempt["attempt_id"],
+                student_id,
+                standard_id,
+                level,
+                attempt["objective_id"],
+            ),
+        )
+        metrics = conn.execute(
+            """
+            SELECT COUNT(*) AS total, COALESCE(SUM(correct), 0) AS correct
+            FROM responses
+            WHERE routing_level_attempt_id = ?
+            """,
+            (attempt["attempt_id"],),
+        ).fetchone()
+        total = int(metrics["total"] or 0)
+        correct = int(metrics["correct"] or 0)
+        return {
+            "attempt_id": attempt["attempt_id"],
+            "objective_id": attempt["objective_id"],
+            "total": total,
+            "correct": correct,
+            "score": (correct / total) if total else 0.0,
+        }
+
+
+def transition_level_attempt(
+    student_id: str,
+    *,
+    reason: str,
+    next_standard_id: str | None = None,
+    next_level: int | None = None,
+):
+    with get_conn() as conn:
+        active = conn.execute(
+            """
+            SELECT * FROM routing_level_attempts
+            WHERE student_id = ? AND status = 'active'
+            """,
+            (student_id,),
+        ).fetchone()
+        if not active:
+            return
+        objective_id = active["objective_id"]
+        _close_level_attempt(conn, active["attempt_id"], reason)
+        if next_standard_id == active["standard_id"] and next_level is not None:
+            _ensure_active_level_attempt(
+                conn,
+                student_id,
+                next_standard_id,
+                objective_id,
+                next_level,
+            )
 
 
 # -------------- Progress state --------------
@@ -297,7 +499,7 @@ def process_after_response(student_id: str, standard_id: str) -> dict:
     Call this AFTER log_response().
     It:
       - Reads current state
-      - Computes rolling-7 avg
+      - Computes cumulative accuracy for the active routing-level attempt
       - Decides: advance, continue, or drop
       - Handles mini-lesson if no lower band exists
     Returns a dict telling your app what to do next.
@@ -305,24 +507,31 @@ def process_after_response(student_id: str, standard_id: str) -> dict:
     state = get_state(student_id, standard_id)
     level = state["level"]
 
-    avg = rolling7_avg(student_id, standard_id, level)
-    count = response_count(student_id, standard_id, level)
+    metrics = active_level_attempt_metrics(student_id, standard_id, level)
+    if not metrics:
+        raise RuntimeError(
+            f"No active routing-level attempt for {student_id} {standard_id} L{level}"
+        )
+    avg = metrics["score"]
+    count = metrics["total"]
+    debug = {
+        "routing_level_attempt_id": metrics["attempt_id"],
+        "correct_count": metrics["correct"],
+        "count": count,
+        "avg": avg,
+        "minimum_evidence_met": count >= MIN_EVIDENCE,
+    }
 
-    # Temporary MVP safeguard:
-    # Do not advance, remediate, or lock until a full Rolling-7 window exists.
-    # This prevents a single correct/incorrect answer from triggering routing.
-    if count < ROLL_N:
+    if count < MIN_EVIDENCE:
         set_state(student_id, standard_id, level, "practicing", avg)
         return {
             "status": "question",
-            "action": "collecting_rolling7",
+            "action": "collecting_minimum_evidence",
             "standard": standard_id,
             "level": level,
-            "avg": avg,
-            "count": count,
-                           "standard": standard_id,
- "needed": ROLL_N,
-            "reason": "insufficient_rolling7_data",
+            **debug,
+            "needed": MIN_EVIDENCE,
+            "reason": "insufficient_minimum_evidence",
         }
 
     if state["locked"]:
@@ -347,11 +556,17 @@ def process_after_response(student_id: str, standard_id: str) -> dict:
         if level < max_level:
             new_level = level + 1
             set_state(student_id, standard_id, new_level, "practicing", avg)
+            transition_level_attempt(
+                student_id,
+                reason="mastery_advance",
+                next_standard_id=standard_id,
+                next_level=new_level,
+            )
             return {
                 "status": "question",
                 "standard": standard_id,
                 "level": new_level,
-                "avg": avg,
+                **debug,
                 "reason": "mastery_advance",
             }
 
@@ -360,6 +575,12 @@ def process_after_response(student_id: str, standard_id: str) -> dict:
 
         if next_std:
             set_state(student_id, next_std, next_lvl, "practicing", 0.0)
+            transition_level_attempt(
+                student_id,
+                reason="progression_link_found",
+                next_standard_id=next_std,
+                next_level=next_lvl,
+            )
             return {
                 "status": "question",
                 "action": "next_standard_found",
@@ -368,14 +589,17 @@ def process_after_response(student_id: str, standard_id: str) -> dict:
                 "standard": next_std,
                 "level": next_lvl,
                 "reason": "progression_link_found",
+                **debug,
             }
 
+        transition_level_attempt(student_id, reason="standard_complete")
         return {
             "status": "complete",
             "action": "standard_complete",
             "standard": standard_id,
             "level": level,
             "reason": "no_progression_link_found",
+            **debug,
         }
 
     # ---- Middle band: keep practicing ----
@@ -386,7 +610,7 @@ def process_after_response(student_id: str, standard_id: str) -> dict:
             "action": "serve_practice",
             "standard": standard_id,
             "level": level,
-            "avg": avg,
+            **debug,
             "reason": "middle_band_continue",
         }
 
@@ -395,12 +619,18 @@ def process_after_response(student_id: str, standard_id: str) -> dict:
     if level > 1:
         drop_to_level = level - 1
         set_state(student_id, standard_id, drop_to_level, "practicing", 0.0)
+        transition_level_attempt(
+            student_id,
+            reason="remediation_level_drop",
+            next_standard_id=standard_id,
+            next_level=drop_to_level,
+        )
         return {
             "status": "question",
             "action": "drop_level",
             "standard": standard_id,
             "level": drop_to_level,
-            "avg": avg,
+            **debug,
             "reason": "below_remediation_threshold",
         }
 
@@ -410,12 +640,18 @@ def process_after_response(student_id: str, standard_id: str) -> dict:
         remember_origin(student_id, lower_std, standard_id, level)
         notify_drop(student_id, standard_id, level, lower_std, 1, avg)
         set_state(student_id, lower_std, 1, "practicing", 0.0)
+        transition_level_attempt(
+            student_id,
+            reason="remediation_lower_band",
+            next_standard_id=lower_std,
+            next_level=1,
+        )
         return {
             "status": "question",
             "action": "remediate_lower_band",
             "standard": lower_std,
             "level": 1,
-            "avg": avg,
+            **debug,
             "reason": "below_remediation_threshold",
         }
 
