@@ -18,10 +18,12 @@ import uuid
 import os
 import json
 import logging
+import re
 from logging.handlers import RotatingFileHandler
 import traceback
 import secrets
 import hmac
+from datetime import datetime, timezone
 from functools import wraps
 from urllib.parse import urlsplit
 
@@ -51,6 +53,16 @@ APP_NAME = "Adaptive NGSS Platform"
 # Classroom launch manifest. Adaptive levels 1/2/3 live inside each objective;
 # objective letters are the approved NGSS-aligned learning objectives.
 LAUNCH_STANDARD_IDS = ("MS-LS1-1", "MS-LS1-2", "MS-LS1-3")
+LAUNCH_STANDARD_TITLES = {
+    "MS-LS1-1": "Structure and Function",
+    "MS-LS1-2": "Cells as Systems",
+    "MS-LS1-3": "Interacting Body Systems",
+}
+LAUNCH_STANDARD_UNITS = {
+    "MS-LS1-1": "Cells: Structure and Function",
+    "MS-LS1-2": "Cells: Structure and Function",
+    "MS-LS1-3": "Body Systems",
+}
 LAUNCH_OBJECTIVE_IDS = (
     "MS-LS1-1A",
     "MS-LS1-1B",
@@ -149,6 +161,15 @@ OBSOLETE_LAUNCH_OBJECTIVE_IDS = (
 
 def sql_placeholders(values) -> str:
     return ",".join("?" for _ in values)
+
+
+def natural_sort_key(value) -> tuple:
+    """Order identifiers for people: LS1-2 before LS1-10."""
+    parts = re.split(r"(\d+)", str(value or "").casefold())
+    return tuple(
+        (1, int(part)) if part.isdigit() else (0, part)
+        for part in parts
+    )
 
 
 def is_launch_standard_id(standard_id: str | None) -> bool:
@@ -860,6 +881,46 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS assignments (
+          assignment_id TEXT PRIMARY KEY,
+          teacher_user_id INTEGER NOT NULL,
+          class_id TEXT NOT NULL,
+          target_type TEXT NOT NULL CHECK(target_type IN ('standard','objective','competency')),
+          target_id TEXT NOT NULL,
+          recipient_scope TEXT NOT NULL CHECK(recipient_scope IN ('class','selected')),
+          directions TEXT,
+          assign_at INTEGER NOT NULL,
+          due_at INTEGER,
+          created_at INTEGER NOT NULL,
+          archived_at INTEGER,
+          archived_by INTEGER,
+          FOREIGN KEY(teacher_user_id) REFERENCES users(id) ON DELETE RESTRICT,
+          FOREIGN KEY(class_id) REFERENCES class_sections(class_id) ON DELETE RESTRICT
+        );
+        CREATE INDEX IF NOT EXISTS idx_assignments_teacher
+          ON assignments(teacher_user_id,archived_at,created_at);
+        CREATE TABLE IF NOT EXISTS assignment_recipients (
+          assignment_id TEXT NOT NULL,
+          student_id TEXT NOT NULL,
+          assigned_at INTEGER NOT NULL,
+          PRIMARY KEY(assignment_id,student_id),
+          FOREIGN KEY(assignment_id) REFERENCES assignments(assignment_id) ON DELETE RESTRICT,
+          FOREIGN KEY(student_id) REFERENCES students(student_id) ON DELETE RESTRICT
+        );
+        CREATE INDEX IF NOT EXISTS idx_assignment_recipients_student
+          ON assignment_recipients(student_id,assignment_id);
+        """
+    )
+    assignment_columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(assignments)")
+    }
+    if "assign_at" not in assignment_columns:
+        conn.execute("ALTER TABLE assignments ADD COLUMN assign_at INTEGER")
+        conn.execute(
+            "UPDATE assignments SET assign_at=created_at WHERE assign_at IS NULL"
+        )
     enrollment_columns = {
         row[1] for row in conn.execute("PRAGMA table_info(class_enrollments)")
     }
@@ -887,6 +948,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         """
         CREATE TABLE IF NOT EXISTS standards (
           standard_id TEXT PRIMARY KEY,
+          standard_name TEXT,
           core_idea   TEXT,
           grade_band  TEXT
         )
@@ -907,6 +969,10 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    if "standard_name" not in {
+        row[1] for row in conn.execute("PRAGMA table_info(standards)")
+    }:
+        conn.execute("ALTER TABLE standards ADD COLUMN standard_name TEXT")
     objective_columns = {
         row[1] for row in conn.execute("PRAGMA table_info(objectives)")
     }
@@ -2327,7 +2393,7 @@ def get_objectives(conn):
 def get_available_standards(conn):
     standard_placeholders = sql_placeholders(LAUNCH_STANDARD_IDS)
     objective_placeholders = sql_placeholders(LAUNCH_OBJECTIVE_IDS)
-    return conn.execute(
+    rows = conn.execute(
         f"""
         SELECT
             s.standard_id,
@@ -2341,10 +2407,10 @@ def get_available_standards(conn):
         LEFT JOIN questions q ON q.objective_id = o.objective_id
         WHERE s.standard_id IN ({standard_placeholders})
         GROUP BY s.standard_id, s.core_idea, s.grade_band
-        ORDER BY s.core_idea, s.grade_band, s.standard_id
         """,
         (*LAUNCH_OBJECTIVE_IDS, *LAUNCH_STANDARD_IDS),
     ).fetchall()
+    return sorted(rows, key=lambda row: natural_sort_key(row["standard_id"]))
 
 
 def get_standard_meta(conn, standard_id):
@@ -3348,6 +3414,270 @@ def get_students(conn, period=None, teacher_user_id=None):
         """,
         params,
     ).fetchall()
+
+
+def standard_display(conn, standard_id: str) -> dict | None:
+    row = conn.execute(
+        """
+        SELECT s.standard_id,
+               NULLIF(TRIM(s.standard_name),'') AS title,
+               s.core_idea,s.grade_band,
+               COALESCE(
+                 (SELECT NULLIF(TRIM(o.student_description),'') FROM objectives o
+                  WHERE o.standard_id=s.standard_id
+                  ORDER BY o.order_in_band,o.objective_id LIMIT 1),
+                 (SELECT NULLIF(TRIM(o.objective_text),'') FROM objectives o
+                  WHERE o.standard_id=s.standard_id
+                  ORDER BY o.order_in_band,o.objective_id LIMIT 1),
+                 'Build understanding through available RootED learning.') AS description
+        FROM standards s WHERE s.standard_id=?
+        """,
+        (standard_id,),
+    ).fetchone()
+    if not row:
+        return None
+    item = dict(row)
+    item["title"] = (
+        item["title"]
+        or LAUNCH_STANDARD_TITLES.get(standard_id)
+        or "Available learning"
+    )
+    return item
+
+
+def assignment_catalog_subject(standard_id: str) -> str:
+    code = (standard_id or "").upper()
+    if any(part in code for part in ("-LS", "-PS", "-ESS")):
+        return "Science"
+    if "-ETS" in code:
+        return "Engineering"
+    if "MATH" in code:
+        return "Math"
+    if "ELA" in code:
+        return "ELA"
+    if "SOC" in code or "-SS" in code:
+        return "Social Studies"
+    return "Other"
+
+
+def assignment_catalog(conn) -> list[dict]:
+    catalog = []
+    for row in get_available_standards(conn):
+        if int(row["question_count"] or 0) < 1:
+            continue
+        display = standard_display(conn, row["standard_id"])
+        if not display:
+            continue
+        catalog.append({
+            "standard_id": row["standard_id"],
+            "title": display["title"],
+            "description": display["description"],
+            "subject": assignment_catalog_subject(row["standard_id"]),
+            "course": row["grade_band"] or "General",
+            "unit": LAUNCH_STANDARD_UNITS.get(
+                row["standard_id"], "General Learning"
+            ),
+        })
+    return sorted(
+        catalog, key=lambda item: natural_sort_key(item["standard_id"])
+    )
+
+
+def assignment_progress_status(conn, student_id, standard_id) -> str:
+    row = conn.execute(
+        """
+        SELECT status FROM progress_state
+        WHERE student_id=? AND standard_id=?
+        ORDER BY last_update DESC,id DESC LIMIT 1
+        """,
+        (student_id, standard_id),
+    ).fetchone()
+    status = (row["status"] if row else "").lower()
+    if status in ("mastered", "completed", "complete"):
+        return "completed"
+    evidence = conn.execute(
+        "SELECT 1 FROM responses WHERE student_id=? AND standard_id=? LIMIT 1",
+        (student_id, standard_id),
+    ).fetchone()
+    return "in_progress" if row or evidence else "not_started"
+
+
+def get_student_assignments(
+    conn, student_id, *, include_archived=False, as_of=None
+):
+    archived_sql = "" if include_archived else "AND a.archived_at IS NULL"
+    as_of = int(time.time()) if as_of is None else int(as_of)
+    rows = conn.execute(
+        f"""
+        SELECT a.*,cs.name AS class_name
+        FROM assignment_recipients ar
+        JOIN assignments a ON a.assignment_id=ar.assignment_id
+        JOIN class_sections cs ON cs.class_id=a.class_id
+        WHERE ar.student_id=? {archived_sql}
+          AND COALESCE(a.assign_at,a.created_at) <= ?
+        ORDER BY COALESCE(a.due_at,9223372036854775807),a.created_at
+        """,
+        (student_id, as_of),
+    ).fetchall()
+    result = []
+    for row in rows:
+        item = dict(row)
+        item["standard"] = standard_display(conn, row["target_id"])
+        item["progress_status"] = assignment_progress_status(
+            conn, student_id, row["target_id"]
+        )
+        item["is_past_due"] = bool(
+            row["due_at"] and int(row["due_at"]) < as_of
+            and item["progress_status"] != "completed"
+        )
+        result.append(item)
+    return sorted(
+        result, key=lambda item: natural_sort_key(item["target_id"])
+    )
+
+
+def assignment_summary(conn, assignment_id, teacher_user_id=None):
+    counts = {"not_started": 0, "in_progress": 0, "completed": 0}
+    assignment = conn.execute(
+        "SELECT * FROM assignments WHERE assignment_id=?", (assignment_id,)
+    ).fetchone()
+    if not assignment:
+        return counts
+    for row in conn.execute(
+        "SELECT student_id FROM assignment_recipients WHERE assignment_id=?",
+        (assignment_id,),
+    ):
+        if teacher_user_id is not None and not teacher_can_access_student(
+            conn, teacher_user_id, row["student_id"]
+        ):
+            continue
+        counts[assignment_progress_status(
+            conn, row["student_id"], assignment["target_id"]
+        )] += 1
+    counts["total"] = sum(counts.values())
+    return counts
+
+
+def teacher_assignments(conn, teacher_user_id):
+    rows = conn.execute(
+        """
+        SELECT a.*,cs.name AS class_name,
+               COUNT(ar.student_id) AS recipient_count
+        FROM assignments a JOIN class_sections cs ON cs.class_id=a.class_id
+        LEFT JOIN assignment_recipients ar ON ar.assignment_id=a.assignment_id
+        WHERE a.teacher_user_id=?
+        GROUP BY a.assignment_id ORDER BY a.archived_at IS NOT NULL,a.created_at DESC
+        """,
+        (teacher_user_id,),
+    ).fetchall()
+    result = []
+    for row in rows:
+        item = dict(row)
+        item["standard"] = standard_display(conn, row["target_id"])
+        item["summary"] = assignment_summary(
+            conn, row["assignment_id"], teacher_user_id
+        )
+        result.append(item)
+    return sorted(
+        result,
+        key=lambda item: (
+            bool(item["archived_at"]),
+            natural_sort_key(item["target_id"]),
+        ),
+    )
+
+
+def student_recommendation(conn, student_id, assignments, standards):
+    placement = get_current_student_placement(conn, student_id)
+    active_standard = placement["standard_id"]
+    if active_standard and assignment_progress_status(
+        conn, student_id, active_standard
+    ) != "completed":
+        route_type = row_get(placement["progress"], "active_route_type", None)
+        reason = (
+            "Strengthen this skill before returning to your current standard."
+            if route_type in ("remediation", "prerequisite")
+            else "Continue where you left off."
+        )
+        return {"standard_id": active_standard,
+                "standard": standard_display(conn, active_standard),
+                "reason": reason}
+    for assignment in assignments:
+        if assignment["progress_status"] != "completed":
+            return {"standard_id": assignment["target_id"],
+                    "standard": assignment["standard"],
+                    "reason": "Your teacher assigned this learning."}
+    for standard in standards:
+        sid = standard["standard_id"]
+        if assignment_progress_status(conn, student_id, sid) != "completed":
+            return {"standard_id": sid, "standard": standard_display(conn, sid),
+                    "reason": "This is the next recommended step in your learning path."}
+    return None
+
+
+def start_or_resume_student_standard(conn, student_id, standard_id):
+    standard = standard_display(conn, standard_id)
+    objective_id = first_objective_for_standard(conn, standard_id)
+    if not standard or not objective_id:
+        return False, "That learning goal is not currently available."
+    now = int(time.time())
+    existing = conn.execute(
+        "SELECT * FROM progress_state WHERE student_id=? AND standard_id=?",
+        (student_id, standard_id),
+    ).fetchone()
+    objective = get_active_objective_for_student(conn, student_id, standard_id)
+    if objective:
+        objective_id = objective["objective_id"]
+    level = int(row_get(existing, "current_level", 1) or 1)
+    try:
+        conn.execute("BEGIN")
+        close_active_routing_level_attempt(
+            conn, student_id, "student_navigation", ended_at=now
+        )
+        conn.execute(
+            "UPDATE progress_state SET status='inactive',last_update=? WHERE student_id=? AND standard_id<>? AND status NOT IN ('completed','mastered','complete')",
+            (now, student_id, standard_id),
+        )
+        if existing:
+            conn.execute(
+                """
+                UPDATE progress_state SET
+                  status=CASE WHEN status IN ('completed','mastered','complete')
+                              THEN status ELSE 'practicing' END,
+                  last_update=?
+                WHERE student_id=? AND standard_id=?
+                """,
+                (now, student_id, standard_id),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO progress_state
+                  (student_id,standard_id,current_level,status,rolling_avg,locked,last_update)
+                VALUES (?,?,1,'practicing',0.0,0,?)
+                """,
+                (student_id, standard_id, now),
+            )
+        conn.execute(
+            """
+            INSERT INTO student_objective_state
+              (student_id,standard_id,current_objective_id,status,last_update)
+            VALUES (?,?,?,'active',?)
+            ON CONFLICT(student_id,standard_id) DO UPDATE SET
+              status='active',last_update=excluded.last_update
+            """,
+            (student_id, standard_id, objective_id, now),
+        )
+        ensure_routing_level_attempt(
+            conn, student_id=student_id, standard_id=standard_id,
+            objective_id=objective_id, level=level,
+            boundary_reason="student_navigation", started_at=now,
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return True, "Learning is ready."
 
 
 CLASS_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -8407,6 +8737,250 @@ def teacher_home():
     return redirect(url_for("index"))
 
 
+@app.post("/teacher/assignments")
+@require_teacher
+def create_assignment():
+    require_owner_csrf()
+    teacher_id = current_user()["id"]
+    class_id = (request.form.get("class_id") or "").strip()
+    requested_standard_ids = {
+        value.strip() for value in request.form.getlist("standard_id")
+        if value.strip()
+    }
+    standard_ids = sorted(requested_standard_ids, key=natural_sort_key)
+    scope = (request.form.get("recipient_scope") or "").strip()
+    if scope not in ("class", "selected"):
+        abort(400)
+    conn = get_conn()
+    if not teacher_can_access_class(conn, teacher_id, class_id):
+        abort(404)
+    available_standard_ids = {
+        item["standard_id"] for item in assignment_catalog(conn)
+    }
+    if not standard_ids or not set(standard_ids).issubset(available_standard_ids):
+        abort(400)
+    active_ids = set(
+        authorized_student_ids_for_teacher_class(conn, teacher_id, class_id)
+    )
+    if scope == "class":
+        recipients = sorted(active_ids)
+    else:
+        requested = {
+            value.strip() for value in request.form.getlist("student_id")
+            if value.strip()
+        }
+        if not requested or not requested.issubset(active_ids):
+            abort(404)
+        recipients = sorted(requested)
+    assign_date = (request.form.get("assign_date") or "").strip()
+    if not assign_date:
+        assign_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    try:
+        assign_at = int(datetime.strptime(
+            assign_date, "%Y-%m-%d"
+        ).replace(tzinfo=timezone.utc).timestamp())
+    except ValueError:
+        abort(400)
+    due_at = None
+    due_date = (request.form.get("due_date") or "").strip()
+    if due_date:
+        try:
+            due_at = int(datetime.strptime(
+                due_date, "%Y-%m-%d"
+            ).replace(tzinfo=timezone.utc).timestamp()) + 86399
+        except ValueError:
+            abort(400)
+        if due_at < assign_at:
+            abort(400)
+    directions = (request.form.get("directions") or "").strip()[:500] or None
+    now = int(time.time())
+    assignment_ids = []
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        for standard_id in standard_ids:
+            assignment_id = str(uuid.uuid4())
+            assignment_ids.append(assignment_id)
+            conn.execute(
+                """
+                INSERT INTO assignments
+                  (assignment_id,teacher_user_id,class_id,target_type,target_id,
+                   recipient_scope,directions,assign_at,due_at,created_at)
+                VALUES (?,?,?,'standard',?,?,?,?,?,?)
+                """,
+                (assignment_id, teacher_id, class_id, standard_id, scope,
+                 directions, assign_at, due_at, now),
+            )
+            conn.executemany(
+                "INSERT INTO assignment_recipients(assignment_id,student_id,assigned_at) VALUES (?,?,?)",
+                [
+                    (assignment_id, student_id, now)
+                    for student_id in recipients
+                ],
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    class_name = conn.execute(
+        "SELECT name FROM class_sections WHERE class_id=?", (class_id,)
+    ).fetchone()["name"]
+    if len(standard_ids) == 1:
+        standard = standard_display(conn, standard_ids[0])
+        flash(
+            f"Assignment created successfully: {standard_ids[0]} — "
+            f"{standard['title']} for {len(recipients)} student"
+            f"{'' if len(recipients) == 1 else 's'} in {class_name}."
+        )
+        return redirect(url_for(
+            "assignment_detail", assignment_id=assignment_ids[0]
+        ))
+    flash(
+        f"{len(standard_ids)} assignments created successfully for "
+        f"{len(recipients)} student"
+        f"{'' if len(recipients) == 1 else 's'} in {class_name}."
+    )
+    return redirect(url_for("index") + "#assignments")
+
+
+@app.get("/teacher/assignment-targets")
+@require_teacher
+def assignment_targets():
+    conn = get_conn()
+    subject = (request.args.get("subject") or "").strip()
+    course = (request.args.get("course") or "").strip()
+    unit = (request.args.get("unit") or "").strip()
+    query = (request.args.get("q") or "").strip().casefold()
+    targets = []
+    for item in assignment_catalog(conn):
+        if subject and item["subject"] != subject:
+            continue
+        if course and item["course"] != course:
+            continue
+        if unit and item["unit"] != unit:
+            continue
+        searchable = f"{item['standard_id']} {item['title']} {item['description']}"
+        if query and query not in searchable.casefold():
+            continue
+        targets.append(item)
+        if len(targets) == 50:
+            break
+    return {"targets": targets}
+
+
+def authorized_student_ids_for_teacher_class(conn, teacher_id, class_id):
+    return [
+        row["student_id"] for row in conn.execute(
+            """
+            SELECT ce.student_id FROM class_enrollments ce
+            JOIN class_sections cs ON cs.class_id=ce.class_id
+            WHERE cs.class_id=? AND cs.teacher_user_id=?
+              AND cs.is_active=1 AND ce.is_active=1
+            ORDER BY ce.student_id
+            """,
+            (class_id, teacher_id),
+        )
+    ]
+
+
+@app.get("/teacher/assignments/<assignment_id>")
+@require_teacher
+def assignment_detail(assignment_id):
+    conn = get_conn()
+    assignment = conn.execute(
+        """
+        SELECT a.*,cs.name AS class_name FROM assignments a
+        JOIN class_sections cs ON cs.class_id=a.class_id
+        WHERE a.assignment_id=? AND a.teacher_user_id=?
+        """,
+        (assignment_id, current_user()["id"]),
+    ).fetchone()
+    if not assignment:
+        abort(404)
+    recipients = []
+    for row in conn.execute(
+        """
+        SELECT s.* FROM assignment_recipients ar
+        JOIN students s ON s.student_id=ar.student_id
+        WHERE ar.assignment_id=? ORDER BY s.last_name,s.first_name,s.student_id
+        """,
+        (assignment_id,),
+    ):
+        if not teacher_can_access_student(conn, current_user()["id"], row["student_id"]):
+            continue
+        item = dict(row)
+        item["progress_status"] = assignment_progress_status(
+            conn, row["student_id"], assignment["target_id"]
+        )
+        recipients.append(item)
+    return render_template_string(
+        """
+<!doctype html><title>Assignment Progress</title>
+<main style="font-family:Arial;max-width:900px;margin:32px auto">
+<p><a href="{{ url_for('index') }}#assignments">Back to Teacher Dashboard</a></p>
+{% for message in get_flashed_messages() %}
+<div role="status" style="padding:14px 16px;background:#ecfdf3;border:1px solid #86c79f;border-radius:8px;margin:16px 0">{{ message }}</div>
+{% endfor %}
+<h1>{{ standard.title }}</h1><p>{{ assignment.class_name }} · {{ assignment.recipient_scope }}</p>
+<p>{{ assignment.directions or 'No additional directions.' }}</p>
+<p>Assigned {{ format_ts(assignment.assign_at or assignment.created_at) }}{% if assignment.due_at %} / Due {{ format_ts(assignment.due_at) }}{% endif %}</p>
+<p>Progress: {{ summary.not_started }} not started · {{ summary.in_progress }} in progress · {{ summary.completed }} completed</p>
+{% if assignment.archived_at %}<p><strong>Archived</strong></p>{% else %}
+<form method="post" action="{{ url_for('archive_assignment',assignment_id=assignment.assignment_id) }}">
+<input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button>Archive assignment</button></form>{% endif %}
+<h2>Recipients</h2><ul>{% for student in recipients %}
+<li>{{ display_name(student) }} — {{ student.progress_status.replace('_',' ') }}</li>
+{% else %}<li>No current authorized recipients.</li>{% endfor %}</ul>
+</main>
+        """,
+        assignment=assignment, standard=standard_display(conn, assignment["target_id"]),
+        recipients=recipients, summary=assignment_summary(
+            conn, assignment_id, current_user()["id"]
+        ),
+        csrf_token=owner_csrf_token(), display_name=display_name,
+        format_ts=format_ts,
+    )
+
+
+@app.post("/teacher/assignments/<assignment_id>/archive")
+@require_teacher
+def archive_assignment(assignment_id):
+    require_owner_csrf()
+    conn = get_conn()
+    cursor = conn.execute(
+        """
+        UPDATE assignments SET archived_at=?,archived_by=?
+        WHERE assignment_id=? AND teacher_user_id=? AND archived_at IS NULL
+        """,
+        (int(time.time()), current_user()["id"], assignment_id,
+         current_user()["id"]),
+    )
+    if not cursor.rowcount:
+        conn.rollback()
+        abort(404)
+    conn.commit()
+    flash("Assignment archived. Student learning history was preserved.")
+    return redirect(url_for("assignment_detail", assignment_id=assignment_id))
+
+
+@app.post("/student/learning/<standard_id>/start")
+@student_required
+def student_start_standard(standard_id):
+    require_owner_csrf()
+    user = current_user()
+    student_id = user["linked_student_id"]
+    conn = get_conn()
+    if not can_access_student_instruction(user):
+        abort(403)
+    ok, message = start_or_resume_student_standard(conn, student_id, standard_id)
+    if not ok:
+        flash(message)
+        return redirect(url_for("student_view", home=1))
+    session["current_mode"] = "question"
+    session["locked_payload"] = None
+    flash(message)
+    return redirect(url_for("student_view"))
+
+
 @app.route("/dashboard", methods=["GET", "POST"])
 @require_teacher
 def index():
@@ -8431,6 +9005,17 @@ def index():
         conn,
         [class_row["class_id"] for class_row in class_sections],
     )
+    assignment_rows = teacher_assignments(conn, teacher_user_id)
+    assignment_standards = assignment_catalog(conn)
+    assignment_subjects = sorted({
+        row["subject"] for row in assignment_standards
+    })
+    assignment_courses = sorted({
+        row["course"] for row in assignment_standards
+    })
+    assignment_units = sorted({
+        row["unit"] for row in assignment_standards if row["unit"]
+    })
 
     # Save / update student
     if request.method == "POST" and request.form.get("action") == "save_student":
@@ -9105,6 +9690,183 @@ def index():
 <div class="tool-section" id="teacher-tools">
   <h2 style="margin-bottom:0;">Teacher Tools</h2>
   <p class="section-note">Quick classroom tools for previewing and supporting student practice.</p>
+</div>
+
+<div class="card" id="assignments">
+  <h2>Assignments</h2>
+  {% if not class_sections %}
+    <div class="empty-state">Create a class before assigning learning.</div>
+  {% elif not assignment_standards %}
+    <div class="empty-state">No assignable standards are available yet. Add published standards with learning content before creating an assignment.</div>
+  {% else %}
+  <p class="section-note">Recipients are the current active students selected when the assignment is created. Students who join later do not automatically inherit it.</p>
+  <form method="post" action="{{ url_for('create_assignment') }}" id="assignment-authoring-form">
+    <input type="hidden" name="csrf_token" value="{{ assignment_csrf }}">
+    <div class="toolbar">
+      <label>Class <select name="class_id" id="assignment-class" required>{% for c in class_sections %}
+        <option value="{{ c.class_id }}">{{ c.name }}</option>{% endfor %}</select></label>
+      <label>Recipients <select name="recipient_scope" id="assignment-scope" aria-controls="selected-students">
+        <option value="class">Entire current class</option><option value="selected">Selected students below</option>
+      </select></label>
+      <label>Assign Date <input type="date" name="assign_date" value="{{ assignment_today }}" required></label>
+      <label>Due Date <input type="date" name="due_date"></label>
+    </div>
+    <h3>Assign Learning</h3>
+    <div class="toolbar">
+      <label>Subject <select id="assignment-subject">{% for value in assignment_subjects %}
+        <option value="{{ value }}">{{ value }}</option>{% endfor %}</select></label>
+      <label>Course / Grade <select id="assignment-course">{% for value in assignment_courses %}
+        <option value="{{ value }}">{{ value }}</option>{% endfor %}</select></label>
+      <label>Unit <select id="assignment-unit"><option value="">All units</option>{% for value in assignment_units %}
+        <option value="{{ value }}">{{ value }}</option>{% endfor %}</select></label>
+      <label>Search standards <input type="search" id="assignment-standard-search" autocomplete="off" aria-describedby="assignment-standard-status"></label>
+    </div>
+    <fieldset aria-describedby="assignment-standard-status">
+      <legend>Assignable Standards</legend>
+      <div id="assignment-standard" tabindex="-1"></div>
+    </fieldset>
+    <div id="assignment-standard-values"></div>
+    <p id="assignment-standard-selection" class="section-note">No standards selected.</p>
+    <p id="assignment-standard-status" class="section-note" role="status" aria-live="polite">Loading assignable standards...</p>
+    <p><label>Directions <input name="directions" maxlength="500" style="width:min(620px,100%)"></label></p>
+    <p id="assignment-roster-note" class="section-note" role="status" aria-live="polite"></p>
+    <fieldset id="selected-students" hidden><legend>Selected Students</legend>
+      {% for c in class_sections %}
+      <div data-assignment-class="{{ c.class_id }}">
+        {% for s in class_rosters.get(c.class_id,[]) %}
+        <label style="display:inline-block;margin:5px 12px 5px 0"><input type="checkbox" name="student_id" value="{{ s.student_id }}"> {{ display_name(s) }}</label>
+        {% else %}
+        <p>No active students are currently enrolled in this class.</p>
+        {% endfor %}
+      </div>
+      {% endfor %}
+    </fieldset>
+    <button class="btn" type="submit">Create Assignment</button>
+  </form>
+  <script>
+  (() => {
+    const form = document.getElementById("assignment-authoring-form");
+    if (!form) return;
+    const classSelect = document.getElementById("assignment-class");
+    const scopeSelect = document.getElementById("assignment-scope");
+    const selectedStudents = document.getElementById("selected-students");
+    const rosterNote = document.getElementById("assignment-roster-note");
+    const targetList = document.getElementById("assignment-standard");
+    const targetValues = document.getElementById("assignment-standard-values");
+    const targetSelection = document.getElementById("assignment-standard-selection");
+    const targetStatus = document.getElementById("assignment-standard-status");
+    const search = document.getElementById("assignment-standard-search");
+    const filters = ["assignment-subject", "assignment-course", "assignment-unit"]
+      .map(id => document.getElementById(id));
+    const selectedTargets = new Map();
+    let searchTimer;
+
+    function updateSelectedTargets() {
+      targetValues.replaceChildren(...Array.from(selectedTargets.keys()).map(id => {
+        const input = document.createElement("input");
+        input.type = "hidden";
+        input.name = "standard_id";
+        input.value = id;
+        return input;
+      }));
+      const selected = Array.from(selectedTargets.values());
+      targetSelection.textContent = selected.length
+        ? `${selected.length} selected: ${selected.join(", ")}`
+        : "No standards selected.";
+    }
+
+    function updateRecipients() {
+      const selectedClass = classSelect.value;
+      const selected = scopeSelect.value === "selected";
+      selectedStudents.hidden = !selected;
+      scopeSelect.setAttribute("aria-expanded", String(selected));
+      let activeCount = 0;
+      selectedStudents.querySelectorAll("[data-assignment-class]").forEach(group => {
+        const active = group.dataset.assignmentClass === selectedClass;
+        group.hidden = !active;
+        group.querySelectorAll("input").forEach(input => {
+          input.disabled = !selected || !active;
+          if (active) activeCount += 1;
+        });
+      });
+      rosterNote.textContent = activeCount
+        ? "Recipients are snapshotted when this assignment is created. Students who join later will not automatically receive it."
+        : "This class has no active students. The recipient snapshot will be empty, and students who join later will not automatically receive this assignment.";
+    }
+
+    async function loadTargets() {
+      const params = new URLSearchParams({
+        subject: filters[0].value,
+        course: filters[1].value,
+        unit: filters[2].value,
+        q: search.value
+      });
+      targetStatus.textContent = "Loading assignable standards...";
+      try {
+        const response = await fetch(`{{ url_for('assignment_targets') }}?${params}`);
+        if (!response.ok) throw new Error("request failed");
+        const data = await response.json();
+        targetList.replaceChildren(...data.targets.map(target => {
+          const label = document.createElement("label");
+          label.style.display = "block";
+          label.style.margin = "6px 0";
+          const input = document.createElement("input");
+          input.type = "checkbox";
+          input.value = target.standard_id;
+          input.checked = selectedTargets.has(target.standard_id);
+          input.addEventListener("change", () => {
+            if (input.checked) {
+              selectedTargets.set(
+                target.standard_id,
+                `${target.standard_id} — ${target.title}`
+              );
+            } else {
+              selectedTargets.delete(target.standard_id);
+            }
+            updateSelectedTargets();
+          });
+          label.append(input, ` ${target.standard_id} — ${target.title}`);
+          return label;
+        }));
+        targetStatus.textContent = data.targets.length
+          ? `${data.targets.length} assignable standard${data.targets.length === 1 ? "" : "s"} shown.`
+          : "No assignable standards match these filters. Try another subject, course, unit, or search.";
+      } catch (error) {
+        targetList.replaceChildren();
+        targetStatus.textContent = "Assignable standards could not be loaded. Please refresh and try again.";
+      }
+    }
+
+    classSelect.addEventListener("change", updateRecipients);
+    scopeSelect.addEventListener("change", updateRecipients);
+    filters.forEach(filter => filter.addEventListener("change", loadTargets));
+    search.addEventListener("input", () => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(loadTargets, 200);
+    });
+    form.addEventListener("submit", event => {
+      if (selectedTargets.size === 0) {
+        event.preventDefault();
+        targetStatus.textContent = "Select at least one assignable standard.";
+        targetList.focus();
+      }
+    });
+    updateRecipients();
+    updateSelectedTargets();
+    loadTargets();
+  })();
+  </script>
+  {% endif %}
+  <h3>Assignment History</h3>
+  {% if assignment_rows %}<table><tr><th>Assign Learning</th><th>Class</th><th>Assign Date</th><th>Due Date</th><th>Progress</th><th>Status</th></tr>
+  {% for a in assignment_rows %}<tr>
+    <td><a href="{{ url_for('assignment_detail',assignment_id=a.assignment_id) }}">{{ a.target_id }}</a><br>{{ a.standard.title }}</td>
+    <td>{{ a.class_name }}</td>
+    <td>{{ format_ts(a.assign_at or a.created_at) }}</td>
+    <td>{{ format_ts(a.due_at) if a.due_at else 'No due date' }}</td>
+    <td>{{ a.summary.not_started }} not started · {{ a.summary.in_progress }} in progress · {{ a.summary.completed }} completed</td>
+    <td>{{ 'Archived' if a.archived_at else 'Active' }}</td>
+  </tr>{% endfor %}</table>{% else %}<div class="empty-state">No assignments yet.</div>{% endif %}
 </div>
 
 <div class="grid">
@@ -9796,6 +10558,14 @@ def index():
         class_sections=class_sections,
         class_rosters=class_rosters,
         account_label=account_display_label(conn, current_user()),
+        assignment_rows=assignment_rows,
+        assignment_standards=assignment_standards,
+        assignment_subjects=assignment_subjects,
+        assignment_courses=assignment_courses,
+        assignment_units=assignment_units,
+        assignment_today=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        assignment_csrf=owner_csrf_token(),
+        standard_display=lambda standard_id: standard_display(conn, standard_id),
     )
 
 
@@ -10325,6 +11095,9 @@ WHERE o.standard_id = ?
         for standard in available_standards
     ]
     for standard in available_standard_cards:
+        standard_meta = standard_display(conn, standard["standard_id"])
+        standard["title"] = standard_meta["title"] if standard_meta else standard["standard_id"]
+        standard["description"] = standard_meta["description"] if standard_meta else ""
         standard_progress = progress_by_standard.get(standard["standard_id"])
         standard["level"] = row_get(standard_progress, "current_level", None)
         standard_response_count = get_response_count_for_level(
@@ -10363,6 +11136,15 @@ WHERE o.standard_id = ?
     plant_view = cumulative_plant_view_model(conn, student_id, current_std)
     current_core_idea = row_get(current_standard_meta, "core_idea", "Science")
     current_grade_band = row_get(current_standard_meta, "grade_band", "Current band")
+    student_assignments = (
+        get_student_assignments(conn, student_id) if role == "student" else []
+    )
+    recommendation = (
+        student_recommendation(
+            conn, student_id, student_assignments, available_standard_cards
+        )
+        if role == "student" else None
+    )
 
     if role == "student" and session.get("current_mode") == "home":
         home_html = """
@@ -10505,7 +11287,7 @@ WHERE o.standard_id = ?
         RootED will continue at the level that matches your current progress.
       </p>
       <div class="current-panel" style="margin-top:20px;">
-        <div class="muted">Current assigned standard</div>
+        <div class="muted">Current learning goal</div>
         <div class="standard-code">{{ current_std }}</div>
         {% if current_standard_meta %}
           <div class="muted">{{ current_core_idea }} | {{ current_grade_band }}</div>
@@ -10567,10 +11349,40 @@ WHERE o.standard_id = ?
     </aside>
   </section>
 
+  <section class="card" aria-labelledby="assigned-heading">
+    <div class="section-head"><div><h2 id="assigned-heading">Assigned by Your Teacher</h2>
+    <p class="muted">Active work selected for you by your teacher.</p></div></div>
+    {% if assignments %}<div class="standards-grid">{% for assignment in assignments %}
+      <article class="standard-card">
+        <div class="standard-card-head"><h3>{{ assignment.standard.title }}</h3>
+        <span class="pill pill-{{ 'complete' if assignment.progress_status == 'completed' else 'review' if assignment.is_past_due else 'progress' if assignment.progress_status == 'in_progress' else 'available' }}">
+        {{ 'Past due' if assignment.is_past_due else assignment.progress_status.replace('_',' ').title() }}</span></div>
+        <p>{{ assignment.class_name }}</p>
+        {% if assignment.directions %}<p>{{ assignment.directions }}</p>{% endif %}
+        {% if assignment.due_at %}<p>Due {{ format_date(assignment.due_at) }}</p>{% endif %}
+        <form method="post" action="{{ url_for('student_start_standard',standard_id=assignment.target_id) }}">
+          <input type="hidden" name="csrf_token" value="{{ learning_csrf }}">
+          <button class="btn cta-button" type="submit">{{ 'Review' if assignment.progress_status == 'completed' else 'Continue' if assignment.progress_status == 'in_progress' else 'Start' }}</button>
+        </form>
+      </article>{% endfor %}</div>
+    {% else %}<div class="empty-state">You do not have active assignments right now. You can still follow RootED’s recommendation or explore available learning.</div>{% endif %}
+  </section>
+
+  <section class="card" aria-labelledby="recommended-heading">
+    <div class="section-head"><div><h2 id="recommended-heading">Recommended for You</h2></div></div>
+    {% if recommendation %}<article class="standard-card">
+      <h3>{{ recommendation.standard.title }}</h3><p>{{ recommendation.reason }}</p>
+      <form method="post" action="{{ url_for('student_start_standard',standard_id=recommendation.standard_id) }}">
+        <input type="hidden" name="csrf_token" value="{{ learning_csrf }}">
+        <button class="btn cta-button" type="submit">Continue Learning</button>
+      </form>
+    </article>{% else %}<div class="empty-state">You have completed all currently available learning.</div>{% endif %}
+  </section>
+
   <div class="card">
     <div class="section-head">
       <div>
-        <h2>Available Standards</h2>
+        <h2>Explore Learning</h2>
         <p class="muted" style="margin:6px 0 0;">Current, completed, and in-progress labels use existing progress data.</p>
       </div>
     </div>
@@ -10579,15 +11391,20 @@ WHERE o.standard_id = ?
         {% for standard in available_standards %}
           <section class="standard-card">
             <div class="standard-card-head">
-              <h3>{{ standard.standard_id }}</h3>
+              <h3>{{ standard.title }}</h3>
               <span class="pill pill-{{ standard.status_class }}">{{ standard.status_label }}</span>
             </div>
-            <p>{{ standard.core_idea }} | {{ standard.grade_band }}</p>
+            <p>{{ standard.description }}</p>
             <div class="standard-meta">
               <span>{{ standard.objective_count }} objectives</span>
             </div>
             {% if standard.question_count == 0 %}
               <p class="muted">Questions are not available for this standard yet.</p>
+            {% else %}
+              <form method="post" action="{{ url_for('student_start_standard',standard_id=standard.standard_id) }}">
+                <input type="hidden" name="csrf_token" value="{{ learning_csrf }}">
+                <button class="btn join-button" type="submit">{{ 'Continue' if standard.status_class in ('current','progress','review') else 'Review' if standard.status_class == 'complete' else 'Start' }}</button>
+              </form>
             {% endif %}
           </section>
         {% endfor %}
@@ -10612,6 +11429,11 @@ WHERE o.standard_id = ?
             plant_view=plant_view,
             objective_display_name=objective_display_name,
             enrolled_classes=enrolled_classes,
+            assignments=student_assignments,
+            recommendation=recommendation,
+            format_date=lambda value: time.strftime("%b %d, %Y", time.gmtime(int(value))),
+            account_label=account_display_label(conn, current_user()),
+            learning_csrf=owner_csrf_token(),
         )
 
     locked_review = session.get("locked_payload") if session.get("current_mode") == "locked" else None

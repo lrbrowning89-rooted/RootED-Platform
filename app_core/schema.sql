@@ -116,6 +116,28 @@ CREATE TABLE IF NOT EXISTS class_enrollments (
   FOREIGN KEY (student_id) REFERENCES students(student_id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS assignments (
+  assignment_id TEXT PRIMARY KEY,
+  teacher_user_id INTEGER NOT NULL,
+  class_id TEXT NOT NULL,
+  target_type TEXT NOT NULL CHECK(target_type IN ('standard','objective','competency')),
+  target_id TEXT NOT NULL,
+  recipient_scope TEXT NOT NULL CHECK(recipient_scope IN ('class','selected')),
+  directions TEXT,
+  assign_at INTEGER NOT NULL,
+  due_at INTEGER,
+  created_at INTEGER NOT NULL,
+  archived_at INTEGER,
+  archived_by INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS assignment_recipients (
+  assignment_id TEXT NOT NULL,
+  student_id TEXT NOT NULL,
+  assigned_at INTEGER NOT NULL,
+  PRIMARY KEY(assignment_id,student_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_class_enrollments_student
   ON class_enrollments(student_id);
 

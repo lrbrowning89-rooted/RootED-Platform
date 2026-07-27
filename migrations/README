@@ -10,6 +10,7 @@ consistently:
     python -m migrations.add_user_platform_roles
     python -m migrations.add_user_instructional_authorizations
     python -m migrations.add_teacher_email_authorizations --database /exact/path/to/rooted.db
+    python -m migrations.add_assignments --database /exact/path/to/rooted.db
     python -m migrations.add_account_lifecycle_and_objective_display
     python -m migrations.add_model_assets_table
     python -m migrations.add_student_growth_progress
@@ -25,3 +26,6 @@ dependency order for the recent adaptive schema is:
 
 Never run these commands until the exact `NGSS_DB` path has been confirmed and
 a readable production backup has been created.
+
+The assignments migration is idempotent and also adds/backfills `assign_at`
+from `created_at` for databases created before assignment scheduling existed.
