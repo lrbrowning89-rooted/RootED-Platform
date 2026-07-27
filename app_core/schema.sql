@@ -238,6 +238,31 @@ CREATE INDEX IF NOT EXISTS idx_user_instructional_authorizations_history
     instructional_role, revoked_at, user_id, granted_at
   );
 
+CREATE TABLE IF NOT EXISTS teacher_email_authorizations (
+  email_authorization_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  normalized_email TEXT NOT NULL,
+  display_name TEXT,
+  user_id INTEGER,
+  instructional_authorization_id INTEGER,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK(status IN ('pending', 'active', 'deactivated', 'revoked')),
+  created_at INTEGER NOT NULL,
+  created_by INTEGER NOT NULL,
+  claimed_at INTEGER,
+  deactivated_at INTEGER,
+  deactivated_by INTEGER,
+  revoked_at INTEGER,
+  revoked_by INTEGER,
+  internal_note TEXT,
+  FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE RESTRICT,
+  FOREIGN KEY(instructional_authorization_id)
+    REFERENCES user_instructional_authorizations(authorization_id) ON DELETE RESTRICT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_teacher_email_authorizations_open
+  ON teacher_email_authorizations(normalized_email)
+  WHERE status IN ('pending', 'active', 'deactivated');
+
 CREATE TABLE IF NOT EXISTS access_authorization_audit_log (
   audit_id          INTEGER PRIMARY KEY AUTOINCREMENT,
   actor_user_id     INTEGER NOT NULL,

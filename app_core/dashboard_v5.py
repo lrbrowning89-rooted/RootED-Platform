@@ -440,6 +440,65 @@ def has_instructional_authorization(
     return row is not None
 
 
+def normalize_email(email: str | None) -> str | None:
+    value = (email or "").strip().lower()
+    return value or None
+
+
+def trusted_email_claim(value) -> str | None:
+    """Normalize an email-shaped claim from an already validated ID token."""
+    normalized = normalize_email(value if isinstance(value, str) else None)
+    if not normalized or normalized.count("@") != 1:
+        return None
+    local, domain = normalized.split("@", 1)
+    if not local or not domain or "." not in domain or any(ch.isspace() for ch in normalized):
+        return None
+    return normalized
+
+
+def microsoft_identity_claims(id_token) -> tuple[str | None, str | None, str | None]:
+    """Keep Microsoft linkage, authorization matching, and UI claims separate."""
+    if not id_token:
+        return None, None, None
+    subject = str(id_token.get("sub")).strip() if id_token.get("sub") else None
+    email = next(
+        (
+            candidate
+            for candidate in (
+                trusted_email_claim(id_token.get("email")),
+                trusted_email_claim(id_token.get("preferred_username")),
+                trusted_email_claim(id_token.get("upn")),
+            )
+            if candidate
+        ),
+        None,
+    )
+    display_name = (
+        str(id_token.get("name")).strip()
+        if id_token.get("name") and str(id_token.get("name")).strip()
+        else None
+    )
+    return subject, email, display_name
+
+
+def account_display_label(conn, user) -> str:
+    identity = conn.execute(
+        """
+        SELECT display_name,verified_email FROM user_auth_identities
+        WHERE user_id=? AND revoked_at IS NULL
+        ORDER BY last_login_at DESC,identity_id DESC LIMIT 1
+        """,
+        (user["id"],),
+    ).fetchone()
+    if identity:
+        return (
+            (identity["display_name"] or "").strip()
+            or (identity["verified_email"] or "").strip()
+            or "RootED user"
+        )
+    return user["username"] if user["sso_provider"] is None else "RootED user"
+
+
 def is_teacher(user=None) -> bool:
     return has_instructional_authorization("teacher", user)
 
@@ -594,6 +653,20 @@ def owner_required(f):
             abort(403)
         return f(*args, **kwargs)
 
+    return wrapper
+
+
+def teacher_or_owner_required(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        user = current_user()
+        if not user:
+            session.clear()
+            return redirect(url_for("login"))
+        session["role"] = effective_session_role(user)
+        if not (is_owner(user) or can_access_teacher_tools(user)):
+            abort(403)
+        return f(*args, **kwargs)
     return wrapper
 
 
@@ -1496,6 +1569,47 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS teacher_email_authorizations (
+          email_authorization_id INTEGER PRIMARY KEY AUTOINCREMENT,
+          normalized_email TEXT NOT NULL,
+          display_name TEXT,
+          user_id INTEGER,
+          instructional_authorization_id INTEGER,
+          status TEXT NOT NULL DEFAULT 'pending'
+            CHECK(status IN ('pending', 'active', 'deactivated', 'revoked')),
+          created_at INTEGER NOT NULL,
+          created_by INTEGER NOT NULL,
+          claimed_at INTEGER,
+          deactivated_at INTEGER,
+          deactivated_by INTEGER,
+          revoked_at INTEGER,
+          revoked_by INTEGER,
+          internal_note TEXT,
+          FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE RESTRICT,
+          FOREIGN KEY(instructional_authorization_id)
+            REFERENCES user_instructional_authorizations(authorization_id)
+            ON DELETE RESTRICT,
+          FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE RESTRICT,
+          FOREIGN KEY(deactivated_by) REFERENCES users(id) ON DELETE SET NULL,
+          FOREIGN KEY(revoked_by) REFERENCES users(id) ON DELETE SET NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_teacher_email_authorizations_open
+        ON teacher_email_authorizations(normalized_email)
+        WHERE status IN ('pending', 'active', 'deactivated')
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_teacher_email_authorizations_user
+        ON teacher_email_authorizations(user_id, status)
+        """
+    )
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS access_authorization_audit_log (
           audit_id          INTEGER PRIMARY KEY AUTOINCREMENT,
           actor_user_id     INTEGER NOT NULL,
@@ -1862,15 +1976,17 @@ def static_image_asset_for_render(resolved_asset: dict | None) -> dict | None:
 def locked_student_id_for_session(conn):
     """
     Returns the student_id this session is allowed to act as.
-    Teachers can impersonate via request args/forms.
+    Teachers may select only students related through their active classes.
     Students are hard-locked to linked_student_id (or username fallback).
     """
     role = session.get("role")
     user_id = session.get("user_id")
 
     if role == "teacher":
-        # teacher can pick who they are viewing
-        return request.values.get("student_id")
+        student_id = request.values.get("student_id")
+        if student_id and teacher_can_access_student(conn, user_id, student_id):
+            return student_id
+        return None
 
     if role == "student":
         user = get_user_by_id(conn, user_id)
@@ -2989,9 +3105,16 @@ def build_dashboard_snapshot(student_rows):
     }
 
 
-def get_active_standard_summary(conn, selected_period=None):
+def get_active_standard_summary(conn, selected_period=None, student_ids=None):
+    if student_ids is not None and not student_ids:
+        return []
     where_clauses = ["ps.status <> 'inactive'"]
     params = []
+    if student_ids is not None:
+        where_clauses.append(
+            f"ps.student_id IN ({sql_placeholders(student_ids)})"
+        )
+        params.extend(student_ids)
     if selected_period and selected_period != "ALL":
         where_clauses.append("st.class_period = ?")
         params.append(selected_period)
@@ -3149,23 +3272,81 @@ def ensure_routing_level_attempt(
     ).fetchone()
 
 
-def get_students(conn, period=None):
-    if period and period != "ALL":
-        return conn.execute(
+def authorized_student_ids_for_teacher(
+    conn: sqlite3.Connection, teacher_user_id: int
+) -> list[str]:
+    return [
+        row["student_id"]
+        for row in conn.execute(
             """
-            SELECT student_id, first_name, last_name, grade, class_period
-            FROM students
-            WHERE class_period = ?
-            ORDER BY student_id
+            SELECT DISTINCT ce.student_id
+            FROM class_sections cs
+            JOIN class_enrollments ce ON ce.class_id=cs.class_id
+            WHERE cs.teacher_user_id=? AND cs.is_active=1 AND ce.is_active=1
+            ORDER BY ce.student_id
             """,
-            (period,),
-        ).fetchall()
+            (teacher_user_id,),
+        )
+    ]
+
+
+def teacher_can_access_class(conn, teacher_user_id, class_id) -> bool:
     return conn.execute(
         """
-        SELECT student_id, first_name, last_name, grade, class_period
-        FROM students
-        ORDER BY student_id
+        SELECT 1 FROM class_sections
+        WHERE class_id=? AND teacher_user_id=? AND is_active=1
+        """,
+        (class_id, teacher_user_id),
+    ).fetchone() is not None
+
+
+def teacher_can_access_student(conn, teacher_user_id, student_id) -> bool:
+    return conn.execute(
         """
+        SELECT 1
+        FROM class_sections cs
+        JOIN class_enrollments ce ON ce.class_id=cs.class_id
+        WHERE cs.teacher_user_id=? AND cs.is_active=1
+          AND ce.student_id=? AND ce.is_active=1
+        LIMIT 1
+        """,
+        (teacher_user_id, student_id),
+    ).fetchone() is not None
+
+
+def require_teacher_student_access(conn, student_id) -> None:
+    user = current_user()
+    if not user or not teacher_can_access_student(conn, user["id"], student_id):
+        abort(404)
+
+
+def get_students(conn, period=None, teacher_user_id=None):
+    where = []
+    params = []
+    if period and period != "ALL":
+        where.append("s.class_period = ?")
+        params.append(period)
+    if teacher_user_id is not None:
+        where.append(
+            """
+            EXISTS (
+              SELECT 1 FROM class_enrollments ce
+              JOIN class_sections cs ON cs.class_id=ce.class_id
+              WHERE ce.student_id=s.student_id AND ce.is_active=1
+                AND cs.is_active=1 AND cs.teacher_user_id=?
+            )
+            """
+        )
+        params.append(teacher_user_id)
+    where_sql = "WHERE " + " AND ".join(where) if where else ""
+    return conn.execute(
+        f"""
+        SELECT s.student_id, s.first_name, s.last_name, s.grade, s.class_period
+        FROM students s
+        {where_sql}
+        ORDER BY s.student_id
+        """,
+        params,
     ).fetchall()
 
 
@@ -3216,7 +3397,7 @@ def get_class_sections_for_teacher(conn: sqlite3.Connection, teacher_user_id: in
                COUNT(ce.student_id) AS enrolled_count
         FROM class_sections cs
         LEFT JOIN class_enrollments ce ON ce.class_id = cs.class_id AND ce.is_active=1
-        WHERE cs.teacher_user_id = ? OR cs.teacher_user_id IS NULL
+        WHERE cs.teacher_user_id = ? AND cs.is_active=1
         GROUP BY cs.class_id
         ORDER BY cs.is_active DESC, cs.name COLLATE NOCASE
         """,
@@ -4466,94 +4647,172 @@ def resolve_sso_user(
     avatar_url: str | None = None,
     allow_create: bool = False,
 ):
-    """Resolve an OIDC identity without granting classroom or platform authority."""
+    """Resolve an OIDC identity and atomically claim a pending teacher approval."""
     if not provider or not subject:
         return None
+    normalized_email = normalize_email(email) if email_verified else None
     now_ts = int(time.time())
-    row = conn.execute(
-        """
-        SELECT u.* FROM user_auth_identities i
-        JOIN users u ON u.id=i.user_id
-        WHERE i.provider=? AND i.provider_subject=? AND i.revoked_at IS NULL
-        LIMIT 1
-        """,
-        (provider, subject),
-    ).fetchone()
-    if row:
-        if not int(row["is_active"]):
-            return None
-        conn.execute(
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
             """
-            UPDATE user_auth_identities
-            SET verified_email=COALESCE(?, verified_email),
-                display_name=COALESCE(?, display_name),
-                avatar_url=COALESCE(?, avatar_url), last_login_at=?
-            WHERE provider=? AND provider_subject=?
+            SELECT u.* FROM user_auth_identities i
+            JOIN users u ON u.id=i.user_id
+            WHERE i.provider=? AND i.provider_subject=? AND i.revoked_at IS NULL
+            LIMIT 1
             """,
-            (email if email_verified else None, display_name, avatar_url,
-             now_ts, provider, subject),
-        )
-        conn.execute("UPDATE users SET last_login_ts=? WHERE id=?", (now_ts, row["id"]))
-        conn.commit()
-        return conn.execute("SELECT * FROM users WHERE id=?", (row["id"],)).fetchone()
+            (provider, subject),
+        ).fetchone()
+        if row and not int(row["is_active"]):
+            conn.rollback()
+            return None
 
-    if not allow_create:
-        return None
-    if email and email_verified:
-        matches = conn.execute(
-            """
-            SELECT DISTINCT u.* FROM users u
-            LEFT JOIN user_auth_identities i ON i.user_id=u.id
-            WHERE lower(u.sso_email)=lower(?) OR lower(i.verified_email)=lower(?)
-            """,
-            (email, email),
-        ).fetchall()
-        if len(matches) > 1:
+        if not row and normalized_email:
+            matches = conn.execute(
+                """
+                SELECT DISTINCT u.* FROM users u
+                LEFT JOIN user_auth_identities i ON i.user_id=u.id
+                WHERE lower(trim(u.sso_email))=?
+                   OR lower(trim(i.verified_email))=?
+                """,
+                (normalized_email, normalized_email),
+            ).fetchall()
+            if len(matches) > 1:
+                conn.rollback()
+                return None
+            row = matches[0] if matches else None
+
+        pending = None
+        if normalized_email:
+            pending = conn.execute(
+                """
+                SELECT * FROM teacher_email_authorizations
+                WHERE normalized_email=? AND status='pending'
+                LIMIT 1
+                """,
+                (normalized_email,),
+            ).fetchone()
+
+        if not row and not allow_create:
+            conn.rollback()
             return None
-        if len(matches) == 1:
-            row = matches[0]
+        if not row and pending:
+            base = normalized_email.split("@")[0]
+            username = base
+            suffix = 1
+            while conn.execute(
+                "SELECT 1 FROM users WHERE username=?", (username,)
+            ).fetchone():
+                suffix += 1
+                username = f"{base}{suffix}"
+            conn.execute(
+                """
+                INSERT INTO users
+                  (username,password_hash,role,account_role,linked_student_id,
+                   is_active,sso_provider,sso_subject,sso_email,last_login_ts)
+                VALUES (?,?,'student','teacher',NULL,1,?,?,?,?)
+                """,
+                (username, generate_password_hash(uuid.uuid4().hex), provider,
+                 subject, normalized_email, now_ts),
+            )
+            user_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            row = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+        elif not row:
+            base = normalized_email.split("@")[0] if normalized_email else subject
+            username, suffix = base, 1
+            while conn.execute("SELECT 1 FROM users WHERE username=?", (username,)).fetchone():
+                suffix += 1
+                username = f"{base}{suffix}"
+            conn.execute(
+                """
+                INSERT INTO users
+                  (username,password_hash,role,account_role,linked_student_id,
+                   is_active,sso_provider,sso_subject,sso_email,last_login_ts)
+                VALUES (?,?,'student','pending',NULL,1,?,?,?,?)
+                """,
+                (username, generate_password_hash(uuid.uuid4().hex), provider,
+                 subject, normalized_email, now_ts),
+            )
+            user_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            row = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+
+        identity = conn.execute(
+            "SELECT identity_id FROM user_auth_identities WHERE provider=? AND provider_subject=?",
+            (provider, subject),
+        ).fetchone()
+        if identity:
+            conn.execute(
+                """
+                UPDATE user_auth_identities
+                SET verified_email=COALESCE(?,verified_email),
+                    display_name=COALESCE(?,display_name),
+                    avatar_url=COALESCE(?,avatar_url),last_login_at=?
+                WHERE identity_id=?
+                """,
+                (normalized_email, display_name, avatar_url, now_ts, identity[0]),
+            )
+        else:
             conn.execute(
                 """
                 INSERT INTO user_auth_identities
-                  (user_id, provider, provider_subject, verified_email,
-                   display_name, avatar_url, created_at, last_login_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                  (user_id,provider,provider_subject,verified_email,display_name,
+                   avatar_url,created_at,last_login_at)
+                VALUES (?,?,?,?,?,?,?,?)
                 """,
-                (row["id"], provider, subject, email, display_name, avatar_url,
-                 now_ts, now_ts),
+                (row["id"], provider, subject, normalized_email, display_name,
+                 avatar_url, now_ts, now_ts),
             )
-            conn.commit()
-            return row
 
-    base = email.split("@")[0] if email and "@" in email else subject
-    username = base
-    suffix = 1
-    while conn.execute("SELECT 1 FROM users WHERE username=?", (username,)).fetchone():
-        suffix += 1
-        username = f"{base}{suffix}"
-    conn.execute(
-        """
-        INSERT INTO users
-          (username, password_hash, role, account_role, linked_student_id, is_active,
-           sso_provider, sso_subject, sso_email, last_login_ts)
-        VALUES (?, ?, 'student', 'pending', NULL, 1, ?, ?, ?, ?)
-        """,
-        (username, generate_password_hash(uuid.uuid4().hex), provider, subject,
-         email if email_verified else None, now_ts),
-    )
-    user_id = conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
-    conn.execute(
-        """
-        INSERT INTO user_auth_identities
-          (user_id, provider, provider_subject, verified_email, display_name,
-           avatar_url, created_at, last_login_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (user_id, provider, subject, email if email_verified else None,
-         display_name, avatar_url, now_ts, now_ts),
-    )
-    conn.commit()
-    return conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+        if pending:
+            # Never silently turn a learner with instructional history into staff.
+            has_student_history = row["linked_student_id"] is not None or conn.execute(
+                "SELECT 1 FROM class_enrollments WHERE student_id=? LIMIT 1",
+                (row["linked_student_id"],),
+            ).fetchone()
+            if has_student_history:
+                conn.rollback()
+                return None
+            authorization = conn.execute(
+                """
+                SELECT authorization_id FROM user_instructional_authorizations
+                WHERE user_id=? AND instructional_role='teacher' AND revoked_at IS NULL
+                """,
+                (row["id"],),
+            ).fetchone()
+            if not authorization:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO user_instructional_authorizations
+                      (user_id,instructional_role,granted_at,granted_by,grant_note)
+                    VALUES (?,'teacher',?,?,?)
+                    """,
+                    (row["id"], now_ts, pending["created_by"],
+                     "Claimed verified email pre-authorization"),
+                )
+                authorization_id = cursor.lastrowid
+            else:
+                authorization_id = authorization["authorization_id"]
+            conn.execute(
+                "UPDATE users SET account_role='teacher',last_login_ts=? WHERE id=?",
+                (now_ts, row["id"]),
+            )
+            conn.execute(
+                """
+                UPDATE teacher_email_authorizations
+                SET user_id=?,instructional_authorization_id=?,status='active',
+                    claimed_at=?
+                WHERE email_authorization_id=? AND status='pending'
+                """,
+                (row["id"], authorization_id, now_ts,
+                 pending["email_authorization_id"]),
+            )
+        else:
+            conn.execute("UPDATE users SET last_login_ts=? WHERE id=?", (now_ts, row["id"]))
+        conn.commit()
+        return conn.execute("SELECT * FROM users WHERE id=?", (row["id"],)).fetchone()
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def get_questions_for_objective(conn, oid):
@@ -5570,6 +5829,14 @@ def owner_people_access():
     conn = get_conn()
     try:
         people = get_people_access_rows(conn)
+        email_authorizations = conn.execute(
+            """
+            SELECT e.*, u.username AS linked_username
+            FROM teacher_email_authorizations e
+            LEFT JOIN users u ON u.id=e.user_id
+            ORDER BY e.created_at DESC, e.email_authorization_id DESC
+            """
+        ).fetchall()
     finally:
         conn.close()
     return render_template_string(
@@ -5585,12 +5852,48 @@ h1{color:#234b35;margin-bottom:6px}.muted{color:#647067;font-size:13px}
 .table-wrap{overflow:auto;margin-top:18px;background:#fff;border:1px solid #e2decf;border-radius:12px}
 table{border-collapse:collapse;width:100%;font-size:13px}th,td{padding:11px 12px;text-align:left;border-bottom:1px solid #ebe8de;white-space:nowrap}
 th{background:#eef4ec;color:#234b35}.name{font-weight:700}.empty{color:#7a837b}
+.card{margin-top:18px;background:#fff;border:1px solid #e2decf;border-radius:12px;padding:18px}
+.form-grid{display:grid;grid-template-columns:2fr 1.3fr 2fr auto;gap:10px;align-items:end}
+input{box-sizing:border-box;width:100%;padding:9px;border:1px solid #cfd8cf;border-radius:7px}
 </style>
 <main class="page">
   <div class="top">
     <div><h1>People &amp; Access</h1><p class="muted">Protected account-administration information. Owner access only.</p></div>
     <a class="btn btn-secondary" href="{{ url_for('owner_home') }}">Owner Workspace</a>
   </div>
+  <section class="card">
+    <h2>Pre-authorize a teacher</h2>
+    <p class="muted">Teacher access will be claimed only from a verified Google or Microsoft email.</p>
+    <form method="post" action="{{ url_for('owner_create_teacher_email_authorization') }}" class="form-grid">
+      <label>Email<input type="email" name="email" required></label>
+      <label>Display name<input name="display_name"></label>
+      <label>Internal note<input name="internal_note"></label>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="btn" type="submit">Pre-authorize</button>
+    </form>
+    <div class="table-wrap">
+      <table><thead><tr><th>Email</th><th>Name</th><th>Status</th><th>Linked user</th><th>Note</th><th>Action</th></tr></thead>
+      <tbody>{% for item in email_authorizations %}
+        <tr><td>{{ item.normalized_email }}</td><td>{{ item.display_name or '—' }}</td>
+        <td>{{ {'pending':'Invited — awaiting first sign-in','active':'Active','deactivated':'Deactivated','revoked':'Revoked'}[item.status] }}</td>
+        <td>{{ item.linked_username or 'Not yet linked' }}</td><td>{{ item.internal_note or '—' }}</td>
+        <td>
+          {% if item.status in ('pending','active') %}
+          <form method="post" action="{{ url_for('owner_update_teacher_email_authorization', email_authorization_id=item.email_authorization_id, action='deactivate') }}" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn" type="submit">Deactivate</button>
+          </form>
+          <form method="post" action="{{ url_for('owner_update_teacher_email_authorization', email_authorization_id=item.email_authorization_id, action='revoke') }}" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn" type="submit">Revoke</button>
+          </form>
+          {% elif item.status == 'deactivated' %}
+          <form method="post" action="{{ url_for('owner_update_teacher_email_authorization', email_authorization_id=item.email_authorization_id, action='reactivate') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn" type="submit">Reactivate</button>
+          </form>
+          {% endif %}
+        </td></tr>
+      {% else %}<tr><td colspan="6" class="empty">No email pre-authorizations.</td></tr>{% endfor %}</tbody></table>
+    </div>
+  </section>
   <div class="table-wrap">
     <table>
       <thead><tr>
@@ -5632,8 +5935,132 @@ th{background:#eef4ec;color:#234b35}.name{font-weight:700}.empty{color:#7a837b}
 </main>
         """,
         people=people,
+        email_authorizations=email_authorizations,
+        csrf_token=owner_csrf_token(),
         format_ts=format_ts,
     )
+
+
+@app.post("/owner/people-access/teacher-authorizations")
+@owner_required
+def owner_create_teacher_email_authorization():
+    require_owner_csrf()
+    normalized = normalize_email(request.form.get("email"))
+    if not normalized or "@" not in normalized:
+        abort(400)
+    conn = get_conn()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        existing = conn.execute(
+            """
+            SELECT email_authorization_id FROM teacher_email_authorizations
+            WHERE normalized_email=? AND status IN ('pending','active','deactivated')
+            """,
+            (normalized,),
+        ).fetchone()
+        if existing:
+            conn.rollback()
+            flash("An open teacher authorization already exists for that email.")
+            return redirect(url_for("owner_people_access"))
+        conn.execute(
+            """
+            INSERT INTO teacher_email_authorizations
+              (normalized_email,display_name,status,created_at,created_by,internal_note)
+            VALUES (?,?, 'pending', ?,?,?)
+            """,
+            (normalized, request.form.get("display_name", "").strip() or None,
+             int(time.time()), current_user()["id"],
+             request.form.get("internal_note", "").strip() or None),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    flash("Teacher invited — awaiting first sign-in.")
+    return redirect(url_for("owner_people_access"))
+
+
+@app.post("/owner/people-access/teacher-authorizations/<int:email_authorization_id>/<action>")
+@owner_required
+def owner_update_teacher_email_authorization(email_authorization_id, action):
+    require_owner_csrf()
+    if action not in ("deactivate", "reactivate", "revoke"):
+        abort(404)
+    actor, now = current_user()["id"], int(time.time())
+    conn = get_conn()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        item = conn.execute(
+            "SELECT * FROM teacher_email_authorizations WHERE email_authorization_id=?",
+            (email_authorization_id,),
+        ).fetchone()
+        if not item:
+            conn.rollback()
+            abort(404)
+        if action in ("deactivate", "revoke") and item["instructional_authorization_id"]:
+            active_classes = conn.execute(
+                "SELECT 1 FROM class_sections WHERE teacher_user_id=? AND is_active=1 LIMIT 1",
+                (item["user_id"],),
+            ).fetchone()
+            if active_classes:
+                conn.rollback()
+                flash("This teacher has active classes. Reassign or archive them first.")
+                return redirect(url_for("owner_people_access"))
+            conn.execute(
+                """
+                UPDATE user_instructional_authorizations
+                SET revoked_at=?,revoked_by=?,revoke_note=?
+                WHERE authorization_id=? AND revoked_at IS NULL
+                """,
+                (now, actor, f"Email authorization {action}d",
+                 item["instructional_authorization_id"]),
+            )
+        if action == "deactivate":
+            conn.execute(
+                "UPDATE teacher_email_authorizations SET status='deactivated',deactivated_at=?,deactivated_by=? WHERE email_authorization_id=? AND status IN ('pending','active')",
+                (now, actor, email_authorization_id),
+            )
+        elif action == "revoke":
+            conn.execute(
+                "UPDATE teacher_email_authorizations SET status='revoked',revoked_at=?,revoked_by=? WHERE email_authorization_id=? AND status!='revoked'",
+                (now, actor, email_authorization_id),
+            )
+        elif item["status"] == "deactivated":
+            authorization_id = item["instructional_authorization_id"]
+            if item["user_id"]:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO user_instructional_authorizations
+                      (user_id,instructional_role,granted_at,granted_by,grant_note)
+                    VALUES (?,'teacher',?,?,?)
+                    """,
+                    (item["user_id"], now, actor, "Reactivated email authorization"),
+                )
+                authorization_id = cursor.lastrowid
+                conn.execute(
+                    "UPDATE users SET account_role='teacher' WHERE id=?",
+                    (item["user_id"],),
+                )
+            conn.execute(
+                """
+                UPDATE teacher_email_authorizations
+                SET status=?,instructional_authorization_id=?,deactivated_at=NULL,
+                    deactivated_by=NULL
+                WHERE email_authorization_id=?
+                """,
+                ("active" if item["user_id"] else "pending", authorization_id,
+                 email_authorization_id),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    flash(f"Teacher authorization {action}d.")
+    return redirect(url_for("owner_people_access"))
 
 
 @app.get("/owner/people-access/<int:user_id>/authorize-teacher")
@@ -5722,6 +6149,15 @@ def owner_authorize_teacher(user_id):
             outcome = "granted"
         else:
             authorization_id = authorization["authorization_id"]
+        conn.execute(
+            """
+            UPDATE teacher_email_authorizations
+            SET status='active',instructional_authorization_id=?,
+                deactivated_at=NULL,deactivated_by=NULL
+            WHERE user_id=? AND status='deactivated'
+            """,
+            (authorization_id, user_id),
+        )
         conn.execute(
             """
             INSERT INTO access_authorization_audit_log
@@ -5841,6 +6277,14 @@ def owner_revoke_teacher(user_id):
                 """,
                 (int(time.time()), actor, request.form.get("reason", "").strip() or None,
                  authorization_id),
+            )
+            conn.execute(
+                """
+                UPDATE teacher_email_authorizations
+                SET status='deactivated',deactivated_at=?,deactivated_by=?
+                WHERE user_id=? AND status='active'
+                """,
+                (int(time.time()), actor, user_id),
             )
             outcome = "revoked"
         conn.execute(
@@ -6456,6 +6900,7 @@ def quick_attempt():
                 student_id=active_student,
             )
         )
+    require_teacher_student_access(conn, student_id)
 
     qid = get_any_question_id(conn, objective_id)
     is_correct = 1 if result == "correct" else 0
@@ -6487,7 +6932,7 @@ def quick_attempt():
 
 # ---------- CSV import ----------
 @app.post("/import_csv")
-@require_teacher
+@owner_required
 def import_csv():
     file = request.files.get("file")
     dataset = request.form.get("dataset")
@@ -6586,7 +7031,7 @@ def import_csv():
 
 # ---------- Config update ----------
 @app.post("/update_config")
-@require_teacher
+@owner_required
 def update_config():
     conn = get_conn()
     mastery = request.form.get("mastery_threshold", "0.9")
@@ -7182,12 +7627,16 @@ def sso_callback(provider):
     id_token = token.get("userinfo")
 
     if id_token:
-        # OIDC-compliant: subject + email come from ID token
-        sub = id_token.get("sub")
-        email = id_token.get("email") or id_token.get("preferred_username")
-        email_verified = bool(id_token.get("email_verified")) or (
-            provider == "microsoft" and id_token.get("xms_edov") is True
-        )
+        if provider == "microsoft":
+            sub, email, _display_name = microsoft_identity_claims(id_token)
+            # The claims came from Authlib's signature/audience/issuer/nonce
+            # validated ID token. Browser input and token response fields are
+            # deliberately excluded.
+            email_verified = email is not None
+        else:
+            sub = id_token.get("sub")
+            email = trusted_email_claim(id_token.get("email"))
+            email_verified = bool(id_token.get("email_verified")) and email is not None
         userinfo = id_token
     else:
         # Fallback: some providers give a userinfo endpoint or put claims in token
@@ -7198,6 +7647,13 @@ def sso_callback(provider):
     if not sub:
         flash("SSO provider did not return a valid user ID.")
         return redirect(url_for("login"))
+    if provider == "microsoft" and not email_verified:
+        session.clear()
+        flash(
+            "Microsoft did not provide a trusted email address for this account. "
+            "Contact your RootED administrator."
+        )
+        return redirect(url_for("not_authorized"))
 
     conn = get_conn()
     provider_subject = str(sub)
@@ -7207,6 +7663,18 @@ def sso_callback(provider):
             flash("Microsoft did not return a valid tenant identifier.")
             return redirect(url_for("login"))
         provider_subject = f"{tenant_id}:{sub}"
+
+    disabled_identity = conn.execute(
+        """
+        SELECT 1 FROM user_auth_identities i JOIN users u ON u.id=i.user_id
+        WHERE i.provider=? AND i.provider_subject=? AND i.revoked_at IS NULL
+          AND u.is_active=0
+        """,
+        (provider, provider_subject),
+    ).fetchone()
+    if disabled_identity:
+        session.clear()
+        return redirect(url_for("account_disabled"))
 
     user = resolve_sso_user(
         conn,
@@ -7228,7 +7696,7 @@ def sso_callback(provider):
     session["username"] = user["username"]
     session["role"] = effective_session_role(user)
 
-    flash(f"Welcome, {user['username']} (SSO via {provider})!")
+    flash("Welcome to RootED.")
 
     session["current_mode"] = "home"
     session["locked_payload"] = None
@@ -7244,8 +7712,16 @@ def restricted_onboarding():
     user = current_user()
     conn = get_conn()
     try:
+        deauthorized_teacher = bool(
+            account_role(user) == "teacher"
+            and not is_teacher(user)
+            and conn.execute(
+                "SELECT 1 FROM user_instructional_authorizations WHERE user_id=? LIMIT 1",
+                (user["id"],),
+            ).fetchone()
+        )
         if request.method == "POST":
-            if is_teacher(user) or is_owner(user):
+            if is_teacher(user) or is_owner(user) or deauthorized_teacher:
                 abort(403)
             if account_role(user) not in ("pending", "student"):
                 abort(403)
@@ -7294,8 +7770,13 @@ def restricted_onboarding():
         .message{background:#fff7df;border:1px solid #ead9a5;padding:11px 12px;border-radius:8px;margin:14px 0;color:#624b12}
         .help{color:#4b5563;font-size:14px;line-height:1.45}
         </style></head><body><main>
+        {% if deauthorized_teacher %}
+        <h1>Teacher access unavailable</h1>
+        <p>Your RootED account is still active, but your Teacher access is not currently authorized. Contact your RootED administrator if you believe this is a mistake.</p>
+        {% else %}
         <h1>Welcome to RootED</h1>
         <p>Your account is ready. Enter the class code provided by your teacher to begin learning.</p>
+        {% endif %}
         <div class="account"><strong>{{ identity['display_name'] or user['username'] }}</strong><br>
         {{ identity['verified_email'] or '' }}</div>
         {% with messages = get_flashed_messages() %}
@@ -7303,7 +7784,7 @@ def restricted_onboarding():
             <div class="message" role="alert">{{ messages[-1] }}</div>
           {% endif %}
         {% endwith %}
-        <form method="post" id="join-class-form">
+        {% if not deauthorized_teacher %}<form method="post" id="join-class-form">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <label for="code">Class code</label>
           <input id="code" name="join_code" placeholder="Enter your class code"
@@ -7318,13 +7799,28 @@ def restricted_onboarding():
           button.disabled = true;
           button.textContent = "Joining…";
         });
-        </script>
+        </script>{% endif %}
         </main></body></html>
         """,
         user=user,
         identity=identity or {"display_name": None, "verified_email": None},
+        deauthorized_teacher=deauthorized_teacher,
         csrf_token=student_onboarding_csrf_token(),
     )
+
+
+@app.get("/account-disabled")
+def account_disabled():
+    return render_template_string(
+        """
+        <!doctype html><title>RootED | Account disabled</title>
+        <main style="font-family:Arial;max-width:560px;margin:60px auto">
+        <h1>Account disabled</h1>
+        <p>This RootED account has been disabled. Contact your RootED administrator if you believe this is a mistake.</p>
+        <p><a href="{{ url_for('logout') }}">Return to login</a></p>
+        </main>
+        """
+    ), 403
 
 
 @app.get("/not-authorized")
@@ -7916,16 +8412,21 @@ def teacher_home():
 def index():
     conn = get_conn()
     msg = ""
+    teacher_user_id = current_user()["id"]
 
     engine_checks = check_engine_tables(conn)
     engine_ok = all(engine_checks.values()) if engine_checks else False
 
     recent_errors = get_recent_error_count()
 
-    all_users = conn.execute(
-        "SELECT id, username, role, is_active, linked_student_id FROM users ORDER BY username"
-    ).fetchall()
-    class_sections = get_class_sections_for_teacher(conn, session.get("user_id"))
+    all_users = (
+        conn.execute(
+            "SELECT id, username, role, is_active, linked_student_id FROM users ORDER BY username"
+        ).fetchall()
+        if is_owner()
+        else []
+    )
+    class_sections = get_class_sections_for_teacher(conn, teacher_user_id)
     class_rosters = get_class_roster_map(
         conn,
         [class_row["class_id"] for class_row in class_sections],
@@ -7933,6 +8434,8 @@ def index():
 
     # Save / update student
     if request.method == "POST" and request.form.get("action") == "save_student":
+        if not is_owner():
+            abort(403)
         sid = request.form.get("student_id", "").strip()
         first = request.form.get("first_name", "").strip()
         last = request.form.get("last_name", "").strip()
@@ -7950,6 +8453,8 @@ def index():
 
     # Create user
     if request.method == "POST" and request.form.get("action") == "create_user":
+        if not is_owner():
+            abort(403)
         u_username = request.form.get("username", "").strip()
         u_password = request.form.get("password", "").strip()
         u_role = request.form.get("role", "student").strip()
@@ -7991,7 +8496,7 @@ def index():
             flash("Class name is required.")
             return redirect(url_for("index") + "#class-enrollment")
 
-        create_class_section(conn, session.get("user_id"), class_name, class_period)
+        create_class_section(conn, teacher_user_id, class_name, class_period)
         flash(f"Class '{class_name}' created with a join code.")
         return redirect(url_for("index") + "#class-enrollment")
 
@@ -8013,7 +8518,7 @@ def index():
         if not class_row:
             flash("Class not found.")
             return redirect(url_for("index") + "#class-enrollment")
-        if class_row["teacher_user_id"] not in (None, session.get("user_id")):
+        if class_row["teacher_user_id"] != teacher_user_id:
             flash("You can only manage your own class codes.")
             return redirect(url_for("index") + "#class-enrollment")
 
@@ -8046,6 +8551,7 @@ def index():
     # Save attempt (teacher-driven)
     if request.method == "POST" and request.form.get("action") == "save_attempt":
         student_id = request.form.get("student_id") or "S1"
+        require_teacher_student_access(conn, student_id)
         objective_id = request.form.get("objective_id")
         qid = (request.form.get("question_id") or "").strip()
         resp = request.form.get("response")
@@ -8103,10 +8609,17 @@ def index():
     objs = get_objectives(conn)
 
     selected_period = request.values.get("period", "ALL")
-    students = get_students(conn, selected_period if selected_period != "ALL" else None)
-    active_student = request.values.get(
-        "student_id", students[0]["student_id"] if students else "S1"
+    students = get_students(
+        conn,
+        selected_period if selected_period != "ALL" else None,
+        teacher_user_id,
     )
+    active_student = request.values.get(
+        "student_id", students[0]["student_id"] if students else None
+    )
+    authorized_student_ids = {row["student_id"] for row in students}
+    if active_student not in authorized_student_ids:
+        active_student = students[0]["student_id"] if students else None
     class_obj = request.values.get("class_objective")
     if not is_launch_objective_id(class_obj):
         class_obj = objs[0]["objective_id"] if objs else None
@@ -8209,7 +8722,7 @@ def index():
     # Build list of unique, non-empty class periods for the dropdown
     raw_periods = {
         s["class_period"]
-        for s in get_students(conn)
+        for s in get_students(conn, teacher_user_id=teacher_user_id)
         if s["class_period"] is not None and str(s["class_period"]).strip() != ""
     }
     period_opts = ["ALL"] + sorted(str(p) for p in raw_periods)
@@ -8230,7 +8743,9 @@ def index():
     mastered_rows = [
         row for row in dashboard_student_rows if row["category"] == "mastered"
     ]
-    active_standard_rows = get_active_standard_summary(conn, selected_period)
+    active_standard_rows = get_active_standard_summary(
+        conn, selected_period, [row["student_id"] for row in students]
+    )
     question_flags_action_count = teacher_actionable_question_flag_count(
         conn,
         session.get("user_id"),
@@ -8287,7 +8802,7 @@ def index():
     <h1 style="margin:0;">RootED Teacher Dashboard</h1>
     <p class="dashboard-subtitle">Here's what's happening in your classroom today.</p>
     <p style="font-size:13px;color:#555;margin:4px 0 0 0;">
-      Logged in as <strong>{{ session.get('username', 'teacher') }}</strong>
+      Logged in as <strong>{{ account_label }}</strong>
     </p>
   </div>
   <div class="top-actions">
@@ -9280,6 +9795,7 @@ def index():
         all_users=all_users,
         class_sections=class_sections,
         class_rosters=class_rosters,
+        account_label=account_display_label(conn, current_user()),
     )
 
 
@@ -9303,7 +9819,11 @@ def student_view():
         flash("Session error. Please log in again.")
         return redirect(url_for("login"))
 
-    all_students = get_students(conn)
+    all_students = (
+        get_students(conn)
+        if role == "student"
+        else get_students(conn, teacher_user_id=current_user()["id"])
+    )
     objs = get_objectives(conn)
     locked_student_id = locked_student_id_for_session(conn)
 
@@ -9344,6 +9864,10 @@ def student_view():
     else:
         students = all_students
         student_id = request.values.get("student_id")
+        if student_id and not teacher_can_access_student(
+            conn, current_user()["id"], student_id
+        ):
+            abort(404)
         if not student_id and students:
             student_id = students[0]["student_id"]
 
@@ -9547,7 +10071,7 @@ WHERE o.standard_id = ?
     <div role="progressbar" aria-label="Growing Understanding" aria-valuetext="This understanding has taken root." style="height:12px;background:#e1e7e2;border-radius:999px;overflow:hidden;"><div style="height:100%;width:100%;background:#2f6f4e;"></div></div>
     <p><strong>Completed</strong> — This understanding has taken root.</p>
   </section>
-  <p style="font-size:13px;color:#555;">Logged in as <strong>{{ session.get('username', 'student') }}</strong></p>
+  <p style="font-size:13px;color:#555;">Logged in as <strong>{{ account_label }}</strong></p>
   <p><a class="btn" href="{{ url_for('logout') }}" style="background:#dc2626;">Logout</a></p>
 </div>
         """
@@ -9977,7 +10501,7 @@ WHERE o.standard_id = ?
       <p class="eyebrow">Student Home</p>
       <h1>Keep growing from here.</h1>
       <p class="lead">
-        You are signed in as <strong>{{ session.get('username', 'student') }}</strong>.
+        You are signed in as <strong>{{ account_label }}</strong>.
         RootED will continue at the level that matches your current progress.
       </p>
       <div class="current-panel" style="margin-top:20px;">
@@ -10225,7 +10749,7 @@ WHERE o.standard_id = ?
     <div>
       <h2 style="margin:0;color:#234b35;">RootED Learning</h2>
       <p style="font-size:13px;color:#555;margin:2px 0 0 0;">
-        👩‍🎓 Logged in as <strong>{{ session.get('username', 'student') }}</strong>
+        👩‍🎓 Logged in as <strong>{{ account_label }}</strong>
         {% if teacher_attribution %}<br>Assigned by {{ teacher_attribution }}{% endif %}
       </p>
     </div>
@@ -10465,6 +10989,7 @@ WHERE o.standard_id = ?
         enrolled_classes=enrolled_classes,
         flag_categories=QUESTION_FLAG_CATEGORIES,
         flag_comment_max_length=QUESTION_FLAG_COMMENT_MAX_LENGTH,
+        account_label=account_display_label(conn, current_user()),
     )
 
 # ---------- Diagnostic Arena ----------
@@ -10481,15 +11006,7 @@ def diagnostic_start():
     if not student_id:
         flash("Missing student_id for diagnostic start.")
         return redirect(url_for("index"))
-
-    # Ensure student exists (optional, but prevents FK issues later)
-    row = conn.execute("SELECT 1 FROM students WHERE student_id=?", (student_id,)).fetchone()
-    if not row:
-        conn.execute(
-            "INSERT INTO students (student_id, first_name, last_name, grade, class_period) VALUES (?, ?, ?, ?, ?)",
-            (student_id, "", "", None, None),
-        )
-        conn.commit()
+    require_teacher_student_access(conn, student_id)
 
     session_id = create_diagnostic_session(conn, student_id)
 
@@ -10516,6 +11033,7 @@ def diagnostic_session(session_id):
         return redirect(url_for("index"))
 
     student_id = sess["student_id"]
+    require_teacher_student_access(conn, student_id)
 
     # On submit, record response
     if request.method == "POST":
@@ -10631,8 +11149,12 @@ def diagnostic_home():
     # simple domain list (later we can make this dynamic)
     domains = ["LS", "PS", "ESS"]
 
-    students = get_students(conn)
+    students = get_students(conn, teacher_user_id=current_user()["id"])
     selected_student = request.values.get("student_id") or (students[0]["student_id"] if students else "")
+    if selected_student and not teacher_can_access_student(
+        conn, current_user()["id"], selected_student
+    ):
+        abort(404)
     selected_domain = request.values.get("domain") or "LS"
 
     if request.method == "POST":
@@ -10722,6 +11244,7 @@ def diagnostic_session_v2(session_id):
     if not sess:
         flash("Diagnostic session not found.")
         return redirect(url_for("diagnostic_home"))
+    require_teacher_student_access(conn, sess["student_id"])
 
     if request.method == "POST":
         diagnostic_item_id = request.form.get("diagnostic_item_id")
@@ -10931,14 +11454,14 @@ def teacher_archive_enrollment(class_id, student_id):
 
 # ---------- Admin actions ----------
 @app.get("/admin_action")
-@require_teacher
+@owner_required
 def admin_action_landing():
     flash("Use the Maintenance / Data Tools panel on the dashboard to run admin actions.")
     return redirect(url_for("index"))
 
 
 @app.post("/admin_action")
-@require_teacher
+@owner_required
 def admin_action():
     conn = get_conn()
     action = request.form.get("action")
@@ -11002,7 +11525,7 @@ def admin_action():
 
 # ---------- Restore attempts ----------
 @app.post("/restore_attempts")
-@require_teacher
+@owner_required
 def restore_attempts():
     conn = get_conn()
     file = request.files.get("file")
@@ -11083,7 +11606,11 @@ def restore_attempts():
 def export_csv():
     conn = get_conn()
     selected_period = request.args.get("period", "ALL")
-    students = get_students(conn, selected_period if selected_period != "ALL" else None)
+    students = get_students(
+        conn,
+        selected_period if selected_period != "ALL" else None,
+        current_user()["id"],
+    )
     objs = get_objectives(conn)
 
     output = io.StringIO()
@@ -11132,9 +11659,11 @@ def export_csv():
 
 # ---------- Student Overview ----------
 @app.post("/teacher/student/<student_id>/placement")
-@require_teacher
+@teacher_or_owner_required
 def update_student_placement(student_id):
     conn = get_conn()
+    if not is_owner():
+        require_teacher_student_access(conn, student_id)
     node_value = request.form.get("learning_node", "").strip()
     level_raw = request.form.get("current_level", "1").strip()
 
@@ -11162,9 +11691,11 @@ def update_student_placement(student_id):
 
 
 @app.route("/teacher/student/<student_id>")
-@require_teacher
+@teacher_or_owner_required
 def student_overview(student_id):
     conn = get_conn()
+    if not is_owner():
+        require_teacher_student_access(conn, student_id)
     overview = get_student_overview(conn, student_id)
     if not overview:
         abort(404)
@@ -12183,7 +12714,7 @@ def handle_exception(e):
 
 # ---------- Error log viewer (teacher) ----------
 @app.route("/errors")
-@require_teacher
+@owner_required
 def error_list():
     conn = get_conn()
     rows = conn.execute(
@@ -12275,7 +12806,7 @@ def error_list():
     )
 
 @app.post("/errors/clear")
-@require_teacher
+@owner_required
 def clear_errors():
     """
     Delete all rows from error_logs. Teacher-only.

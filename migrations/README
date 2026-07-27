@@ -9,6 +9,7 @@ consistently:
     python -m migrations.add_user_auth_identities --database "$NGSS_DB"
     python -m migrations.add_user_platform_roles
     python -m migrations.add_user_instructional_authorizations
+    python -m migrations.add_teacher_email_authorizations --database /exact/path/to/rooted.db
     python -m migrations.add_account_lifecycle_and_objective_display
     python -m migrations.add_model_assets_table
     python -m migrations.add_student_growth_progress

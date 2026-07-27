@@ -5,6 +5,19 @@ RootED uses one OIDC callback shape for Google and Microsoft:
 - Google: `https://<host>/auth/callback/google`
 - Microsoft: `https://<host>/auth/callback/microsoft`
 
+Microsoft identity claims have deliberately separate purposes:
+
+- `tid` plus `sub`: stable provider identity linkage only
+- normalized `email`, then `preferred_username`, then `upn`: teacher email
+  preauthorization matching, using only claims from Authlib's validated ID token
+- `name`: display-only presentation
+
+The provider subject is never used as an email or display-name fallback. A
+Microsoft callback without an email-shaped trusted claim stops before creating
+or linking a RootED account and shows a safe authorization error. The existing
+`openid email profile` scopes already request the required claims; no Microsoft
+Graph call or scope expansion is required.
+
 Register the matching `http://localhost:<port>` callback separately for local
 development. Redirect URIs must match exactly.
 
