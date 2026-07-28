@@ -1,3 +1,5 @@
+"""LEGACY — not approved for direct production or Render execution."""
+
 import json
 import sqlite3
 import time

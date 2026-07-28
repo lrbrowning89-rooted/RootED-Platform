@@ -29,3 +29,104 @@ a readable production backup has been created.
 
 The assignments migration is idempotent and also adds/backfills `assign_at`
 from `created_at` for databases created before assignment scheduling existed.
+
+Launch content production runbook
+=================================
+
+The seven `migrate_ms_ls1_*_production.py` scripts are legacy scripts and are
+not approved for direct production or Render execution. They use a repository
+database path and are not safely idempotent. Do not run them against RootED
+production.
+
+Use only `install_launch_content.py`, which requires an explicit existing
+SQLite database:
+
+    python migrations/install_launch_content.py --database /exact/path/to/ngss.db
+
+Before any production write:
+
+1. Confirm the configured target:
+
+       echo "$NGSS_DB"
+
+   Expected:
+
+       /var/data/ngss.db
+
+2. Create an online SQLite backup on the persistent disk:
+
+       mkdir -p /var/data/backups
+       python -c "import datetime,os,sqlite3; src=os.environ['NGSS_DB']; stamp=datetime.datetime.now(datetime.UTC).strftime('%Y%m%dT%H%M%SZ'); dst=f'/var/data/backups/ngss-before-launch-content-{stamp}.db'; source=sqlite3.connect(src); backup=sqlite3.connect(dst); source.backup(backup); backup.close(); source.close(); print(dst)"
+
+3. Record the exact backup path and size:
+
+       stat -c 'path=%n size=%s modified=%y' /var/data/backups/ngss-before-launch-content-*.db
+
+4. Open the exact backup read-only and verify integrity:
+
+       export BACKUP=/var/data/backups/ngss-before-launch-content-YYYYMMDDTHHMMSSZ.db
+       python -c "import os,sqlite3; p=os.environ['BACKUP']; db=sqlite3.connect(f'file:{p}?mode=ro',uri=True); print(db.execute('PRAGMA integrity_check').fetchone()[0]); db.close()"
+
+   Expected:
+
+       ok
+
+5. Rehearse against a separate copy of that verified backup, never against a
+   development database:
+
+       REHEARSAL=/var/data/backups/ngss-launch-rehearsal.db
+       cp --reflink=auto "$BACKUP" "$REHEARSAL"
+       python migrations/install_launch_content.py --database "$REHEARSAL" --dry-run
+       python migrations/install_launch_content.py --database "$REHEARSAL"
+       python migrations/install_launch_content.py --database "$REHEARSAL"
+       python migrations/install_launch_content.py --database "$REHEARSAL" --verify-only
+
+6. Run the production dry-run:
+
+       python migrations/install_launch_content.py \
+         --database "$NGSS_DB" \
+         --dry-run
+
+   It must end with `DRY RUN — no changes committed`.
+
+7. Run the import only after reviewing the rehearsal and dry-run:
+
+       python migrations/install_launch_content.py \
+         --database "$NGSS_DB"
+
+8. Verify without writing:
+
+       python migrations/install_launch_content.py \
+         --database "$NGSS_DB" \
+         --verify-only
+
+9. Validate counts and integrity:
+
+       python -c "import os,sqlite3; db=sqlite3.connect(f\"file:{os.environ['NGSS_DB']}?mode=ro\",uri=True); print({t:db.execute(f'SELECT COUNT(*) FROM {t}').fetchone()[0] for t in ('standards','objectives','questions')}); print('foreign_keys',db.execute('PRAGMA foreign_key_check').fetchall()); db.close()"
+
+   The launch package contributes exactly 3 standards, 7 objectives, 147
+   questions, and 147 question metadata rows. Foreign-key check must be empty.
+   Confirm the pre-recorded user, identity, authorization, class, membership,
+   response, adaptive-state, growth, and assignment counts are unchanged.
+
+10. Validate the RootED UI: Assignment authoring shows all three launch
+    standards; Question Preview shows all seven launch objectives; existing
+    users and classes remain present; a teacher can create an assignment; and
+    the assigned student can see and start it.
+
+Rollback
+--------
+
+If validation fails, stop the web service before restoring anything. Preserve
+the failed database under a new timestamped name for investigation. Confirm the
+backup still returns `ok` from `PRAGMA integrity_check`, then restore it with
+SQLite's online backup API while the application is stopped. Never overwrite a
+running SQLite database and never substitute a local development database.
+Restart the service only after the restored `/var/data/ngss.db` passes
+`PRAGMA integrity_check` and expected pre-migration row counts.
+
+With the service stopped and `BACKUP` set to the verified file:
+
+    mv /var/data/ngss.db /var/data/ngss.failed-for-investigation.db
+    python -c "import os,sqlite3; src=sqlite3.connect(f\"file:{os.environ['BACKUP']}?mode=ro\",uri=True); dst=sqlite3.connect('/var/data/ngss.db'); src.backup(dst); dst.close(); src.close()"
+    python -c "import sqlite3; db=sqlite3.connect('file:/var/data/ngss.db?mode=ro',uri=True); print(db.execute('PRAGMA integrity_check').fetchone()[0]); db.close()"
