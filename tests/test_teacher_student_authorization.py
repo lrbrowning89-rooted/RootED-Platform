@@ -134,7 +134,7 @@ class TeacherStudentAuthorizationTests(unittest.TestCase):
         self.assertEqual(self.client.get("/teacher/student/A-STUDENT").status_code, 200)
         self.assertEqual(self.client.get("/teacher/student/B-STUDENT").status_code, 404)
         self.assertEqual(self.client.get("/student?student_id=B-STUDENT").status_code, 404)
-        self.assertEqual(self.client.get("/diagnostic?student_id=B-STUDENT").status_code, 404)
+        self.assertEqual(self.client.get("/diagnostic?student_id=B-STUDENT").status_code, 403)
 
     def test_placement_and_diagnostic_deny_unrelated_student(self):
         self.login(1)
@@ -146,7 +146,7 @@ class TeacherStudentAuthorizationTests(unittest.TestCase):
         diagnostic = self.client.post(
             "/diagnostic/start", data={"student_id": "B-STUDENT"}
         )
-        self.assertEqual(diagnostic.status_code, 404)
+        self.assertEqual(diagnostic.status_code, 403)
 
     def test_class_roster_and_helpers_are_scoped(self):
         self.assertTrue(dash.teacher_can_access_class(self.conn, 1, "CLASS-A"))

@@ -262,8 +262,9 @@ class OwnerWorkspaceTests(unittest.TestCase):
         self.assertIn(b"RootED Owner Workspace", response.data)
         self.assertIn(b"Escalated Question Flags", response.data)
         self.assertIn(b"owner_teacher", response.data)
-        self.assertIn(b"Teacher Workspace", response.data)
-        self.assertIn(b"Adaptive Engine Debug", response.data)
+        self.assertIn(b"Teacher View", response.data)
+        self.assertIn(b"Developer and Diagnostics", response.data)
+        self.assertNotIn(b"<h2>Adaptive Engine Debug</h2>", response.data)
         self.assertIn(b">2</span>", response.data)
         self.assertNotIn(b"Subscriptions", response.data)
         self.assertNotIn(b"Organizations", response.data)
@@ -354,18 +355,59 @@ class OwnerWorkspaceTests(unittest.TestCase):
         self.assertEqual(detail.data.count(b'aria-label="Incorrect"'), 2)
         self.assertEqual(self.learning_state(), before)
 
-    def test_teacher_dashboard_links_owner_workspace_only_for_owner(self):
+    def test_teacher_view_has_owner_return_path_without_owner_queue_badge(self):
         self.insert_flag("QF-ESC", status="escalated")
         self.login_as(1, "owner_teacher", "teacher")
         owner_dashboard = self.client.get("/dashboard")
         self.assertEqual(owner_dashboard.status_code, 200)
-        self.assertIn(b"Owner Workspace", owner_dashboard.data)
-        self.assertIn(b"awaiting RootED review", owner_dashboard.data)
+        self.assertIn(b"Teacher View Preview", owner_dashboard.data)
+        self.assertIn(b"Return to Owner Workspace", owner_dashboard.data)
+        self.assertNotIn(b"awaiting RootED review", owner_dashboard.data)
+        self.assertNotIn(b'<span class="action-badge"', owner_dashboard.data)
+
+        secondary = self.client.get("/teacher/student/S1")
+        self.assertEqual(secondary.status_code, 200)
+        self.assertIn(b"Return to Owner Workspace", secondary.data)
+
+        returned = self.client.get("/owner")
+        self.assertEqual(returned.status_code, 200)
+        self.assertIn(b"RootED Owner Workspace", returned.data)
+        self.assertNotIn(b"Return to Owner Workspace", returned.data)
 
         self.login_as(2, "teacher_only", "teacher")
         teacher_dashboard = self.client.get("/dashboard")
         self.assertEqual(teacher_dashboard.status_code, 200)
-        self.assertNotIn(b"Owner Workspace", teacher_dashboard.data)
+        self.assertNotIn(b"Return to Owner Workspace", teacher_dashboard.data)
+
+    def test_teacher_view_badge_requires_actionable_teacher_state(self):
+        self.insert_flag("QF-ESC", status="escalated", class_id="C2")
+        self.login_as(1, "owner_teacher", "teacher")
+        without_actionable = self.client.get("/dashboard")
+        self.assertNotIn(b'<span class="action-badge"', without_actionable.data)
+
+        self.insert_flag("QF-OPEN", status="open", class_id="C2")
+        with_actionable = self.client.get("/dashboard")
+        self.assertIn(b"1 open question report requiring action", with_actionable.data)
+        self.assertIn(b'<span class="action-badge"', with_actionable.data)
+
+    def test_owner_teacher_view_and_student_mode_keep_distinct_exit_actions(self):
+        self.login_as(1, "owner_teacher", "teacher")
+        preview = self.client.get("/student")
+        self.assertEqual(preview.status_code, 200)
+        self.assertIn(b"Student Mode Preview", preview.data)
+        self.assertIn(b"Leave Student Mode", preview.data)
+        self.assertNotIn(b"Return to Owner Workspace", preview.data)
+        with self.client.session_transaction() as session:
+            exit_token = session["owner_csrf_token"]
+
+        teacher_view = self.client.post(
+            "/student",
+            data={"action": "exit_preview", "csrf_token": exit_token},
+            follow_redirects=True,
+        )
+        self.assertEqual(teacher_view.status_code, 200)
+        self.assertIn(b"Teacher View Preview", teacher_view.data)
+        self.assertIn(b"Return to Owner Workspace", teacher_view.data)
 
     def test_teacher_student_and_anonymous_are_denied_owner_routes(self):
         for user in [
@@ -383,15 +425,16 @@ class OwnerWorkspaceTests(unittest.TestCase):
             sess.clear()
         self.assertEqual(self.client.get("/owner").status_code, 302)
 
-    def test_owner_without_teacher_role_cannot_access_teacher_dashboard(self):
+    def test_owner_without_teacher_role_can_access_teacher_view(self):
         self.login_as(4, "owner_student", "student")
         owner_home = self.client.get("/owner")
         teacher_dashboard = self.client.get("/dashboard")
 
         self.assertEqual(owner_home.status_code, 200)
-        self.assertNotIn(b"Teacher Dashboard", owner_home.data)
-        self.assertEqual(teacher_dashboard.status_code, 302)
-        self.assertTrue(teacher_dashboard.location.endswith("/restricted"))
+        self.assertIn(b"Teacher View", owner_home.data)
+        self.assertEqual(teacher_dashboard.status_code, 200)
+        self.assertIn(b"Teacher Dashboard", teacher_dashboard.data)
+        self.assertIn(b"Return to Owner Workspace", teacher_dashboard.data)
 
     def test_owner_queue_filters_and_question_reference(self):
         self.insert_flag("QF-OPEN", status="open", comment="ordinary hidden")
@@ -449,7 +492,8 @@ class OwnerWorkspaceTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Read-only owner review", response.data)
         self.assertIn(b"Which statement best describes a cell?", response.data)
-        self.assertNotIn(b"<form", response.data)
+        self.assertEqual(response.data.count(b"<form"), 1)
+        self.assertIn(b'action="/logout"', response.data)
         self.assertNotIn(b"submit_question_flag", response.data)
         self.assertNotIn(b"record_attempt", response.data)
         self.assertEqual(before, after)

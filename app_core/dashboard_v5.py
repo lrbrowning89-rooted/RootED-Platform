@@ -402,6 +402,64 @@ def current_user():
     return user
 
 
+def active_impersonation(conn: sqlite3.Connection | None = None):
+    """Resolve impersonation state from its opaque, server-side audit record."""
+    audit_id = session.get("impersonation_audit_id")
+    correlation_id = session.get("impersonation_correlation_id")
+    if not audit_id or not correlation_id:
+        return None
+    owns_conn = conn is None
+    conn = conn or get_conn()
+    try:
+        return conn.execute(
+            """
+            SELECT ia.*,
+                   COALESCE(
+                     NULLIF(TRIM((
+                       SELECT i.display_name FROM user_auth_identities i
+                       WHERE i.user_id=owner.id AND i.revoked_at IS NULL
+                       ORDER BY i.last_login_at DESC, i.identity_id DESC LIMIT 1
+                     )), ''),
+                     NULLIF(TRIM((
+                       SELECT i.verified_email FROM user_auth_identities i
+                       WHERE i.user_id=owner.id AND i.revoked_at IS NULL
+                       ORDER BY i.last_login_at DESC, i.identity_id DESC LIMIT 1
+                     )), ''),
+                     NULLIF(TRIM(owner.username), ''),
+                     'Owner ' || owner.id
+                   ) AS acting_owner_display_label,
+                   COALESCE(
+                     NULLIF(TRIM((
+                       SELECT i.display_name FROM user_auth_identities i
+                       WHERE i.user_id=target.id AND i.revoked_at IS NULL
+                       ORDER BY i.last_login_at DESC, i.identity_id DESC LIMIT 1
+                     )), ''),
+                     NULLIF(TRIM((
+                       SELECT i.verified_email FROM user_auth_identities i
+                       WHERE i.user_id=target.id AND i.revoked_at IS NULL
+                       ORDER BY i.last_login_at DESC, i.identity_id DESC LIMIT 1
+                     )), ''),
+                     NULLIF(TRIM(target.username), ''),
+                     'User ' || ia.target_user_id
+                   ) AS target_display_label
+            FROM impersonation_audit ia
+            JOIN users owner ON owner.id=ia.acting_owner_user_id
+            LEFT JOIN users target ON target.id=ia.target_user_id
+            WHERE ia.audit_id=? AND ia.correlation_id=?
+              AND ia.stop_timestamp IS NULL AND ia.outcome='active'
+            """,
+            (audit_id, correlation_id),
+        ).fetchone()
+    finally:
+        if owns_conn:
+            conn.close()
+
+
+def acting_owner_user_id() -> int | None:
+    record = active_impersonation()
+    return int(record["acting_owner_user_id"]) if record else None
+
+
 def account_role(user=None) -> str | None:
     """Return the provider-neutral account role, falling back for legacy rows."""
     user = user or current_user()
@@ -520,6 +578,21 @@ def account_display_label(conn, user) -> str:
     return user["username"] if user["sso_provider"] is None else "RootED user"
 
 
+def logout_csrf_token() -> str:
+    token = session.get("logout_csrf_token")
+    if not token:
+        token = secrets.token_urlsafe(32)
+        session["logout_csrf_token"] = token
+    return token
+
+
+def require_logout_csrf() -> None:
+    supplied = request.form.get("csrf_token", "")
+    expected = session.get("logout_csrf_token", "")
+    if not supplied or not expected or not hmac.compare_digest(supplied, expected):
+        abort(400, description="Invalid or expired form token.")
+
+
 def is_teacher(user=None) -> bool:
     return has_instructional_authorization("teacher", user)
 
@@ -573,6 +646,117 @@ def get_post_login_destination(user=None) -> str:
     if can_access_student_instruction(user):
         return url_for("student_view")
     return url_for("restricted_onboarding")
+
+
+def authenticated_header_context(user=None) -> dict | None:
+    """Centralize effective-role navigation for every authenticated HTML view."""
+    user = user or current_user()
+    if not user:
+        return None
+
+    conn = get_conn()
+    try:
+        display_label = account_display_label(conn, user)
+    finally:
+        conn.close()
+
+    student_mode = effective_session_role(user) == "teacher" and request.path.startswith(
+        "/student"
+    )
+    if student_mode:
+        return {
+            "context_label": "Student Mode Preview",
+            "display_label": display_label,
+            "home_url": url_for("student_view"),
+            "home_label": "RootED",
+            "links": (),
+            "leave_student_mode": True,
+        }
+    owner_teacher_view = is_owner(user) and (
+        request.path == "/dashboard" or request.path.startswith("/teacher")
+    )
+    if owner_teacher_view:
+        teacher_view_links = [
+            ("Return to Owner Workspace", url_for("owner_home")),
+        ]
+        context = {
+            "context_label": "Teacher View Preview",
+            "display_label": display_label,
+            "home_url": url_for("index"),
+            "home_label": "RootED",
+            "links": teacher_view_links,
+            "leave_student_mode": False,
+        }
+        if can_access_teacher_tools(user):
+            teacher_view_links.extend(
+                (
+                    ("Student Mode", url_for("student_view")),
+                    ("Question Flags", url_for("question_flags_review")),
+                )
+            )
+            conn = get_conn()
+            try:
+                context["teacher_flag_count"] = teacher_actionable_question_flag_count(
+                    conn, user["id"]
+                )
+            finally:
+                conn.close()
+        return context
+    if is_owner(user):
+        owner_links = [
+            ("Teacher View", url_for("index")),
+        ]
+        owner_links.extend(
+            (
+                ("Impersonate User", url_for("owner_impersonation")),
+                ("People & Access", url_for("owner_people_access")),
+            )
+        )
+        return {
+            "context_label": "Owner Workspace",
+            "display_label": display_label,
+            "home_url": url_for("owner_home"),
+            "home_label": "RootED",
+            "links": tuple(owner_links),
+            "leave_student_mode": False,
+        }
+    if can_access_teacher_tools(user):
+        conn = get_conn()
+        try:
+            teacher_flag_count = teacher_actionable_question_flag_count(
+                conn, user["id"]
+            )
+        finally:
+            conn.close()
+        return {
+            "context_label": "Teacher Workspace",
+            "display_label": display_label,
+            "home_url": url_for("teacher_home"),
+            "home_label": "RootED",
+            "links": (
+                ("Student Mode", url_for("student_view")),
+                ("Question Flags", url_for("question_flags_review")),
+            ),
+            "leave_student_mode": False,
+            "teacher_flag_count": teacher_flag_count,
+        }
+    if is_student(user):
+        return {
+            "context_label": "Student Learning",
+            "display_label": display_label,
+            "home_url": url_for("student_view", home=1),
+            "home_label": "RootED",
+            "links": (),
+            "leave_student_mode": False,
+        }
+    return {
+        "context_label": "RootED Account",
+        "display_label": display_label,
+        "home_url": url_for("restricted_onboarding"),
+        "home_label": "RootED",
+        "links": (),
+        "leave_student_mode": False,
+    }
 
 
 def safe_local_redirect(value: str | None) -> str | None:
@@ -685,9 +869,11 @@ def teacher_or_owner_required(f):
             session.clear()
             return redirect(url_for("login"))
         session["role"] = effective_session_role(user)
-        if not (is_owner(user) or can_access_teacher_tools(user)):
-            abort(403)
-        return f(*args, **kwargs)
+        if is_owner(user) or can_access_teacher_tools(user):
+            return f(*args, **kwargs)
+        if account_role(user) == "pending":
+            return redirect(url_for("restricted_onboarding"))
+        abort(403)
     return wrapper
 
 
@@ -1495,6 +1681,40 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
           sso_email         TEXT,
           last_login_ts     INTEGER,
           FOREIGN KEY(linked_student_id) REFERENCES students(student_id) ON DELETE SET NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS impersonation_audit (
+          audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
+          correlation_id TEXT NOT NULL UNIQUE,
+          acting_owner_user_id INTEGER NOT NULL,
+          target_user_id INTEGER NOT NULL,
+          target_role TEXT NOT NULL,
+          start_timestamp INTEGER NOT NULL,
+          stop_timestamp INTEGER,
+          source_ip TEXT,
+          outcome TEXT NOT NULL DEFAULT 'active',
+          termination_reason TEXT,
+          FOREIGN KEY(acting_owner_user_id) REFERENCES users(id) ON DELETE RESTRICT,
+          FOREIGN KEY(target_user_id) REFERENCES users(id) ON DELETE RESTRICT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS impersonated_action_audit (
+          action_audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
+          impersonation_audit_id INTEGER NOT NULL,
+          acting_owner_user_id INTEGER NOT NULL,
+          effective_user_id INTEGER NOT NULL,
+          request_method TEXT NOT NULL,
+          request_path TEXT NOT NULL,
+          response_status INTEGER NOT NULL,
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY(impersonation_audit_id)
+            REFERENCES impersonation_audit(audit_id) ON DELETE RESTRICT
         )
         """
     )
@@ -4935,6 +5155,167 @@ def cumulative_plant_view_model(conn, student_id: str, standard_id: str):
 
 
 # ---------- User account helpers ----------
+OWNER_LOCAL_PASSWORD_MIN_LENGTH = 12
+OWNER_LOCAL_USERNAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{2,79}$")
+
+
+class AccountProvisioningError(ValueError):
+    """A safe, user-facing validation error for Owner account provisioning."""
+
+
+def normalize_owner_local_username(value: str | None) -> str:
+    return (value or "").strip().lower()
+
+
+def validate_owner_local_password(password: str) -> None:
+    if (
+        len(password) < OWNER_LOCAL_PASSWORD_MIN_LENGTH
+        or not re.search(r"[a-z]", password)
+        or not re.search(r"[A-Z]", password)
+        or not re.search(r"\d", password)
+        or not re.search(r"[^A-Za-z0-9]", password)
+    ):
+        raise AccountProvisioningError(
+            "Use at least 12 characters with uppercase, lowercase, number, and symbol."
+        )
+
+
+def provision_owner_local_account(
+    conn: sqlite3.Connection,
+    *,
+    actor_user_id: int,
+    username: str | None,
+    password: str,
+    grant_teacher_access: bool = False,
+    class_id: str | None = None,
+) -> dict:
+    """Create a least-privileged local account and optional access atomically."""
+    normalized_username = normalize_owner_local_username(username)
+    selected_class_id = (class_id or "").strip() or None
+    if not OWNER_LOCAL_USERNAME_PATTERN.fullmatch(normalized_username):
+        raise AccountProvisioningError(
+            "Username must be 3–80 characters using letters, numbers, dots, dashes, or underscores."
+        )
+    validate_owner_local_password(password)
+    if grant_teacher_access and selected_class_id:
+        raise AccountProvisioningError(
+            "Create either a teacher-authorized account or a student class membership, not both."
+        )
+
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        if conn.execute(
+            "SELECT 1 FROM users WHERE LOWER(username)=?",
+            (normalized_username,),
+        ).fetchone():
+            raise AccountProvisioningError("An account with that username already exists.")
+
+        class_row = None
+        if selected_class_id:
+            class_row = conn.execute(
+                """
+                SELECT class_id, name, class_period
+                FROM class_sections
+                WHERE class_id=? AND is_active=1
+                """,
+                (selected_class_id,),
+            ).fetchone()
+            if not class_row:
+                raise AccountProvisioningError("Select an active class.")
+
+        account_role_value = (
+            "teacher" if grant_teacher_access
+            else "student" if class_row
+            else "pending"
+        )
+        legacy_role = "teacher" if grant_teacher_access else "student"
+        cursor = conn.execute(
+            """
+            INSERT INTO users
+              (username, password_hash, role, account_role, linked_student_id,
+               is_active, sso_provider, sso_subject, sso_email)
+            VALUES (?, ?, ?, ?, NULL, 1, NULL, NULL, NULL)
+            """,
+            (
+                normalized_username,
+                generate_password_hash(password),
+                legacy_role,
+                account_role_value,
+            ),
+        )
+        user_id = int(cursor.lastrowid)
+
+        authorization_id = None
+        if grant_teacher_access:
+            authorization = conn.execute(
+                """
+                INSERT INTO user_instructional_authorizations
+                  (user_id, instructional_role, granted_at, granted_by, grant_note)
+                VALUES (?, 'teacher', ?, ?, 'Granted during Owner local account creation')
+                """,
+                (user_id, int(time.time()), actor_user_id),
+            )
+            authorization_id = int(authorization.lastrowid)
+            conn.execute(
+                """
+                INSERT INTO access_authorization_audit_log
+                  (actor_user_id, target_user_id, action, authorization_id,
+                   outcome, created_at, request_ip, user_agent)
+                VALUES (?, ?, 'teacher_authorized', ?, 'granted', ?, ?, ?)
+                """,
+                (
+                    actor_user_id,
+                    user_id,
+                    authorization_id,
+                    int(time.time()),
+                    request.remote_addr,
+                    request.user_agent.string[:500],
+                ),
+            )
+
+        student_id = None
+        if class_row:
+            student_id = f"USR-{user_id}"
+            if conn.execute(
+                "SELECT 1 FROM students WHERE student_id=?",
+                (student_id,),
+            ).fetchone():
+                student_id = f"S{uuid.uuid4().hex}"
+            conn.execute(
+                """
+                INSERT INTO students
+                  (student_id, first_name, last_name, grade, class_period)
+                VALUES (?, ?, '', NULL, ?)
+                """,
+                (student_id, normalized_username, class_row["class_period"]),
+            )
+            conn.execute(
+                """
+                INSERT INTO class_enrollments
+                  (class_id, student_id, enrolled_at, enrolled_by, is_active)
+                VALUES (?, ?, ?, 'owner', 1)
+                """,
+                (class_row["class_id"], student_id, int(time.time())),
+            )
+            conn.execute(
+                "UPDATE users SET linked_student_id=? WHERE id=?",
+                (student_id, user_id),
+            )
+
+        conn.commit()
+        return {
+            "user_id": user_id,
+            "username": normalized_username,
+            "platform_role": "None",
+            "instructional_access": "Teacher" if authorization_id else "None",
+            "class_membership": class_row["name"] if class_row else "None",
+            "student_id": student_id,
+        }
+    except Exception:
+        conn.rollback()
+        raise
+
+
 def create_user(conn, username, password, role="teacher", linked_student_id=None):
     pw_hash = generate_password_hash(password)
     conn.execute(
@@ -5806,6 +6187,147 @@ def require_owner_csrf() -> None:
         abort(400, description="Invalid or expired form token.")
 
 
+def impersonation_stop_csrf_token() -> str:
+    token = session.get("impersonation_stop_csrf_token")
+    if not token:
+        token = secrets.token_urlsafe(32)
+        session["impersonation_stop_csrf_token"] = token
+    return token
+
+
+@app.after_request
+def render_impersonation_banner_and_audit(response):
+    record = active_impersonation()
+    if not record:
+        return response
+    if request.method not in ("GET", "HEAD", "OPTIONS"):
+        conn = get_conn()
+        try:
+            conn.execute(
+                """
+                INSERT INTO impersonated_action_audit
+                  (impersonation_audit_id, acting_owner_user_id,
+                   effective_user_id, request_method, request_path,
+                   response_status, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record["audit_id"], record["acting_owner_user_id"],
+                    session.get("user_id"), request.method, request.path,
+                    response.status_code, int(time.time()),
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    if response.mimetype != "text/html":
+        return response
+    body = response.get_data(as_text=True)
+    role_label = str(record["target_role"] or "user").replace("_", " ").title()
+    target = record["target_display_label"] or f"User {record['target_user_id']}"
+    token = impersonation_stop_csrf_token()
+    banner = (
+        '<aside role="status" style="position:sticky;top:0;z-index:99999;'
+        'background:#fff3cd;color:#3d2b00;border:3px solid #8a5a00;padding:12px 16px;'
+        'font:700 14px/1.4 Arial,sans-serif;display:flex;gap:14px;align-items:center;'
+        'justify-content:space-between;flex-wrap:wrap">'
+        f'<span>Impersonating <strong>{Markup.escape(target)}</strong> as {Markup.escape(role_label)}. '
+        f'Actions are being performed by Owner <strong>{Markup.escape(record["acting_owner_display_label"])}</strong>.</span>'
+        '<form method="post" action="/owner/impersonation/stop" style="margin:0">'
+        f'<input type="hidden" name="csrf_token" value="{Markup.escape(token)}">'
+        '<button type="submit" style="background:#3d2b00;color:#fff;border:0;border-radius:6px;'
+        'padding:8px 12px;font-weight:800">Stop Impersonating</button></form></aside>'
+    )
+    lower = body.lower()
+    body_index = lower.find("<body")
+    if body_index >= 0:
+        close = body.find(">", body_index)
+        body = body[: close + 1] + banner + body[close + 1 :]
+    else:
+        body = banner + body
+    response.set_data(body)
+    return response
+
+
+@app.after_request
+def render_authenticated_header(response):
+    """Add one role-aware header to authenticated HTML responses."""
+    if response.mimetype != "text/html":
+        return response
+    context = authenticated_header_context()
+    if not context:
+        return response
+
+    header = render_template_string(
+        """
+<style id="rooted-authenticated-header-styles">
+  .rooted-auth-header{box-sizing:border-box;width:100%;background:#fffefa;color:#203b2d;border-bottom:1px solid #cfddca;font-family:Arial,Helvetica,sans-serif}
+  .rooted-auth-header *{box-sizing:border-box}
+  .rooted-auth-header__inner{max-width:1200px;margin:0 auto;padding:10px 20px;display:flex;align-items:center;gap:18px}
+  .rooted-auth-header__brand{display:flex;align-items:center;gap:10px;color:#234b35;text-decoration:none;font-size:20px;font-weight:850;letter-spacing:-.02em}
+  .rooted-auth-header__brand:focus-visible,.rooted-auth-header a:focus-visible,.rooted-auth-header button:focus-visible{outline:3px solid #c98f35;outline-offset:3px}
+  .rooted-auth-header__context{padding-left:14px;border-left:1px solid #cfddca;color:#486252;font-size:13px;font-weight:750;white-space:nowrap}
+  .rooted-auth-header__nav{margin-left:auto;display:flex;align-items:center;justify-content:flex-end;gap:6px;flex-wrap:wrap}
+  .rooted-auth-header__link,.rooted-auth-header__button{appearance:none;display:inline-flex;align-items:center;min-height:36px;padding:8px 10px;border:1px solid transparent;border-radius:7px;background:transparent;color:#2f5138;text-decoration:none;font:700 13px/1 Arial,Helvetica,sans-serif;cursor:pointer}
+  .rooted-auth-header__link:hover,.rooted-auth-header__button:hover{background:#eef4ec;border-color:#c8d9c4}
+  .rooted-auth-header__identity{max-width:220px;color:#56675d;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .rooted-auth-header .action-badge{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;margin-left:5px;padding:0 6px;border-radius:999px;background:#b42318;color:#fff;font-size:11px}
+  .rooted-auth-header__logout{border-color:#d7cabc;color:#694a34}
+  .rooted-auth-header form{margin:0}
+  @media(max-width:720px){
+    .rooted-auth-header__inner{padding:10px 14px;align-items:flex-start;gap:8px;flex-wrap:wrap}
+    .rooted-auth-header__context{margin-left:auto}
+    .rooted-auth-header__nav{flex-basis:100%;margin-left:0;justify-content:flex-start}
+    .rooted-auth-header__identity{max-width:100%;margin-right:auto}
+  }
+</style>
+<header class="rooted-auth-header" data-authenticated-header>
+  <div class="rooted-auth-header__inner">
+    <a class="rooted-auth-header__brand" href="{{ context.home_url }}">{{ context.home_label }}</a>
+    <span class="rooted-auth-header__context">{{ context.context_label }}</span>
+    <nav class="rooted-auth-header__nav" aria-label="Account and workspace">
+      <span class="rooted-auth-header__identity" title="{{ context.display_label }}">Signed in as <strong>{{ context.display_label }}</strong></span>
+      {% for label, href in context.links %}
+        <a class="rooted-auth-header__link" href="{{ href }}">
+          {{ label }}
+          {% if label == 'Question Flags' and context.get('teacher_flag_count') %}
+            <span class="action-badge" aria-label="{{ context.teacher_flag_count }} open question report{{ '' if context.teacher_flag_count == 1 else 's' }} requiring action">{{ context.teacher_flag_count }}</span>
+          {% endif %}
+        </a>
+      {% endfor %}
+      {% if context.leave_student_mode %}
+        <form method="post" action="{{ url_for('student_view') }}">
+          <input type="hidden" name="action" value="exit_preview">
+          <input type="hidden" name="csrf_token" value="{{ preview_exit_token }}">
+          <button class="rooted-auth-header__button" type="submit">Leave Student Mode</button>
+        </form>
+      {% endif %}
+      <form method="post" action="{{ url_for('logout') }}">
+        <input type="hidden" name="csrf_token" value="{{ logout_token }}">
+        <button class="rooted-auth-header__button rooted-auth-header__logout" type="submit">Logout</button>
+      </form>
+    </nav>
+  </div>
+</header>
+        """,
+        context=context,
+        preview_exit_token=owner_csrf_token() if context["leave_student_mode"] else None,
+        logout_token=logout_csrf_token(),
+    )
+    body = response.get_data(as_text=True)
+    lower = body.lower()
+    body_index = lower.find("<body")
+    if body_index >= 0:
+        close = body.find(">", body_index)
+        body = body[: close + 1] + header + body[close + 1 :]
+    else:
+        main_index = lower.find("<main")
+        insert_at = main_index if main_index >= 0 else 0
+        body = body[:insert_at] + header + body[insert_at:]
+    response.set_data(body)
+    return response
+
+
 def student_onboarding_csrf_token() -> str:
     token = session.get("student_onboarding_csrf_token")
     if not token:
@@ -5819,6 +6341,27 @@ def require_student_onboarding_csrf() -> None:
     expected = session.get("student_onboarding_csrf_token", "")
     if not supplied or not expected or not hmac.compare_digest(supplied, expected):
         abort(400, description="Invalid or expired form token.")
+
+
+def finish_impersonation(reason: str) -> int | None:
+    """Close the active audit record and return the original Owner user ID."""
+    record = active_impersonation()
+    if not record:
+        return None
+    conn = get_conn()
+    try:
+        conn.execute(
+            """
+            UPDATE impersonation_audit
+            SET stop_timestamp=?, outcome='completed', termination_reason=?
+            WHERE audit_id=? AND stop_timestamp IS NULL
+            """,
+            (int(time.time()), reason, record["audit_id"]),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return int(record["acting_owner_user_id"])
 
 
 def _activate_student_account_for_membership(
@@ -6109,13 +6652,6 @@ def owner_home():
       <h1>RootED Owner Workspace</h1>
       <p class="subtitle">Platform support and escalated question review.</p>
     </div>
-    <div class="actions">
-      {% if is_teacher_user %}
-        <a class="btn btn-secondary" href="{{ url_for('teacher_home') }}">Teacher Workspace</a>
-      {% endif %}
-      <a class="btn btn-secondary" href="{{ url_for('owner_people_access') }}">People &amp; Access</a>
-      <a class="btn btn-secondary" href="{{ url_for('logout') }}">Sign Out</a>
-    </div>
   </header>
 
   <section class="card">
@@ -6130,9 +6666,33 @@ def owner_home():
   </section>
 
   <section class="card">
-    <h2>Adaptive Engine Debug</h2>
-    <p>Inspect a student's current routing attempt, cumulative evidence, decision, and delivery history.</p>
-    <a class="btn" href="{{ url_for('owner_adaptive_debug') }}">Open Adaptive Debug</a>
+    <h2>Account Administration</h2>
+    <p>Create an exceptional local account for controlled testing, support, or recovery. Identity, platform authority, instructional access, and class membership remain separate.</p>
+    <a class="btn" href="{{ url_for('owner_account_administration') }}">Open Account Administration</a>
+  </section>
+
+  <section class="card">
+    <h2>Content Administration</h2>
+    <p>Import curriculum data and review content reports.</p>
+    <a class="btn" href="{{ url_for('owner_content_administration') }}">Open Content Administration</a>
+  </section>
+
+  <section class="card">
+    <h2>Platform Configuration</h2>
+    <p>Manage global learning thresholds and current platform settings.</p>
+    <a class="btn" href="{{ url_for('owner_platform_configuration') }}">Open Platform Configuration</a>
+  </section>
+
+  <section class="card">
+    <h2>Data and Maintenance</h2>
+    <p>Backup, restore, integrity information, and destructive maintenance actions.</p>
+    <a class="btn" href="{{ url_for('owner_data_maintenance') }}">Open Data and Maintenance</a>
+  </section>
+
+  <section class="card">
+    <h2>Developer and Diagnostics</h2>
+    <p>Internal engine status, diagnostic testing, routing calculations, manual attempts, and error logs.</p>
+    <a class="btn" href="{{ url_for('owner_developer_diagnostics') }}">Open Developer and Diagnostics</a>
   </section>
 
   <section class="card">
@@ -6153,17 +6713,408 @@ def owner_home():
     )
 
 
+def owner_tool_page(title: str, body: str):
+    return render_template_string(
+        """
+<!doctype html><title>{{ title }}</title>
+<style>body{font-family:Arial;margin:0;background:#fbfaf4;color:#1f2937}.page{max-width:960px;margin:auto;padding:24px}.top{display:flex;justify-content:space-between;gap:14px;align-items:center}.card{background:#fff;border:1px solid #e2decf;border-radius:12px;padding:18px;margin-top:16px}.btn{display:inline-block;background:#2f6f4e;color:#fff;border:0;border-radius:7px;padding:9px 12px;text-decoration:none;font-weight:700;margin:3px}.danger{background:#9f1d20}label{display:block;margin:9px 0}input,select{padding:8px;border:1px solid #cbd5e1;border-radius:7px}.muted{color:#647067;font-size:13px}</style>
+<main class="page"><div class="top"><div><h1>{{ title }}</h1><p class="muted">Owner-only platform tools.</p></div><a class="btn" href="{{ url_for('owner_home') }}">Owner Workspace</a></div>{{ body|safe }}</main>
+        """,
+        title=title,
+        body=body,
+    )
+
+
+@app.get("/owner/content-administration")
+@owner_required
+def owner_content_administration():
+    token = owner_csrf_token()
+    return owner_tool_page(
+        "Content Administration",
+        f"""
+<section class="card"><h2>CSV Content Import</h2><form method="post" action="/import_csv" enctype="multipart/form-data">
+<input type="hidden" name="csrf_token" value="{token}"><label>Dataset <select name="dataset"><option value="standards">Standards</option><option value="objectives">Objectives</option><option value="questions">Questions</option></select></label>
+<label>CSV file <input type="file" name="file" accept=".csv" required></label><button class="btn">Import CSV</button></form></section>
+<section class="card"><h2>Question Flags Administration</h2><p>Review reports escalated by teachers.</p><a class="btn" href="/owner/question-flags">Open Question Flags</a></section>
+        """,
+    )
+
+
+@app.get("/owner/platform-configuration")
+@owner_required
+def owner_platform_configuration():
+    conn = get_conn()
+    try:
+        mastery, practice = get_config(conn)
+    finally:
+        conn.close()
+    return owner_tool_page(
+        "Platform Configuration",
+        f"""
+<section class="card"><h2>Adaptive Thresholds</h2><form method="post" action="/update_config">
+<input type="hidden" name="csrf_token" value="{owner_csrf_token()}">
+<label>Mastery threshold <input type="number" name="mastery_threshold" step=".05" min="0" max="1" value="{mastery}"></label>
+<label>Practice threshold <input type="number" name="practice_lower" step=".05" min="0" max="1" value="{practice}"></label>
+<button class="btn">Save Settings</button></form></section>
+        """,
+    )
+
+
+@app.get("/owner/data-maintenance")
+@owner_required
+def owner_data_maintenance():
+    token = owner_csrf_token()
+    db_name = Markup.escape(os.path.basename(DB))
+    return owner_tool_page(
+        "Data and Maintenance",
+        f"""
+<section class="card"><h2>Database Information</h2><p>Database: <strong>{db_name}</strong></p></section>
+<section class="card"><h2>Attempts Backup and Reset</h2>
+<form method="post" action="/admin_action"><input type="hidden" name="csrf_token" value="{token}"><button class="btn" name="action" value="export_attempts">Download Attempts Backup</button>
+<button class="btn danger" name="action" value="reset_practice" onclick="return confirm('Delete all attempts and responses? This cannot be undone.')">Clear All Attempts and Responses</button></form></section>
+<section class="card"><h2>Restore Attempts</h2><form method="post" action="/restore_attempts" enctype="multipart/form-data"><input type="hidden" name="csrf_token" value="{token}">
+<label>Backup CSV <input type="file" name="file" accept=".csv" required></label><button class="btn danger" onclick="return confirm('Replace current attempt data with this backup?')">Restore Backup</button></form></section>
+        """,
+    )
+
+
+@app.get("/owner/developer-diagnostics")
+@owner_required
+def owner_developer_diagnostics():
+    return owner_tool_page(
+        "Developer and Diagnostics",
+        """
+<section class="card"><h2>Internal Diagnostics</h2><p>These tools expose artificial test operations, engine internals, and support logs. They are not classroom products.</p>
+<a class="btn" href="/diagnostic">Adaptive Assessment Simulator</a><a class="btn" href="/owner/adaptive-debug">Adaptive Engine Status and Routing</a><a class="btn" href="/errors">Error Log</a></section>
+        """,
+    )
+
+
+@app.get("/owner/impersonation")
+@owner_required
+def owner_impersonation():
+    conn = get_conn()
+    try:
+        query = (request.args.get("q") or "").strip()
+        like = f"%{query}%"
+        users = conn.execute(
+            """
+            SELECT u.id, u.username, u.account_role, u.role, u.is_active,
+                   i.verified_email, i.display_name,
+                   COALESCE(
+                     NULLIF(TRIM(i.display_name), ''),
+                     NULLIF(TRIM(i.verified_email), ''),
+                     NULLIF(TRIM(u.username), ''),
+                     'User ' || u.id
+                   ) AS display_label,
+                   CASE WHEN pr.grant_id IS NULL THEN 0 ELSE 1 END AS is_owner,
+                   CASE WHEN ta.authorization_id IS NULL THEN 0 ELSE 1 END AS is_teacher
+            FROM users u
+            LEFT JOIN user_auth_identities i ON i.identity_id=(
+              SELECT identity_id FROM user_auth_identities
+              WHERE user_id=u.id AND revoked_at IS NULL
+              ORDER BY last_login_at DESC, identity_id DESC LIMIT 1
+            )
+            LEFT JOIN user_platform_roles pr
+              ON pr.user_id=u.id AND pr.platform_role='owner' AND pr.revoked_at IS NULL
+            LEFT JOIN user_instructional_authorizations ta
+              ON ta.user_id=u.id AND ta.instructional_role='teacher' AND ta.revoked_at IS NULL
+            WHERE u.is_active=1
+              AND pr.grant_id IS NULL
+              AND (
+                ta.authorization_id IS NOT NULL
+                OR COALESCE(u.account_role, u.role)='student'
+              )
+              AND u.username NOT LIKE 'deleted-user-%'
+              AND (?='' OR CAST(u.id AS TEXT)=? OR u.username LIKE ?
+                   OR COALESCE(i.verified_email,'') LIKE ?
+                   OR COALESCE(i.display_name,'') LIKE ?)
+            ORDER BY u.username COLLATE NOCASE LIMIT 100
+            """,
+            (query, query, like, like, like),
+        ).fetchall()
+    finally:
+        conn.close()
+    return render_template_string(
+        """
+<!doctype html><title>Impersonate User</title>
+<style>body{font-family:Arial;margin:0;background:#fbfaf4;color:#1f2937}.page{max-width:1050px;margin:auto;padding:24px}
+.top,.actions{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}.card{background:#fff;border:1px solid #e2decf;border-radius:12px;padding:18px;margin-top:16px}
+table{border-collapse:collapse;width:100%}th,td{padding:9px;border:1px solid #e5e0d2;text-align:left}.btn{background:#2f6f4e;color:#fff;border:0;border-radius:7px;padding:8px 11px;text-decoration:none;font-weight:700}.muted{color:#647067;font-size:13px}input{padding:8px;border:1px solid #cbd5e1;border-radius:7px}</style>
+<main class="page"><div class="top"><div><h1>Impersonate User</h1><p class="muted">Owner-only support tool. Select an active teacher or student; Owner accounts cannot be impersonated.</p></div><div class="actions"><a class="btn" href="{{ url_for('owner_home') }}">Owner Workspace</a><a class="btn" href="{{ url_for('owner_account_administration') }}">Account Administration</a></div></div>
+<form class="card actions" method="get"><label>Search by ID, username, name, or email <input name="q" value="{{ request.args.get('q','') }}"></label><button class="btn">Search</button></form>
+<section class="card"><table><tr><th>User</th><th>Role</th><th>Email</th><th>Status</th><th></th></tr>
+{% for u in users %}<tr><td><strong>{{ u['display_label'] }}</strong><br><span class="muted">User #{{ u['id'] }}</span></td>
+<td>{{ 'Owner' if u['is_owner'] else 'Teacher' if u['is_teacher'] else (u['account_role'] or u['role'])|title }}</td><td>{{ u['verified_email'] or '—' }}</td><td>{{ 'Active' if u['is_active'] else 'Inactive' }}</td>
+<td>{% if u['is_active'] and not u['is_owner'] and (u['is_teacher'] or (u['account_role'] or u['role']) == 'student') %}<form method="post" action="{{ url_for('owner_start_impersonation', user_id=u['id']) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn" type="submit">Impersonate</button></form>{% else %}<span class="muted">Unavailable</span>{% endif %}</td></tr>{% endfor %}
+</table></section></main>
+        """,
+        users=users,
+        csrf_token=owner_csrf_token(),
+    )
+
+
+@app.post("/owner/impersonation/start/<int:user_id>")
+@owner_required
+def owner_start_impersonation(user_id):
+    require_owner_csrf()
+    if active_impersonation():
+        abort(409, description="Nested impersonation is not supported.")
+    owner = current_user()
+    conn = get_conn()
+    try:
+        target = conn.execute(
+            "SELECT * FROM users WHERE id=? AND is_active=1", (user_id,)
+        ).fetchone()
+        if not target:
+            abort(404)
+        if str(target["username"] or "").startswith("deleted-user-"):
+            abort(404)
+        if has_platform_role("owner", target):
+            abort(403, description="Owner accounts cannot be impersonated.")
+        target_role = (
+            "teacher" if has_instructional_authorization("teacher", target)
+            else account_role(target)
+        )
+        if target_role not in ("teacher", "student"):
+            abort(400, description="Unsupported impersonation target.")
+        correlation_id = secrets.token_urlsafe(32)
+        cursor = conn.execute(
+            """
+            INSERT INTO impersonation_audit
+              (correlation_id, acting_owner_user_id, target_user_id, target_role,
+               start_timestamp, source_ip, outcome)
+            VALUES (?, ?, ?, ?, ?, ?, 'active')
+            """,
+            (
+                correlation_id, owner["id"], target["id"], target_role,
+                int(time.time()), request.remote_addr,
+            ),
+        )
+        conn.commit()
+        audit_id = int(cursor.lastrowid)
+    finally:
+        conn.close()
+    session.clear()
+    session["user_id"] = target["id"]
+    session["username"] = target["username"]
+    session["role"] = target_role
+    session["impersonation_audit_id"] = audit_id
+    session["impersonation_correlation_id"] = correlation_id
+    session["impersonation_stop_csrf_token"] = secrets.token_urlsafe(32)
+    return redirect(get_post_login_destination(target))
+
+
+@app.post("/owner/impersonation/stop")
+def owner_stop_impersonation():
+    record = active_impersonation()
+    if not record:
+        abort(403)
+    supplied = request.form.get("csrf_token", "")
+    expected = session.get("impersonation_stop_csrf_token", "")
+    if not supplied or not expected or not hmac.compare_digest(supplied, expected):
+        abort(400, description="Invalid or expired form token.")
+    owner_id = finish_impersonation("stopped_by_owner")
+    conn = get_conn()
+    try:
+        owner = conn.execute(
+            "SELECT * FROM users WHERE id=? AND is_active=1", (owner_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+    session.clear()
+    if not owner or not has_platform_role("owner", owner):
+        return redirect(url_for("login"))
+    session["user_id"] = owner["id"]
+    session["username"] = owner["username"]
+    session["role"] = effective_session_role(owner)
+    return redirect(url_for("owner_home"))
+
+
+@app.route("/owner/account-administration", methods=["GET", "POST"])
+@owner_required
+def owner_account_administration():
+    conn = get_conn()
+    try:
+        if request.method == "POST":
+            require_owner_csrf()
+            platform_role = request.form.get("platform_role", "none").strip().lower()
+            if platform_role != "none":
+                abort(400, description="Owner authority cannot be granted during account creation.")
+            try:
+                result = provision_owner_local_account(
+                    conn,
+                    actor_user_id=int(current_user()["id"]),
+                    username=request.form.get("username"),
+                    password=request.form.get("password", ""),
+                    grant_teacher_access=(
+                        request.form.get("instructional_access") == "teacher"
+                    ),
+                    class_id=request.form.get("class_id"),
+                )
+            except AccountProvisioningError as exc:
+                flash(str(exc))
+                return redirect(url_for("owner_account_administration"))
+            except sqlite3.IntegrityError:
+                flash("The account could not be created. Review the selections and try again.")
+                return redirect(url_for("owner_account_administration"))
+
+            flash(
+                "Account created. "
+                f"Platform authority: {result['platform_role']}. "
+                f"Instructional access: {result['instructional_access']}. "
+                f"Class membership: {result['class_membership']}."
+            )
+            return redirect(url_for("owner_account_administration"))
+
+        active_classes = conn.execute(
+            """
+            SELECT class_id, name, class_period
+            FROM class_sections
+            WHERE is_active=1
+            ORDER BY name COLLATE NOCASE, class_id
+            """
+        ).fetchall()
+    finally:
+        conn.close()
+
+    return render_template_string(
+        """
+<!doctype html>
+<title>RootED Account Administration</title>
+<style>
+body{font-family:Arial,Helvetica,sans-serif;margin:0;background:#fbfaf4;color:#1f2937}
+.page{max-width:900px;margin:auto;padding:24px}.top{display:flex;justify-content:space-between;gap:16px;align-items:center}
+h1,h2{color:#234b35}.muted{color:#647067;font-size:13px}.card{margin-top:18px;background:#fff;border:1px solid #e2decf;border-radius:12px;padding:20px}
+.group{padding:16px 0;border-top:1px solid #ebe8de}.group:first-of-type{border-top:0}.group h2{margin:0 0 6px;font-size:18px}
+label{display:block;font-weight:700;margin-top:10px}input,select{box-sizing:border-box;width:100%;max-width:520px;padding:9px;border:1px solid #cfd8cf;border-radius:7px;margin-top:5px}
+.check{display:flex;align-items:flex-start;gap:9px;font-weight:400}.check input{width:auto;margin-top:3px}.btn{display:inline-block;background:#2f6f4e;color:#fff;text-decoration:none;border:0;padding:9px 13px;border-radius:8px;font-weight:700;cursor:pointer}
+.secondary{background:#eef4ec;color:#2f5138;border:1px solid #c8d9c4}.message{margin-top:18px;padding:12px;border-radius:8px;background:#eef7ed;border:1px solid #c8d9c4}
+</style>
+<main class="page">
+  <div class="top">
+    <div><h1>Account Administration</h1><p class="muted">Owner-only exceptional account provisioning. Google or Microsoft sign-in remains the normal onboarding method.</p></div>
+    <a class="btn secondary" href="{{ url_for('owner_home') }}">Owner Workspace</a>
+  </div>
+  {% with messages = get_flashed_messages() %}
+    {% if messages %}<div class="message" role="status">{{ messages[-1] }}</div>{% endif %}
+  {% endwith %}
+  <form method="post" class="card">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <section class="group">
+      <h2>Account Details</h2>
+      <p class="muted">Creates an Owner-created local account. The credential is hashed and is never displayed after submission.</p>
+      <label>Username<input name="username" required autocomplete="off" minlength="3" maxlength="80" pattern="[A-Za-z0-9][A-Za-z0-9._-]{2,79}"></label>
+      <label>Strong temporary password<input type="password" name="password" required minlength="12" autocomplete="new-password"></label>
+      <p class="muted">At least 12 characters with uppercase, lowercase, number, and symbol.</p>
+    </section>
+    <section class="group">
+      <h2>Platform Role</h2>
+      <p class="muted">New accounts receive no platform authority. Owner authority must never be granted implicitly.</p>
+      <label>Platform authority
+        <select name="platform_role"><option value="none">None — least privilege</option></select>
+      </label>
+    </section>
+    <section class="group">
+      <h2>Instructional Access</h2>
+      <label class="check"><input type="checkbox" name="instructional_access" value="teacher"> Grant Teacher Workspace access</label>
+      <p class="muted">This creates a separate instructional authorization. Leave unchecked for an account without instructional access.</p>
+    </section>
+    <section class="group">
+      <h2>Optional Class Membership</h2>
+      <label>Active class
+        <select name="class_id">
+          <option value="">No class membership</option>
+          {% for class_row in active_classes %}
+            <option value="{{ class_row['class_id'] }}">{{ class_row['name'] }}{% if class_row['class_period'] %} — Period {{ class_row['class_period'] }}{% endif %}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <p class="muted">A selected class creates a separate instructional student record and canonical class enrollment. It does not create an identity or grant a role.</p>
+    </section>
+    <button class="btn" type="submit">Create Local Account</button>
+  </form>
+</main>
+        """,
+        active_classes=active_classes,
+        csrf_token=owner_csrf_token(),
+    )
+
+
 @app.get("/owner/people-access")
 @owner_required
 def owner_people_access():
     conn = get_conn()
     try:
         people = get_people_access_rows(conn)
+        status_filter = request.args.get("status", "active")
+        if status_filter not in ("active", "deactivated", "all"):
+            status_filter = "active"
+        search = (request.args.get("q") or "").strip().casefold()
+        teacher_filter = request.args.get("teacher_id", "").strip()
+        class_filter = request.args.get("class_id", "").strip()
+        teachers = conn.execute(
+            """
+            SELECT DISTINCT u.id, u.username FROM users u
+            JOIN user_instructional_authorizations a ON a.user_id=u.id
+            WHERE a.instructional_role='teacher' AND a.revoked_at IS NULL
+            ORDER BY u.username COLLATE NOCASE
+            """
+        ).fetchall()
+        classes = conn.execute(
+            "SELECT class_id,name,teacher_user_id FROM class_sections ORDER BY name COLLATE NOCASE"
+        ).fetchall()
+        allowed_user_ids = None
+        selected_class_ids = []
+        if class_filter:
+            selected_class_ids = [class_filter]
+        elif teacher_filter:
+            selected_class_ids = [
+                row["class_id"] for row in classes
+                if str(row["teacher_user_id"]) == teacher_filter
+            ]
+        if teacher_filter or class_filter:
+            allowed_user_ids = {
+                int(teacher_filter) for _ in [0] if teacher_filter
+            }
+            if class_filter:
+                class_row = next(
+                    (row for row in classes if row["class_id"] == class_filter), None
+                )
+                if class_row:
+                    allowed_user_ids.add(int(class_row["teacher_user_id"]))
+            if selected_class_ids:
+                placeholders = sql_placeholders(selected_class_ids)
+                rows = conn.execute(
+                    f"""
+                    SELECT DISTINCT u.id FROM users u
+                    JOIN class_enrollments ce ON ce.student_id=u.linked_student_id
+                    WHERE ce.class_id IN ({placeholders})
+                    """,
+                    selected_class_ids,
+                ).fetchall()
+                allowed_user_ids.update(int(row["id"]) for row in rows)
+        people = [
+            person for person in people
+            if (
+                status_filter == "all"
+                or (status_filter == "active" and person["account_status"] == "Active")
+                or (status_filter == "deactivated" and person["account_status"] != "Active")
+            )
+            and (
+                not search
+                or search in str(person["display_name"]).casefold()
+                or search in str(person["user_id"])
+                or search in str(person["verified_email"] or "").casefold()
+            )
+            and (allowed_user_ids is None or int(person["user_id"]) in allowed_user_ids)
+        ]
         email_authorizations = conn.execute(
             """
             SELECT e.*, u.username AS linked_username
             FROM teacher_email_authorizations e
             LEFT JOIN users u ON u.id=e.user_id
+            WHERE e.status='pending'
             ORDER BY e.created_at DESC, e.email_authorization_id DESC
             """
         ).fetchall()
@@ -6185,6 +7136,8 @@ th{background:#eef4ec;color:#234b35}.name{font-weight:700}.empty{color:#7a837b}
 .card{margin-top:18px;background:#fff;border:1px solid #e2decf;border-radius:12px;padding:18px}
 .form-grid{display:grid;grid-template-columns:2fr 1.3fr 2fr auto;gap:10px;align-items:end}
 input{box-sizing:border-box;width:100%;padding:9px;border:1px solid #cfd8cf;border-radius:7px}
+.filters{display:flex;gap:9px;align-items:end;flex-wrap:wrap}.filters label{font-weight:700;font-size:13px}.filters select{padding:9px;border:1px solid #cfd8cf;border-radius:7px}
+.tabs{display:flex;gap:8px;margin-top:18px}.tabs a[aria-current="page"]{background:#2f6f4e;color:#fff}
 </style>
 <main class="page">
   <div class="top">
@@ -6208,7 +7161,11 @@ input{box-sizing:border-box;width:100%;padding:9px;border:1px solid #cfd8cf;bord
         <td>{{ {'pending':'Invited — awaiting first sign-in','active':'Active','deactivated':'Deactivated','revoked':'Revoked'}[item.status] }}</td>
         <td>{{ item.linked_username or 'Not yet linked' }}</td><td>{{ item.internal_note or '—' }}</td>
         <td>
-          {% if item.status in ('pending','active') %}
+          {% if item.status == 'pending' %}
+          <form method="post" action="{{ url_for('owner_update_teacher_email_authorization', email_authorization_id=item.email_authorization_id, action='delete') }}" style="display:inline" onsubmit="return confirm('Delete this unused preauthorization?');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn" type="submit">Delete Pending</button>
+          </form>
+          {% elif item.status == 'active' %}
           <form method="post" action="{{ url_for('owner_update_teacher_email_authorization', email_authorization_id=item.email_authorization_id, action='deactivate') }}" style="display:inline">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn" type="submit">Deactivate</button>
           </form>
@@ -6223,6 +7180,21 @@ input{box-sizing:border-box;width:100%;padding:9px;border:1px solid #cfd8cf;bord
         </td></tr>
       {% else %}<tr><td colspan="6" class="empty">No email pre-authorizations.</td></tr>{% endfor %}</tbody></table>
     </div>
+  </section>
+  <section class="card">
+    <h2>User directory</h2>
+    <nav class="tabs" aria-label="Account status">
+      {% for value,label in [('active','Active'),('deactivated','Deactivated'),('all','All')] %}
+      <a class="btn btn-secondary" {% if status_filter == value %}aria-current="page"{% endif %} href="{{ url_for('owner_people_access',status=value,q=request.args.get('q',''),teacher_id=request.args.get('teacher_id',''),class_id=request.args.get('class_id','')) }}">{{ label }}</a>
+      {% endfor %}
+    </nav>
+    <form method="get" class="filters">
+      <input type="hidden" name="status" value="{{ status_filter }}">
+      <label>Search<input name="q" value="{{ request.args.get('q','') }}" placeholder="Name, email, or user ID"></label>
+      <label>Teacher<select name="teacher_id"><option value="">All teachers</option>{% for teacher in teachers %}<option value="{{ teacher['id'] }}" {% if request.args.get('teacher_id') == teacher['id']|string %}selected{% endif %}>{{ teacher['username'] }}</option>{% endfor %}</select></label>
+      <label>Class<select name="class_id"><option value="">All classes</option>{% for class_row in classes %}<option value="{{ class_row['class_id'] }}" {% if request.args.get('class_id') == class_row['class_id'] %}selected{% endif %}>{{ class_row['name'] }}</option>{% endfor %}</select></label>
+      <button class="btn">Apply filters</button>
+    </form>
   </section>
   <div class="table-wrap">
     <table>
@@ -6253,6 +7225,7 @@ input{box-sizing:border-box;width:100%;padding:9px;border:1px solid #cfd8cf;bord
             {% endif %}
             {% if person.account_status == 'Deactivated' %}
               <a class="btn" href="{{ url_for('owner_confirm_account_reactivation', user_id=person.user_id) }}">Reactivate</a>
+              <a class="btn btn-secondary" href="{{ url_for('owner_confirm_account_deletion', user_id=person.user_id) }}">Permanent deletion</a>
             {% else %}
               <a class="btn" href="{{ url_for('owner_confirm_account_deactivation', user_id=person.user_id) }}">Deactivate</a>
             {% endif %}
@@ -6266,6 +7239,9 @@ input{box-sizing:border-box;width:100%;padding:9px;border:1px solid #cfd8cf;bord
         """,
         people=people,
         email_authorizations=email_authorizations,
+        status_filter=status_filter,
+        teachers=teachers,
+        classes=classes,
         csrf_token=owner_csrf_token(),
         format_ts=format_ts,
     )
@@ -6316,7 +7292,7 @@ def owner_create_teacher_email_authorization():
 @owner_required
 def owner_update_teacher_email_authorization(email_authorization_id, action):
     require_owner_csrf()
-    if action not in ("deactivate", "reactivate", "revoke"):
+    if action not in ("deactivate", "reactivate", "revoke", "delete"):
         abort(404)
     actor, now = current_user()["id"], int(time.time())
     conn = get_conn()
@@ -6329,7 +7305,19 @@ def owner_update_teacher_email_authorization(email_authorization_id, action):
         if not item:
             conn.rollback()
             abort(404)
-        if action in ("deactivate", "revoke") and item["instructional_authorization_id"]:
+        if action == "delete":
+            if item["status"] != "pending" or item["user_id"]:
+                conn.rollback()
+                abort(409, description="Only an unused pending preauthorization can be deleted.")
+            conn.execute(
+                """
+                UPDATE teacher_email_authorizations
+                SET status='revoked',revoked_at=?,revoked_by=?
+                WHERE email_authorization_id=? AND status='pending' AND user_id IS NULL
+                """,
+                (now, actor, email_authorization_id),
+            )
+        elif action in ("deactivate", "revoke") and item["instructional_authorization_id"]:
             active_classes = conn.execute(
                 "SELECT 1 FROM class_sections WHERE teacher_user_id=? AND is_active=1 LIMIT 1",
                 (item["user_id"],),
@@ -6347,7 +7335,9 @@ def owner_update_teacher_email_authorization(email_authorization_id, action):
                 (now, actor, f"Email authorization {action}d",
                  item["instructional_authorization_id"]),
             )
-        if action == "deactivate":
+        if action == "delete":
+            pass
+        elif action == "deactivate":
             conn.execute(
                 "UPDATE teacher_email_authorizations SET status='deactivated',deactivated_at=?,deactivated_by=? WHERE email_authorization_id=? AND status IN ('pending','active')",
                 (now, actor, email_authorization_id),
@@ -6389,7 +7379,11 @@ def owner_update_teacher_email_authorization(email_authorization_id, action):
         raise
     finally:
         conn.close()
-    flash(f"Teacher authorization {action}d.")
+    flash(
+        "Pending teacher preauthorization deleted."
+        if action == "delete"
+        else f"Teacher authorization {action}d."
+    )
     return redirect(url_for("owner_people_access"))
 
 
@@ -6773,6 +7767,114 @@ def owner_reactivate_account(user_id):
         conn.close()
     flash("Account reactivated." if outcome == "reactivated" else "Account is already active.")
     return redirect(url_for("owner_people_access"))
+
+
+@app.get("/owner/people-access/<int:user_id>/delete")
+@owner_required
+def owner_confirm_account_deletion(user_id):
+    conn = get_conn()
+    try:
+        target = owner_account_target(conn, user_id)
+        target_is_owner = bool(
+            target and conn.execute(
+                """
+                SELECT 1 FROM user_platform_roles
+                WHERE user_id=? AND platform_role='owner' AND revoked_at IS NULL
+                """,
+                (user_id,),
+            ).fetchone()
+        )
+    finally:
+        conn.close()
+    if not target:
+        abort(404)
+    if int(target["is_active"] or 0) or target_is_owner or user_id == current_user()["id"]:
+        abort(409, description="Only a deactivated non-Owner account can be permanently deleted.")
+    return render_template_string(
+        """
+<!doctype html><title>Permanent Account Deletion</title>
+<main style="font-family:Arial;max-width:680px;margin:40px auto">
+<h1>Permanent Account Deletion</h1>
+<p>This exceptional action permanently removes sign-in credentials and personal identity fields for <strong>{{ target['display_name'] }}</strong>.</p>
+<p>Instructional history is preserved under an anonymous tombstone so classes, assignments, attempts, audit records, and other historical references are not orphaned or cascade-deleted.</p>
+<form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+<label>Type <strong>DELETE</strong> <input name="confirmation" required autocomplete="off"></label>
+<p><button type="submit">Permanently delete account access</button></p></form>
+<p><a href="{{ url_for('owner_people_access',status='deactivated') }}">Cancel</a></p>
+</main>
+        """,
+        target=target,
+        csrf_token=owner_csrf_token(),
+    )
+
+
+@app.post("/owner/people-access/<int:user_id>/delete")
+@owner_required
+def owner_delete_account(user_id):
+    require_owner_csrf()
+    if active_impersonation():
+        abort(403, description="Account deletion is unavailable during impersonation.")
+    if request.form.get("confirmation", "").strip() != "DELETE":
+        abort(400, description="Type DELETE to confirm permanent account deletion.")
+    actor = int(current_user()["id"])
+    if user_id == actor:
+        abort(409, description="You cannot permanently delete your current account.")
+    conn = get_conn()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        target = owner_account_target(conn, user_id)
+        if not target:
+            conn.rollback()
+            abort(404)
+        if int(target["is_active"] or 0):
+            conn.rollback()
+            abort(409, description="Deactivate the account before permanent deletion.")
+        if conn.execute(
+            """
+            SELECT 1 FROM user_platform_roles
+            WHERE user_id=? AND platform_role='owner' AND revoked_at IS NULL
+            """,
+            (user_id,),
+        ).fetchone():
+            conn.rollback()
+            abort(409, description="Owner accounts cannot be permanently deleted here.")
+        tombstone = f"deleted-user-{user_id}-{uuid.uuid4().hex[:10]}"
+        conn.execute("DELETE FROM user_auth_identities WHERE user_id=?", (user_id,))
+        conn.execute(
+            """
+            UPDATE users
+            SET username=?,password_hash=?,account_role='pending',
+                sso_provider=NULL,sso_subject=NULL,sso_email=NULL,last_login_ts=NULL,
+                is_active=0
+            WHERE id=?
+            """,
+            (tombstone, generate_password_hash(secrets.token_urlsafe(48)), user_id),
+        )
+        conn.execute(
+            """
+            UPDATE teacher_email_authorizations
+            SET status='revoked',revoked_at=?,revoked_by=?
+            WHERE user_id=? AND status!='revoked'
+            """,
+            (int(time.time()), actor, user_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO account_lifecycle_audit_log
+              (actor_user_id,target_user_id,action,outcome,reason,created_at)
+            VALUES (?,?,'account_deactivated','deactivated',
+                    'Credentials and identity removed; history preserved',?)
+            """,
+            (actor, user_id, int(time.time())),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    flash("Account access and personal identity were permanently removed; instructional history was preserved.")
+    return redirect(url_for("owner_people_access", status="deactivated"))
 
 
 @app.get("/owner/question-flags")
@@ -7209,7 +8311,7 @@ def record_attempt_and_response(
 
 # ---------- Quick attempt (teacher) ----------
 @app.post("/quick_attempt")
-@require_teacher
+@owner_required
 def quick_attempt():
     conn = get_conn()
     student_id = request.form.get("student_id")
@@ -7264,16 +8366,17 @@ def quick_attempt():
 @app.post("/import_csv")
 @owner_required
 def import_csv():
+    require_owner_csrf()
     file = request.files.get("file")
     dataset = request.form.get("dataset")
 
     if not file or file.filename == "":
         flash("Please choose a CSV file to upload.")
-        return redirect(url_for("index"))
+        return redirect(url_for("owner_content_administration"))
 
     if dataset not in ("standards", "objectives", "questions"):
         flash("Please choose what type of data you are importing.")
-        return redirect(url_for("index"))
+        return redirect(url_for("owner_content_administration"))
 
     conn = get_conn()
 
@@ -7284,7 +8387,7 @@ def import_csv():
 
         if not rows:
             flash("CSV appears to be empty.")
-            return redirect(url_for("index"))
+            return redirect(url_for("owner_content_administration"))
 
         if dataset == "standards":
             for r in rows:
@@ -7356,13 +8459,14 @@ def import_csv():
         conn.rollback()
         flash(f"Error importing CSV: {e}")
 
-    return redirect(url_for("index"))
+    return redirect(url_for("owner_content_administration"))
 
 
 # ---------- Config update ----------
 @app.post("/update_config")
 @owner_required
 def update_config():
+    require_owner_csrf()
     conn = get_conn()
     mastery = request.form.get("mastery_threshold", "0.9")
     practice = request.form.get("practice_lower", "0.7")
@@ -7873,8 +8977,10 @@ def login():
     )
 
 
-@app.route("/logout")
+@app.post("/logout")
 def logout():
+    require_logout_csrf()
+    finish_impersonation("logout")
     session.clear()
     flash("You have been logged out.")
     return redirect(url_for("login"))
@@ -8122,7 +9228,6 @@ def restricted_onboarding():
           <button type="submit" id="join-class-button">Join class</button>
         </form>
         <p class="help">Don’t have a class code? Ask your teacher for the code to join your classroom.</p>
-        <p><a href="{{ url_for('logout') }}">Sign out</a></p>
         <script>
         document.getElementById("join-class-form").addEventListener("submit", function () {
           const button = document.getElementById("join-class-button");
@@ -8147,9 +9252,13 @@ def account_disabled():
         <main style="font-family:Arial;max-width:560px;margin:60px auto">
         <h1>Account disabled</h1>
         <p>This RootED account has been disabled. Contact your RootED administrator if you believe this is a mistake.</p>
-        <p><a href="{{ url_for('logout') }}">Return to login</a></p>
+        <form method="post" action="{{ url_for('logout') }}">
+          <input type="hidden" name="csrf_token" value="{{ logout_token }}">
+          <button type="submit">Return to login</button>
+        </form>
         </main>
-        """
+        """,
+        logout_token=logout_csrf_token(),
     ), 403
 
 
@@ -8982,7 +10091,7 @@ def student_start_standard(standard_id):
 
 
 @app.route("/dashboard", methods=["GET", "POST"])
-@require_teacher
+@teacher_or_owner_required
 def index():
     conn = get_conn()
     msg = ""
@@ -9017,7 +10126,7 @@ def index():
         row["unit"] for row in assignment_standards if row["unit"]
     })
 
-    # Save / update student
+    # Legacy global student operation. Retained for compatibility and Owner-only.
     if request.method == "POST" and request.form.get("action") == "save_student":
         if not is_owner():
             abort(403)
@@ -9036,7 +10145,8 @@ def index():
         else:
             msg = "Student ID is required."
 
-    # Create user
+    # Legacy account operation. Retained for compatibility and Owner-only; the
+    # supported UI is /owner/account-administration.
     if request.method == "POST" and request.form.get("action") == "create_user":
         if not is_owner():
             abort(403)
@@ -9135,8 +10245,9 @@ def index():
 
     # Save attempt (teacher-driven)
     if request.method == "POST" and request.form.get("action") == "save_attempt":
+        if not is_owner():
+            abort(403)
         student_id = request.form.get("student_id") or "S1"
-        require_teacher_student_access(conn, student_id)
         objective_id = request.form.get("objective_id")
         qid = (request.form.get("question_id") or "").strip()
         resp = request.form.get("response")
@@ -9390,51 +10501,6 @@ def index():
       Logged in as <strong>{{ account_label }}</strong>
     </p>
   </div>
-  <div class="top-actions">
-    <form action="{{ url_for('student_view') }}" method="get" target="_blank" style="margin:0;">
-      <button type="submit" class="btn btn-primary">Student Mode</button>
-    </form>
-
-    <a href="{{ url_for('diagnostic_home') }}"
-       class="btn btn-accent"
-       style="text-decoration:none;">
-      Diagnostic Arena
-    </a>
-
-    <a href="{{ url_for('error_list') }}"
-       class="btn btn-secondary"
-       style="text-decoration:none;">
-      View Error Log
-    </a>
-
-    <a href="{{ url_for('question_flags_review') }}"
-       class="btn btn-secondary btn-with-badge"
-       style="text-decoration:none;">
-      <span>Question Flags</span>
-      {% if question_flags_action_count %}
-        <span class="action-badge" aria-label="{{ question_flags_action_count }} open question report{{ '' if question_flags_action_count == 1 else 's' }} requiring action">
-          {{ question_flags_action_count }}
-        </span>
-      {% endif %}
-    </a>
-
-    {% if current_user_is_owner %}
-      <a href="{{ url_for('owner_home') }}"
-         class="btn btn-secondary btn-with-badge"
-         style="text-decoration:none;">
-        <span>Owner Workspace</span>
-        {% if owner_escalated_flag_count %}
-          <span class="action-badge" aria-label="{{ owner_escalated_flag_count }} escalated question report{{ '' if owner_escalated_flag_count == 1 else 's' }} awaiting RootED review">
-            {{ owner_escalated_flag_count }}
-          </span>
-        {% endif %}
-      </a>
-    {% endif %}
-
-    <form action="{{ url_for('logout') }}" method="get" style="margin:0;">
-      <button type="submit" class="btn btn-ghost">Logout</button>
-    </form>
-  </div>
 </div>
 <style>
   body{font-family:Arial, Helvetica, sans-serif;margin:24px;background:#fbfaf4;color:#1f2937}
@@ -9512,7 +10578,7 @@ def index():
   {% endif %}
 {% endwith %}
 
-{% if recent_errors > 0 %}
+{% if false and recent_errors > 0 %}
   <div style="background:#fff7d6;border:1px solid #f2d27e;color:#8a6d00;padding:10px 12px;border-radius:8px;margin:10px 0;">
     ⚠️ <strong>{{ recent_errors }} error(s)</strong> occurred in the last 24 hours.
     <a href="{{ url_for('error_list') }}" style="margin-left:6px;">View details</a>
@@ -9533,6 +10599,7 @@ def index():
   </div>
 {% endif %}
 
+<div class="tool-section"><h2>Classroom Overview</h2></div>
 <div class="card" style="background:#f7fbf3;">
   <div class="headerbar">
     <div>
@@ -9688,8 +10755,8 @@ def index():
 </div>
 
 <div class="tool-section" id="teacher-tools">
-  <h2 style="margin-bottom:0;">Teacher Tools</h2>
-  <p class="section-note">Quick classroom tools for previewing and supporting student practice.</p>
+  <h2 style="margin-bottom:0;">Assign and Preview</h2>
+  <p class="section-note">Create assignments and safely preview student questions.</p>
 </div>
 
 <div class="card" id="assignments">
@@ -9927,13 +10994,13 @@ def index():
 </div>
 
 <div class="tool-section">
-  <h2 style="margin-bottom:0;">Management and Setup Tools</h2>
-  <p class="section-note">Existing configuration, roster, account, import, maintenance, and detailed progress tools remain available below.</p>
+  <h2 style="margin-bottom:0;">Classes</h2>
+  <p class="section-note">Create classes, share join codes, and view class rosters.</p>
 </div>
 
 <div class="card" id="class-enrollment">
   <h2>Class Enrollment</h2>
-  <p class="section-note">Create class codes students can use to enroll themselves.</p>
+  <p class="section-note">Students join RootED by signing in with Google or Microsoft and entering this class's join code.</p>
 
   <form method="post" style="margin-bottom:14px;">
     <input type="hidden" name="action" value="create_class">
@@ -10015,6 +11082,8 @@ def index():
   {% endif %}
 </div>
 
+{% if show_owner_diagnostics %}
+<div id="owner-diagnostics"></div>
 <details class="tool-details">
   <summary>Management and setup panels</summary>
 
@@ -10252,7 +11321,7 @@ def index():
 
 <div class="tool-group">
   <h3>Admin Setup</h3>
-  <p>Roster, account, configuration, and content import tools.</p>
+  <p>Configuration and content import tools.</p>
 </div>
 
 <div class="grid">
@@ -10267,24 +11336,6 @@ def index():
       </label>
       <p><button class="btn" type="submit">Save Settings</button></p>
     </form>
-  </div>
-
-  <div class="card">
-    <h2>Add / Update Student</h2>
-    <form method="post">
-      <input type="hidden" name="action" value="save_student">
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-        <label>Student ID <input name="student_id" placeholder="S1"></label>
-        <label>Grade <input name="grade" type="number" min="3" max="12" placeholder="6"></label>
-        <label>First name <input name="first_name" placeholder="Avery"></label>
-        <label>Last name <input name="last_name" placeholder="Lee"></label>
-        <label>Class period <input name="class_period" placeholder="1"></label>
-      </div>
-      <p><button class="btn" type="submit">Save Student</button></p>
-    </form>
-    {% if students %}
-      <p><em>{{students|length}} student(s) in roster (period {{selected_period}}).</em></p>
-    {% endif %}
   </div>
 
   {% if false %}
@@ -10508,6 +11559,7 @@ def index():
 </details>
 
 </details>
+{% endif %}
     """
 
     return render_template_string(
@@ -10552,6 +11604,7 @@ def index():
         recent_errors=recent_errors,
         question_flags_action_count=question_flags_action_count,
         current_user_is_owner=current_user_is_owner,
+        show_owner_diagnostics=False,
         owner_escalated_flag_count=owner_escalated_flag_count,
         question_reference_css=Markup(QUESTION_REFERENCE_CSS),
         all_users=all_users,
@@ -10577,6 +11630,16 @@ def student_view():
     feedback = None
 
     role = session.get("role")
+    if (
+        role == "teacher"
+        and request.method == "POST"
+        and request.form.get("action") == "exit_preview"
+    ):
+        require_owner_csrf()
+        session.pop("student_mode_preview", None)
+        session.pop("locked_payload", None)
+        session["current_mode"] = "question"
+        return redirect(url_for("index"))
     if role == "student" and request.args.get("home") == "1":
         session["current_mode"] = "home"
     if "current_mode" not in session:
@@ -10600,7 +11663,9 @@ def student_view():
     if role == "student":
         if not locked_student_id:
             flash("Your account is not linked to a student record yet. Please tell your teacher.")
-            return redirect(url_for("logout"))
+            session.clear()
+            flash("Session error. Please log in again.")
+            return redirect(url_for("login"))
 
         row = conn.execute(
             """
@@ -10640,6 +11705,33 @@ def student_view():
             abort(404)
         if not student_id and students:
             student_id = students[0]["student_id"]
+
+    def teacher_preview_state(selected_student_id, selected_objective_id):
+        """Return isolated, cookie-session state for Teacher Student Mode."""
+        state = session.get("student_mode_preview")
+        context_changed = (
+            not isinstance(state, dict)
+            or state.get("teacher_user_id") != current_user()["id"]
+            or state.get("student_id") != selected_student_id
+            or state.get("objective_id") != selected_objective_id
+        )
+        if context_changed:
+            state = {
+                "teacher_user_id": current_user()["id"],
+                "student_id": selected_student_id,
+                "objective_id": selected_objective_id,
+                "level": (
+                    get_level_for_objective(conn, selected_objective_id)
+                    if selected_objective_id
+                    else 1
+                ),
+                "current_question_id": None,
+                "answered_cycle": [],
+                "responses": [],
+                "routing_history": [],
+            }
+            session["student_mode_preview"] = state
+        return state
 
     if role == "student" and request.method == "POST" and request.form.get("action") == "join_class":
         ok, message = enroll_student_by_code(
@@ -10751,6 +11843,27 @@ WHERE o.standard_id = ?
         Choose the student's current standard/objective from durable placement.
         If no content exists yet, objective_id stays None.
         """
+        if role == "teacher":
+            requested = request.values.get("objective_id")
+            preview_objective = (
+                requested if is_launch_objective_id(requested)
+                else (objs[0]["objective_id"] if objs else None)
+            )
+            preview_state = teacher_preview_state(student_id, preview_objective)
+            preview_standard = "MS-LS1-1"
+            if preview_objective:
+                preview_row = conn.execute(
+                    "SELECT standard_id FROM objectives WHERE objective_id=?",
+                    (preview_objective,),
+                ).fetchone()
+                if preview_row:
+                    preview_standard = preview_row["standard_id"]
+            return (
+                preview_standard,
+                int(preview_state.get("level") or 1),
+                preview_objective,
+                None,
+            )
         placement = get_current_student_placement(conn, student_id)
         ps = placement["progress"]
 
@@ -10842,7 +11955,6 @@ WHERE o.standard_id = ?
     <p><strong>Completed</strong> — This understanding has taken root.</p>
   </section>
   <p style="font-size:13px;color:#555;">Logged in as <strong>{{ account_label }}</strong></p>
-  <p><a class="btn" href="{{ url_for('logout') }}" style="background:#dc2626;">Logout</a></p>
 </div>
         """
         return render_template_string(html_done)
@@ -10906,23 +12018,83 @@ WHERE o.standard_id = ?
                     (qid,),
                 ).fetchone()
                 correct = 1 if row and row["answer_key"] == resp else 0
-                std_id, lvl, ts = record_attempt_and_response(
-                    conn,
-                    student_id=student_id,
-                    question_id=qid,
-                    response=resp,
-                    is_correct=correct,
-                    objective_id=objective_id,
-                    attempt_prefix="ST",
+                std_id, lvl, ts = current_std, current_level, int(time.time())
+
+            if role == "teacher":
+                preview_state = teacher_preview_state(student_id, objective_id)
+                if preview_state.get("current_question_id") != qid:
+                    abort(409, description="That preview question is no longer active.")
+                answered_cycle = list(preview_state.get("answered_cycle") or [])
+                if qid not in answered_cycle:
+                    answered_cycle.append(qid)
+                responses = list(preview_state.get("responses") or [])
+                responses.append(
+                    {
+                        "question_id": qid,
+                        "correct": 1 if correct else 0,
+                        "level": int(preview_state.get("level") or current_level or 1),
+                    }
                 )
-                conn.commit()
+                preview_state["answered_cycle"] = answered_cycle
+                preview_state["responses"] = responses
+                preview_state["current_question_id"] = None
 
-            submitted_growth_attempt_id = row_get(growth_attempt, "attempt_id", None)
-            engine_decision = None
-            engine_summary = None
-            objective_transition = False
+                preview_level = int(preview_state.get("level") or 1)
+                level_responses = [
+                    item for item in responses
+                    if int(item.get("level") or 1) == preview_level
+                ]
+                preview_action = "continue_level"
+                preview_average = (
+                    sum(int(item["correct"]) for item in level_responses)
+                    / len(level_responses)
+                )
+                if len(level_responses) >= ae.MIN_EVIDENCE:
+                    next_level = preview_level
+                    if preview_average >= ae.MASTERY and preview_level < 3:
+                        next_level = preview_level + 1
+                        preview_action = "advance_level"
+                    elif preview_average < ae.REMEDIATE and preview_level > 1:
+                        next_level = preview_level - 1
+                        preview_action = "drop_level"
+                    elif preview_average < ae.REMEDIATE:
+                        preview_action = "continue_remediation"
+                    else:
+                        preview_action = "continue_level"
+                    if next_level != preview_level:
+                        preview_state["level"] = next_level
+                        preview_state["answered_cycle"] = []
+                    preview_state["routing_history"] = [
+                        *(preview_state.get("routing_history") or []),
+                        {
+                            "from_level": preview_level,
+                            "to_level": next_level,
+                            "action": preview_action,
+                            "average": preview_average,
+                        },
+                    ]
+                session["student_mode_preview"] = preview_state
+                current_level = int(preview_state.get("level") or preview_level)
+                objective_transition = False
+                feedback = {
+                    "correct": bool(correct),
+                    "engine_summary": (
+                        f"Preview only — {preview_action.replace('_', ' ')} at "
+                        f"Level {current_level}; no student evidence was recorded."
+                    ),
+                    "engine_decision": None,
+                }
+                session["current_mode"] = "question"
+                session["locked_payload"] = None
+                engine_decision = None
+                submitted_growth_attempt_id = None
+            else:
+                submitted_growth_attempt_id = row_get(growth_attempt, "attempt_id", None)
+                engine_decision = None
+                engine_summary = None
+                objective_transition = False
 
-            if std_id != "UNKNOWN":
+            if role == "student" and std_id != "UNKNOWN":
                 engine_decision = ae.process_after_response(student_id, std_id)
 
                 if (
@@ -10996,11 +12168,12 @@ WHERE o.standard_id = ?
                         ),
                     )
 
-            feedback = {
-                "correct": bool(correct),
-                "engine_summary": engine_summary,
-                "engine_decision": engine_decision,
-            }
+            if role == "student":
+                feedback = {
+                    "correct": bool(correct),
+                    "engine_summary": engine_summary,
+                    "engine_decision": engine_decision,
+                }
 
             # Re-read engine target after response processing.
             current_std, current_level, objective_id, progress_row = get_engine_target()
@@ -11263,9 +12436,6 @@ WHERE o.standard_id = ?
       <img src="{{ url_for('static', filename='Logo.png') }}" alt="RootED logo">
       <span>RootED</span>
     </div>
-    <form action="{{ url_for('logout') }}" method="get" style="margin:0;">
-      <button type="submit" class="btn btn-danger">Logout</button>
-    </form>
   </div>
 
   {% with msgs = get_flashed_messages() %}
@@ -11489,20 +12659,33 @@ WHERE o.standard_id = ?
                         )
                     )
                 else:
-                    qids = [row["question_id"] for row in level_qrows]
-                    placeholders = ",".join(["?"] * len(qids))
-                    attempt_row = conn.execute(
-                        f"""
-                        SELECT COUNT(*) AS n
-                        FROM attempts
-                        WHERE student_id = ?
-                          AND question_id IN ({placeholders})
-                        """,
-                        [student_id] + qids,
-                    ).fetchone()
-                    attempt_count = attempt_row["n"] if attempt_row else 0
-                    question_index = attempt_count % len(level_qrows)
-                    current_question = level_qrows[question_index]
+                    preview_state = teacher_preview_state(student_id, objective_id)
+                    row_by_id = {
+                        row["question_id"]: row for row in level_qrows
+                    }
+                    current_question_id = preview_state.get("current_question_id")
+                    current_question = row_by_id.get(current_question_id)
+                    if current_question is None:
+                        answered_cycle = list(
+                            preview_state.get("answered_cycle") or []
+                        )
+                        current_question = next(
+                            (
+                                row for row in level_qrows
+                                if row["question_id"] not in answered_cycle
+                            ),
+                            None,
+                        )
+                        if current_question is None:
+                            # The normal engine must reuse content after a pool is
+                            # exhausted. Start a new in-memory delivery cycle.
+                            answered_cycle = []
+                            current_question = level_qrows[0]
+                        preview_state["answered_cycle"] = answered_cycle
+                        preview_state["current_question_id"] = current_question[
+                            "question_id"
+                        ]
+                        session["student_mode_preview"] = preview_state
                 resolved_asset = resolve_model_asset_for_question(
                     conn,
                     current_question["question_id"],
@@ -11569,13 +12752,21 @@ WHERE o.standard_id = ?
 <div class="card">
   <div class="header">
     <div>
-      <h2 style="margin:0;color:#234b35;">RootED Learning</h2>
+      <h2 style="margin:0;color:#234b35;">{{ 'Student Mode Preview' if session.get('role') == 'teacher' else 'RootED Learning' }}</h2>
       <p style="font-size:13px;color:#555;margin:2px 0 0 0;">
         👩‍🎓 Logged in as <strong>{{ account_label }}</strong>
         {% if teacher_attribution %}<br>Assigned by {{ teacher_attribution }}{% endif %}
       </p>
     </div>
-    <a class="btn" href="{{ url_for('student_view', home=1) }}">Back to Home</a>
+    {% if session.get('role') == 'teacher' %}
+      <form method="post" style="margin:0;">
+        <input type="hidden" name="action" value="exit_preview">
+        <input type="hidden" name="csrf_token" value="{{ preview_exit_csrf }}">
+        <button class="btn" type="submit">Leave Student Mode</button>
+      </form>
+    {% else %}
+      <a class="btn" href="{{ url_for('student_view', home=1) }}">Back to Home</a>
+    {% endif %}
   </div>
 
   <section class="growth {{ growth_view.state }}" role="status" aria-live="polite" aria-label="Growing Understanding">
@@ -11668,14 +12859,6 @@ WHERE o.standard_id = ?
         <p class="bad"><strong>❌ Not yet. Keep trying!</strong></p>
       {% endif %}
 
-      {% if feedback.engine_summary and session.get('role') == 'teacher' %}
-        <p style="font-size:13px;color:#555;">
-          Engine (standard-level): {{ feedback.engine_summary }}
-        </p>
-      {% endif %}
-      {% if session.get('role') == 'teacher' %}<p style="font-size:13px;color:#555;">
-        Debug target: objective={{ objective_id }}
-      </p>{% endif %}
       <hr>
     {% endif %}
   {% endif %}
@@ -11808,15 +12991,16 @@ WHERE o.standard_id = ?
         growth_view=growth_view,
         plant_view=plant_view,
         transition_announcement=transition_announcement,
+        preview_exit_csrf=owner_csrf_token(),
         enrolled_classes=enrolled_classes,
         flag_categories=QUESTION_FLAG_CATEGORIES,
         flag_comment_max_length=QUESTION_FLAG_COMMENT_MAX_LENGTH,
         account_label=account_display_label(conn, current_user()),
     )
 
-# ---------- Diagnostic Arena ----------
+# ---------- Adaptive Assessment Simulator (legacy /diagnostic routes) ----------
 @app.post("/diagnostic/start")
-@require_teacher
+@owner_required
 def diagnostic_start():
     """
     Teacher starts a diagnostic session for a given student_id.
@@ -11826,8 +13010,8 @@ def diagnostic_start():
 
     student_id = (request.form.get("student_id") or "").strip()
     if not student_id:
-        flash("Missing student_id for diagnostic start.")
-        return redirect(url_for("index"))
+        flash("Missing student ID for simulator start.")
+        return redirect(url_for("owner_developer_diagnostics"))
     require_teacher_student_access(conn, student_id)
 
     session_id = create_diagnostic_session(conn, student_id)
@@ -11836,7 +13020,7 @@ def diagnostic_start():
     return redirect(url_for("diagnostic_session_v2", session_id=session_id))
 
 @app.route("/diagnostic/<session_id>", methods=["GET", "POST"])
-@require_teacher
+@owner_required
 def diagnostic_session(session_id):
     """
     Simple diagnostic loop:
@@ -11851,8 +13035,8 @@ def diagnostic_session(session_id):
         (session_id,),
     ).fetchone()
     if not sess:
-        flash("Diagnostic session not found.")
-        return redirect(url_for("index"))
+        flash("Simulator session not found.")
+        return redirect(url_for("owner_developer_diagnostics"))
 
     student_id = sess["student_id"]
     require_teacher_student_access(conn, student_id)
@@ -11922,7 +13106,7 @@ def diagnostic_session(session_id):
           <h2>✅ Diagnostic Complete</h2>
           <p><strong>Student:</strong> {{ student_id }}</p>
           <p><strong>Score:</strong> {{ correct }} / {{ total }}</p>
-          <p><a href="{{ url_for('index') }}">⬅ Back to dashboard</a></p>
+          <p><a href="{{ url_for('owner_developer_diagnostics') }}">⬅ Back to Developer &amp; Diagnostics</a></p>
         </div>
         """
         return render_template_string(done_html, student_id=student_id, total=total, correct=correct)
@@ -11957,14 +13141,14 @@ def diagnostic_session(session_id):
       <p style="margin-top:18px;font-size:12px;color:#666;">
         Session: {{ session_id }}
       </p>
-      <p><a href="{{ url_for('index') }}">⬅ Back to dashboard</a></p>
+      <p><a href="{{ url_for('owner_developer_diagnostics') }}">⬅ Back to Developer &amp; Diagnostics</a></p>
     </div>
     """
     return render_template_string(html, session_id=session_id, student_id=student_id, item=next_item)
 
-# ---------- Diagnostic Arena (MVP) ----------
+# ---------- Adaptive Assessment Simulator (legacy /diagnostic route) ----------
 @app.route("/diagnostic", methods=["GET", "POST"])
-@require_teacher
+@owner_required
 def diagnostic_home():
     conn = get_conn()
 
@@ -11992,7 +13176,7 @@ def diagnostic_home():
 
     html = """
     <!doctype html>
-    <title>Diagnostic Arena</title>
+    <title>Adaptive Assessment Simulator</title>
     <style>
       body{font-family:Arial, Helvetica, sans-serif;margin:24px;background:#f3f4f6;}
       .card{max-width:700px;margin:0 auto;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:16px;}
@@ -12003,7 +13187,7 @@ def diagnostic_home():
     </style>
 
     <div class="card">
-      <h2 style="margin-top:0;">View Diagnostic Arena (MVP)</h2>
+      <h2 style="margin-top:0;">Adaptive Assessment Simulator</h2>
       <p style="color:#555;font-size:13px;margin-top:0;">
         Start a diagnostic session and record results.
       </p>
@@ -12039,7 +13223,7 @@ def diagnostic_home():
       </form>
 
       <p style="margin-top:14px;">
-        <a href="{{ url_for('index') }}">⬅ Back to dashboard</a>
+        <a href="{{ url_for('owner_developer_diagnostics') }}">⬅ Back to Developer &amp; Diagnostics</a>
       </p>
     </div>
     """
@@ -12054,7 +13238,7 @@ def diagnostic_home():
 
 
 @app.route("/diagnostic/session/<session_id>", methods=["GET", "POST"], endpoint="diagnostic_session_v2")
-@require_teacher
+@owner_required
 def diagnostic_session_v2(session_id):
     conn = get_conn()
 
@@ -12129,7 +13313,7 @@ def diagnostic_session_v2(session_id):
           <p>Session: <strong>{{ session_id }}</strong></p>
           <p>Answered: <strong>{{ answered_count }}</strong></p>
           <p><a href="{{ url_for('diagnostic_home') }}">Start another diagnostic</a></p>
-          <p><a href="{{ url_for('index') }}">⬅ Back to dashboard</a></p>
+          <p><a href="{{ url_for('owner_developer_diagnostics') }}">⬅ Back to Developer &amp; Diagnostics</a></p>
         </div>
         """
         return render_template_string(html_done, session_id=session_id, answered_count=answered_count)
@@ -12176,11 +13360,11 @@ def diagnostic_session_v2(session_id):
 
 # ---------- User admin ----------
 @app.route("/user_admin", methods=["GET", "POST"])
-@require_teacher
+@owner_required
 def user_admin():
     if request.method == "GET":
-        flash("Teachers manage student memberships from their class rosters.")
-        return redirect(url_for("index"))
+        flash("Legacy user administration is managed from Account Administration.")
+        return redirect(url_for("owner_account_administration"))
     abort(403)
 
 
@@ -12278,13 +13462,14 @@ def teacher_archive_enrollment(class_id, student_id):
 @app.get("/admin_action")
 @owner_required
 def admin_action_landing():
-    flash("Use the Maintenance / Data Tools panel on the dashboard to run admin actions.")
-    return redirect(url_for("index"))
+    flash("Use Data and Maintenance to run Owner maintenance actions.")
+    return redirect(url_for("owner_data_maintenance"))
 
 
 @app.post("/admin_action")
 @owner_required
 def admin_action():
+    require_owner_csrf()
     conn = get_conn()
     action = request.form.get("action")
 
@@ -12339,22 +13524,23 @@ def admin_action():
         flash(
             "All attempts and responses have been cleared. Students and content were kept."
         )
-        return redirect(url_for("index"))
+        return redirect(url_for("owner_data_maintenance"))
 
     flash("Unknown admin action.")
-    return redirect(url_for("index"))
+    return redirect(url_for("owner_data_maintenance"))
 
 
 # ---------- Restore attempts ----------
 @app.post("/restore_attempts")
 @owner_required
 def restore_attempts():
+    require_owner_csrf()
     conn = get_conn()
     file = request.files.get("file")
 
     if not file or file.filename == "":
         flash("Please choose a CSV file to restore from.")
-        return redirect(url_for("index"))
+        return redirect(url_for("owner_data_maintenance"))
 
     try:
         conn.execute("DELETE FROM attempts")
@@ -12419,7 +13605,7 @@ def restore_attempts():
         conn.rollback()
         flash(f"Error restoring attempts: {e}")
 
-    return redirect(url_for("index"))
+    return redirect(url_for("owner_data_maintenance"))
 
 
 # ---------- Export CSV ----------
@@ -13276,7 +14462,7 @@ h1,h2{color:#234b35}.muted{color:#647067;font-size:13px}.grid{display:grid;grid-
           Grade band: {{ standard['grade_band'] or '—' }}
         {% endif %}
       </p>
-      <p><a href="{{ url_for('index') }}" class="btn">⬅ Back to dashboard</a></p>
+      <p><a href="{{ url_for('owner_developer_diagnostics') }}" class="btn">⬅ Back to Developer &amp; Diagnostics</a></p>
     </div>
 
     <div class="grid">
@@ -13578,10 +14764,11 @@ def error_list():
     {% endwith %}
 
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;">
-      <a href="{{ url_for('index') }}" class="btn">⬅ Back to dashboard</a>
+      <a href="{{ url_for('owner_developer_diagnostics') }}" class="btn">⬅ Back to Developer &amp; Diagnostics</a>
       <form method="post"
             action="{{ url_for('clear_errors') }}"
             onsubmit="return confirm('Clear all logged errors? This cannot be undone.');">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button type="submit" class="btn" style="background:#dc2626;">
           🗑 Clear all errors
         </button>
@@ -13625,6 +14812,7 @@ def error_list():
         html,
         rows=rows,
         datetime_format=datetime_format,
+        csrf_token=owner_csrf_token(),
     )
 
 @app.post("/errors/clear")
@@ -13633,6 +14821,7 @@ def clear_errors():
     """
     Delete all rows from error_logs. Teacher-only.
     """
+    require_owner_csrf()
     conn = get_conn()
     conn.execute("DELETE FROM error_logs")
     conn.commit()

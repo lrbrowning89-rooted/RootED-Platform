@@ -148,7 +148,7 @@ class PeopleAccessTests(unittest.TestCase):
 
     def test_owner_can_view_people_access_with_admin_fields_only(self):
         self.login_as(1)
-        response = self.client.get("/owner/people-access")
+        response = self.client.get("/owner/people-access?status=all")
         page = response.data.decode()
 
         self.assertEqual(response.status_code, 200)
@@ -176,6 +176,84 @@ class PeopleAccessTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertNotIn(b"Pending Name", response.data)
 
+    def test_people_access_status_filters_and_search(self):
+        self.conn.execute("UPDATE users SET is_active=0 WHERE id=4")
+        self.conn.commit()
+        self.login_as(1)
+        active = self.client.get("/owner/people-access").get_data(as_text=True)
+        deactivated = self.client.get(
+            "/owner/people-access?status=deactivated"
+        ).get_data(as_text=True)
+        all_rows = self.client.get("/owner/people-access?status=all").get_data(as_text=True)
+        filtered = self.client.get(
+            "/owner/people-access?status=deactivated&q=teacher@example.org"
+        ).get_data(as_text=True)
+        self.assertNotIn("Student Name", active)
+        self.assertIn("Student Name", deactivated)
+        self.assertIn("Student Name", all_rows)
+        self.assertIn("Owner Name", all_rows)
+        self.assertNotIn("Student Name", filtered)
+
+    def test_pending_preauthorization_can_be_deleted_owner_only_with_csrf(self):
+        self.login_as(1)
+        token = self.owner_csrf_from("/owner/people-access")
+        self.client.post(
+            "/owner/people-access/teacher-authorizations",
+            data={"csrf_token": token, "email": "Case@Test.Example"},
+        )
+        item = self.conn.execute(
+            "SELECT * FROM teacher_email_authorizations WHERE normalized_email='case@test.example'"
+        ).fetchone()
+        self.assertIsNotNone(item)
+        missing = self.client.post(
+            f"/owner/people-access/teacher-authorizations/{item['email_authorization_id']}/delete"
+        )
+        self.assertEqual(missing.status_code, 400)
+        self.login_as(3)
+        denied = self.client.post(
+            f"/owner/people-access/teacher-authorizations/{item['email_authorization_id']}/delete",
+            data={"csrf_token": token},
+        )
+        self.assertEqual(denied.status_code, 403)
+        self.login_as(1)
+        deleted = self.client.post(
+            f"/owner/people-access/teacher-authorizations/{item['email_authorization_id']}/delete",
+            data={"csrf_token": token},
+        )
+        self.assertEqual(deleted.status_code, 302)
+        status = self.conn.execute(
+            "SELECT status FROM teacher_email_authorizations WHERE email_authorization_id=?",
+            (item["email_authorization_id"],),
+        ).fetchone()["status"]
+        self.assertEqual(status, "revoked")
+
+    def test_permanent_deletion_anonymizes_deactivated_non_owner_and_preserves_history(self):
+        self.conn.execute("UPDATE users SET is_active=0 WHERE id=4")
+        self.conn.commit()
+        self.login_as(1)
+        token = self.owner_csrf_from("/owner/people-access?status=deactivated")
+        self.assertEqual(
+            self.client.post(
+                "/owner/people-access/4/delete",
+                data={"csrf_token": token, "confirmation": "wrong"},
+            ).status_code,
+            400,
+        )
+        result = self.client.post(
+            "/owner/people-access/4/delete",
+            data={"csrf_token": token, "confirmation": "DELETE"},
+        )
+        self.assertEqual(result.status_code, 302)
+        target = self.conn.execute("SELECT * FROM users WHERE id=4").fetchone()
+        self.assertTrue(target["username"].startswith("deleted-user-4-"))
+        self.assertEqual(target["is_active"], 0)
+        self.assertIsNone(target["sso_email"])
+        self.assertEqual(
+            self.conn.execute(
+                "SELECT COUNT(*) FROM account_lifecycle_audit_log WHERE target_user_id=4"
+            ).fetchone()[0],
+            1,
+        )
     def test_teacher_authorization_requires_owner_confirmation_and_csrf(self):
         self.login_as(1)
         confirmation = self.client.get(

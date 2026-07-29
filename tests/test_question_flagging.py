@@ -1,6 +1,7 @@
 import gc
 import importlib
 import os
+import re
 import sqlite3
 import sys
 import tempfile
@@ -49,9 +50,12 @@ class QuestionFlaggingTests(unittest.TestCase):
 
     def clear_tables(self):
         for table in [
+            "impersonated_action_audit",
+            "impersonation_audit",
             "access_authorization_audit_log",
             "question_flags",
             "user_instructional_authorizations",
+            "user_platform_roles",
             "student_objective_state",
             "progress_state",
             "responses",
@@ -165,6 +169,17 @@ class QuestionFlaggingTests(unittest.TestCase):
             sess["username"] = username
             sess["role"] = role
             sess["current_mode"] = "question"
+
+    def grant_owner(self, user_id=1):
+        self.conn.execute(
+            """
+            INSERT INTO user_platform_roles
+              (user_id, platform_role, granted_at, grant_note)
+            VALUES (?, 'owner', 123456, 'Manual-attempt diagnostic test')
+            """,
+            (user_id,),
+        )
+        self.conn.commit()
 
     def flag_rows(self):
         return self.conn.execute(
@@ -563,15 +578,13 @@ class QuestionFlaggingTests(unittest.TestCase):
         self.assertIn(b"No resolved reports.", resolved.data)
 
     def test_record_attempt_uses_shared_question_reference_and_content_first_labels(self):
+        self.grant_owner()
         self.login_as(1, "teacher1", "teacher")
 
-        page = self.client.get(
-            "/dashboard?objective_id=MS-LS1-1B&question_id=Q1B&response=C"
-        )
+        page = self.client.get("/teacher/question_preview?question_id=Q1B")
 
         self.assertEqual(page.status_code, 200)
-        self.assertIn(b'<article class="question-reference"', page.data)
-        self.assertIn(b'<div class="question-reference-label">Question</div>', page.data)
+        self.assertIn(b"Teacher Question Preview", page.data)
         self.assertIn(b"Launch question 1B", page.data)
         self.assertIn(b"MS-LS1-1B", page.data)
         self.assertIn(b"Cells form tissues.", page.data)
@@ -585,19 +598,17 @@ class QuestionFlaggingTests(unittest.TestCase):
             page.data,
         )
         self.assertNotIn(b"Q1B - Launch question 1B", page.data)
-        self.assertIn(b'<option value="Q1B" selected>', page.data)
-        self.assertIn(b'<option value="C" selected>', page.data)
+        self.assertIn(b"Read-only student rendering for teacher review.", page.data)
 
     def test_record_attempt_question_reference_falls_back_without_objective_title(self):
         self.conn.execute(
             "UPDATE objectives SET objective_text = '' WHERE objective_id = 'MS-LS1-1B'"
         )
         self.conn.commit()
+        self.grant_owner()
         self.login_as(1, "teacher1", "teacher")
 
-        page = self.client.get(
-            "/dashboard?objective_id=MS-LS1-1B&question_id=Q1B"
-        )
+        page = self.client.get("/teacher/question_preview?question_id=Q1B")
 
         self.assertEqual(page.status_code, 200)
         self.assertIn(b"Launch question 1B", page.data)
@@ -607,6 +618,7 @@ class QuestionFlaggingTests(unittest.TestCase):
         self.assertNotIn(b"No objective text", page.data)
 
     def test_record_attempt_missing_question_rejected_and_state_preserved(self):
+        self.grant_owner()
         self.login_as(1, "teacher1", "teacher")
         before = {
             "attempts": self.table_count("attempts"),
@@ -661,13 +673,11 @@ class QuestionFlaggingTests(unittest.TestCase):
             b"Selected question is no longer available. Choose an available launch question before saving an attempt.",
             response.data,
         )
-        self.assertIn(b"Question no longer available", response.data)
-        self.assertIn(b"Q_RETIRED", response.data)
-        self.assertIn(b'<option value="Q_RETIRED" selected>', response.data)
-        self.assertIn(b'<option value="B" selected>', response.data)
+        self.assertNotIn(b"Q_RETIRED", response.data)
         self.assertEqual(after, before)
 
     def test_record_attempt_success_still_records_selected_question(self):
+        self.grant_owner()
         self.login_as(1, "teacher1", "teacher")
 
         response = self.client.post(
@@ -695,6 +705,140 @@ class QuestionFlaggingTests(unittest.TestCase):
         self.assertIsNotNone(response_row)
         self.assertEqual(attempt["student_id"], "S1")
         self.assertEqual(response_row["correct"], 1)
+
+    def test_teacher_student_mode_advances_in_session_and_clears_on_exit(self):
+        self.conn.execute(
+            """
+            INSERT INTO questions
+              (question_id, objective_id, stem, choice_a, choice_b, choice_c,
+               choice_d, answer_key)
+            VALUES ('Q1A-SECOND', 'MS-LS1-1A', 'Launch question 1A second',
+                    'A', 'B', 'C', 'D', 'B')
+            """
+        )
+        self.conn.commit()
+        self.login_as(1, "teacher1", "teacher")
+        before = {
+            table: self.table_count(table)
+            for table in (
+                "attempts",
+                "responses",
+                "progress_state",
+                "student_objective_state",
+                "student_growth_progress",
+                "student_question_deliveries",
+                "routing_level_attempts",
+            )
+        }
+        page = self.client.get("/student?student_id=S1&objective_id=MS-LS1-1A")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"Student Mode Preview", page.data)
+        self.assertIn(b"Launch question 1A", page.data)
+        answer = self.client.post(
+            "/student",
+            data={
+                "action": "answer",
+                "student_id": "S1",
+                "objective_id": "MS-LS1-1A",
+                "question_id": "Q1A",
+                "response": "A",
+            },
+        )
+        self.assertEqual(answer.status_code, 200)
+        self.assertNotIn(b"Preview only", answer.data)
+        self.assertNotIn(b"Engine (standard-level)", answer.data)
+        self.assertNotIn(b"Debug target", answer.data)
+        self.assertIn(b"Launch question 1A second", answer.data)
+        self.assertNotIn(
+            b'name="question_id" value="Q1A"',
+            answer.data,
+        )
+        self.assertIn(b"Leave Student Mode", answer.data)
+        after = {table: self.table_count(table) for table in before}
+        self.assertEqual(after, before)
+        with self.client.session_transaction() as preview_session:
+            preview_state = preview_session["student_mode_preview"]
+            self.assertEqual(
+                [item["question_id"] for item in preview_state["responses"]],
+                ["Q1A"],
+            )
+            self.assertEqual(
+                preview_state["current_question_id"],
+                "Q1A-SECOND",
+            )
+            exit_token = preview_session["owner_csrf_token"]
+        dashboard = self.client.post(
+            "/student",
+            data={"action": "exit_preview", "csrf_token": exit_token},
+            follow_redirects=True,
+        )
+        self.assertEqual(dashboard.status_code, 200)
+        self.assertIn(b"RootED Teacher Dashboard", dashboard.data)
+        self.assertNotIn(b"Developer / Debug", dashboard.data)
+        with self.client.session_transaction() as ended_session:
+            self.assertNotIn("student_mode_preview", ended_session)
+
+    def test_teacher_student_mode_adaptive_routing_remains_session_only(self):
+        self.conn.executemany(
+            """
+            INSERT INTO questions
+              (question_id, objective_id, stem, choice_a, choice_b, choice_c,
+               choice_d, answer_key)
+            VALUES (?, 'MS-LS1-1A', ?, 'A', 'B', 'C', 'D', 'A')
+            """,
+            [
+                (f"Q1A-{number}", f"Preview adaptive question {number}")
+                for number in range(2, 9)
+            ],
+        )
+        self.conn.commit()
+        self.login_as(1, "teacher1", "teacher")
+        protected_tables = (
+            "attempts",
+            "responses",
+            "progress_state",
+            "student_objective_state",
+            "student_growth_progress",
+            "student_question_deliveries",
+            "routing_level_attempts",
+        )
+        before = {table: self.table_count(table) for table in protected_tables}
+        page = self.client.get("/student?student_id=S1&objective_id=MS-LS1-1A")
+
+        delivered = []
+        for _ in range(7):
+            match = re.search(
+                rb'name="question_id" value="([^"]+)"',
+                page.data,
+            )
+            self.assertIsNotNone(match)
+            question_id = match.group(1).decode()
+            if delivered:
+                self.assertNotEqual(question_id, delivered[-1])
+            delivered.append(question_id)
+            page = self.client.post(
+                "/student",
+                data={
+                    "action": "answer",
+                    "student_id": "S1",
+                    "objective_id": "MS-LS1-1A",
+                    "question_id": question_id,
+                    "response": "A",
+                },
+            )
+            self.assertEqual(page.status_code, 200)
+
+        with self.client.session_transaction() as preview_session:
+            preview_state = preview_session["student_mode_preview"]
+            self.assertEqual(preview_state["level"], 2)
+            self.assertEqual(
+                preview_state["routing_history"][-1]["action"],
+                "advance_level",
+            )
+        self.assertEqual(
+            {table: self.table_count(table) for table in protected_tables},
+            before,
+        )
 
     def test_student_friendly_category_labels_appear_and_form_is_hidden(self):
         self.login_as(3, "student1", "student")

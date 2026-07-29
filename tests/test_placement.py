@@ -1029,7 +1029,9 @@ class PlacementBridgeTests(unittest.TestCase):
             sess["current_mode"] = "question"
         self.client.get("/student")
         delivery_before_logout = self.active_delivery()
-        self.client.get("/logout")
+        with self.client.session_transaction() as session:
+            session["logout_csrf_token"] = "logout-test-token"
+        self.client.post("/logout", data={"csrf_token": "logout-test-token"})
         self.login_as(3, "student1", "student")
         self.client.post("/student", data={"action": "continue_learning"})
 
@@ -1613,7 +1615,9 @@ class PlacementBridgeTests(unittest.TestCase):
         for response_number in range(1, 5):
             _, delivery = self.open_student_question()
             token = delivery["submission_token"]
-            self.client.get("/logout")
+            with self.client.session_transaction() as session:
+                session["logout_csrf_token"] = "logout-test-token"
+            self.client.post("/logout", data={"csrf_token": "logout-test-token"})
             self.login_as(3, "student1", "student")
             with self.client.session_transaction() as sess:
                 sess["current_mode"] = "question"

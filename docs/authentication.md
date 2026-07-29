@@ -49,6 +49,29 @@ secret-free `.env.example`. Never place real credentials in `.env.example`.
   work/school accounts, or a tenant ID to restrict sign-in to one organization
 - `ALLOW_SSO_AUTO_CREATE=true`: creates pending, restricted RootED accounts after valid OIDC login
 
+## Student onboarding and account administration
+
+The normal student workflow is Google or Microsoft sign-in followed by an active
+class join code. Teachers create and manage their own classes and share those
+codes; they do not create global student records, login credentials, identities,
+platform roles, or instructional authorizations.
+
+Owners may create an exceptional local account from the Owner Account
+Administration page for controlled testing, support, recovery, or exceptional
+onboarding. Account identity, platform authority, instructional authorization,
+and optional class membership are separate choices and are written in one
+transaction. New local accounts never receive Owner authority implicitly.
+
+Future roster pre-provisioning is intentionally deferred. A later design must
+use class-scoped roster placeholders, server-generated internal student IDs, and
+an explicit invitation or claim-linking flow. It must not link identities using
+arbitrary name or email matching.
+
+Owner impersonation is documented in
+`docs/platform_roles_and_impersonation.md`. It never requests a target password:
+the effective target identity is authorized normally while the acting Owner is
+preserved in a server-side audit record. Logout always terminates impersonation.
+
 Local maintenance credentials are never stored in source control. The
 `fix_login.py` helper requires `ROOTED_MAINTENANCE_USERNAME` and
 `ROOTED_MAINTENANCE_PASSWORD` in its process environment and never prints the
