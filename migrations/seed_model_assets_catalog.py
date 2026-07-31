@@ -149,7 +149,7 @@ CATALOG = [
     },
     {
         "model_id": "MS-LS1-1B_model_cell_theory_basic_01",
-        "src": "model_assets/ms-ls1-1b-cell-theory-basic-01.svg",
+        "src": "model_assets/ms-ls1-1b-model-cell-theory-basic-01.png",
         "title": "Basic Cell Theory Model",
         "alt_text": "A model showing living things made of cells to support basic cell theory.",
         "caption": "Supports questions about evidence for the idea that organisms are made of cells.",
