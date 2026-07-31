@@ -13,6 +13,7 @@ consistently:
     python -m migrations.add_assignments --database /exact/path/to/rooted.db
     python -m migrations.add_account_lifecycle_and_objective_display
     python -m migrations.add_model_assets_table --database "$NGSS_DB"
+    python -m migrations.seed_model_assets_catalog --database "$NGSS_DB"
     python -m migrations.add_student_growth_progress
     python -m migrations.add_student_question_deliveries
     python -m migrations.add_routing_level_attempts "$NGSS_DB"
@@ -112,6 +113,98 @@ Before any production write:
 
        ok
        1
+
+Model assets catalog seed
+=========================
+
+Run this only after the `model_assets` table exists. The catalog seed requires
+an explicit database path and writes only rows in the `model_assets` table. It
+does not create image files, edit question content, or change adaptive behavior.
+
+Before any production write:
+
+1. Confirm the configured target:
+
+       echo "$NGSS_DB"
+
+   Expected:
+
+       /var/data/ngss.db
+
+2. Create an online SQLite backup on the persistent disk:
+
+       mkdir -p /var/data/backups
+       python -c "import datetime,os,sqlite3; src=os.environ['NGSS_DB']; stamp=datetime.datetime.now(datetime.UTC).strftime('%Y%m%dT%H%M%SZ'); dst=f'/var/data/backups/ngss-before-model-assets-catalog-{stamp}.db'; source=sqlite3.connect(src); backup=sqlite3.connect(dst); source.backup(backup); backup.close(); source.close(); print(dst)"
+
+3. Verify the backup:
+
+       export BACKUP=/var/data/backups/ngss-before-model-assets-catalog-YYYYMMDDTHHMMSSZ.db
+       stat -c 'path=%n size=%s modified=%y' "$BACKUP"
+       python -c "import os,sqlite3; p=os.environ['BACKUP']; db=sqlite3.connect(f'file:{p}?mode=ro',uri=True); print(db.execute('PRAGMA integrity_check').fetchone()[0]); db.close()"
+
+   Expected:
+
+       ok
+
+4. Rehearse against a separate copy of the verified backup:
+
+       REHEARSAL=/var/data/backups/ngss-model-assets-catalog-rehearsal.db
+       cp --reflink=auto "$BACKUP" "$REHEARSAL"
+       python -m migrations.seed_model_assets_catalog --database "$REHEARSAL" --dry-run
+       python -m migrations.seed_model_assets_catalog --database "$REHEARSAL"
+       python -m migrations.seed_model_assets_catalog --database "$REHEARSAL"
+       python -m migrations.seed_model_assets_catalog --database "$REHEARSAL" --verify-only
+
+5. Run the production dry-run:
+
+       python -m migrations.seed_model_assets_catalog \
+         --database "$NGSS_DB" \
+         --dry-run
+
+   Expected ending:
+
+       DRY RUN - no changes committed
+
+6. Apply the catalog seed:
+
+       python -m migrations.seed_model_assets_catalog \
+         --database "$NGSS_DB"
+
+   Expected ending on first run:
+
+       APPLIED
+
+   Expected ending if already current:
+
+       NO CHANGE
+
+7. Verify without writing:
+
+       python -m migrations.seed_model_assets_catalog \
+         --database "$NGSS_DB" \
+         --verify-only
+
+   Expected ending:
+
+       VERIFY OK
+
+8. After the seed verifies, confirm the approved one-row repair still verifies:
+
+       python -m migrations.repair_cell_theory_model_asset \
+         --database "$NGSS_DB" \
+         --static-root /opt/render/project/src/app_core/static \
+         --verify-only
+
+   Expected ending:
+
+       VERIFY OK
+
+9. Refresh the Teacher Question Preview:
+
+       /teacher/question_preview?question_id=Q_MSLS1_1_B_006
+
+   Confirm the Basic Cell Theory Model image renders between the prompt and
+   answer choices.
 
 Launch content production runbook
 =================================

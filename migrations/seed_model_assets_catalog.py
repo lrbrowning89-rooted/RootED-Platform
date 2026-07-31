@@ -1,10 +1,8 @@
+import argparse
 import sqlite3
+import sys
 import time
 from pathlib import Path
-
-ROOT = Path(__file__).resolve().parents[1]
-DB = ROOT / "data" / "ngss.db"
-NOW = int(time.time())
 
 CATALOG = [
     {
@@ -211,20 +209,53 @@ def require(condition, message):
         raise RuntimeError(message)
 
 
-with sqlite3.connect(DB) as conn:
-    conn.row_factory = sqlite3.Row
+def table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+    return (
+        conn.execute(
+            """
+            SELECT 1
+            FROM sqlite_master
+            WHERE type = 'table'
+              AND name = ?
+            LIMIT 1
+            """,
+            (table_name,),
+        ).fetchone()
+        is not None
+    )
 
-    table_exists = conn.execute(
-        """
-        SELECT 1
-        FROM sqlite_master
-        WHERE type = 'table'
-          AND name = 'model_assets'
-        LIMIT 1
-        """
-    ).fetchone()
-    require(table_exists, "model_assets table is missing. Run add_model_assets_table.py first.")
 
+def table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
+    if not table_exists(conn, table_name):
+        return set()
+    return {row["name"] for row in conn.execute(f"PRAGMA table_info({table_name})")}
+
+
+def validate_schema(conn: sqlite3.Connection) -> None:
+    require(table_exists(conn, "model_assets"), "model_assets table is missing. Run add_model_assets_table first.")
+    required_asset_columns = {
+        "model_id",
+        "asset_type",
+        "src",
+        "alt_text",
+        "title",
+        "caption",
+        "created_at",
+        "updated_at",
+    }
+    missing_asset_columns = sorted(required_asset_columns - table_columns(conn, "model_assets"))
+    require(
+        not missing_asset_columns,
+        "model_assets missing required column(s): " + ", ".join(missing_asset_columns),
+    )
+    require(table_exists(conn, "question_metadata"), "question_metadata table is missing.")
+    require(
+        "model_id" in table_columns(conn, "question_metadata"),
+        "question_metadata.model_id column is missing.",
+    )
+
+
+def validate_catalog_against_question_metadata(conn: sqlite3.Connection) -> None:
     db_model_ids = {
         row["model_id"]
         for row in conn.execute(
@@ -250,18 +281,57 @@ with sqlite3.connect(DB) as conn:
         + ", ".join(extra_in_catalog),
     )
 
+
+def existing_asset_row(conn: sqlite3.Connection, model_id: str):
+    return conn.execute(
+        """
+        SELECT model_id, asset_type, src, alt_text, title, caption, created_at, updated_at
+        FROM model_assets
+        WHERE model_id = ?
+        LIMIT 1
+        """,
+        (model_id,),
+    ).fetchone()
+
+
+def row_matches_catalog(row, catalog_row: dict) -> bool:
+    if not row:
+        return False
+    return (
+        row["asset_type"] == "image"
+        and row["src"] == catalog_row["src"]
+        and row["alt_text"] == catalog_row["alt_text"]
+        and row["title"] == catalog_row["title"]
+        and row["caption"] == catalog_row["caption"]
+    )
+
+
+def plan_catalog_seed(conn: sqlite3.Connection) -> dict:
     inserted = 0
     updated = 0
+    unchanged = 0
+    changes = []
     for row in CATALOG:
-        existing = conn.execute(
-            "SELECT 1 FROM model_assets WHERE model_id = ?",
-            (row["model_id"],),
-        ).fetchone()
-        if existing:
-            updated += 1
-        else:
+        existing = existing_asset_row(conn, row["model_id"])
+        if not existing:
             inserted += 1
+            changes.append((row["model_id"], "insert"))
+        elif row_matches_catalog(existing, row):
+            unchanged += 1
+        else:
+            updated += 1
+            changes.append((row["model_id"], "update"))
+    return {
+        "inserted": inserted,
+        "updated": updated,
+        "unchanged": unchanged,
+        "total": len(CATALOG),
+        "changes": changes,
+    }
 
+
+def apply_catalog_seed(conn: sqlite3.Connection, now: int) -> None:
+    for row in CATALOG:
         conn.execute(
             """
             INSERT INTO model_assets
@@ -281,14 +351,130 @@ with sqlite3.connect(DB) as conn:
                 row["alt_text"],
                 row["title"],
                 row["caption"],
-                NOW,
-                NOW,
+                now,
+                now,
             ),
         )
 
-    conn.commit()
 
-print(
-    f"Seeded model_assets catalog: {inserted} inserted, {updated} updated, "
-    f"{len(CATALOG)} total catalog rows."
-)
+def seed_model_assets_catalog(
+    database: Path,
+    *,
+    dry_run: bool = False,
+    verify_only: bool = False,
+) -> dict:
+    conn = sqlite3.connect(database)
+    conn.row_factory = sqlite3.Row
+    try:
+        validate_schema(conn)
+        validate_catalog_against_question_metadata(conn)
+        plan = plan_catalog_seed(conn)
+        result = {
+            "database": str(database),
+            "inserted": plan["inserted"],
+            "updated": plan["updated"],
+            "unchanged": plan["unchanged"],
+            "total": plan["total"],
+            "planned_action": "no-op"
+            if plan["inserted"] == 0 and plan["updated"] == 0
+            else "upsert-catalog",
+            "changed": False,
+        }
+
+        if verify_only:
+            if plan["inserted"] or plan["updated"]:
+                raise RuntimeError(
+                    "Verification failed: "
+                    f"{plan['inserted']} missing row(s), {plan['updated']} stale row(s)."
+                )
+            result["verified"] = True
+            return result
+
+        if dry_run or result["planned_action"] == "no-op":
+            return result
+
+        apply_catalog_seed(conn, int(time.time()))
+        conn.commit()
+        after_plan = plan_catalog_seed(conn)
+        if after_plan["inserted"] or after_plan["updated"]:
+            raise RuntimeError(
+                "Seed did not converge: "
+                f"{after_plan['inserted']} missing row(s), {after_plan['updated']} stale row(s)."
+            )
+        result["changed"] = True
+        result["unchanged_after"] = after_plan["unchanged"]
+        return result
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def print_result(result: dict, *, dry_run: bool, verify_only: bool) -> None:
+    print("RootED model_assets catalog seed")
+    print(f"database: {result['database']}")
+    print(f"catalog_rows: {result['total']}")
+    print(f"planned_action: {result['planned_action']}")
+    print(f"to_insert: {result['inserted']}")
+    print(f"to_update: {result['updated']}")
+    print(f"unchanged: {result['unchanged']}")
+    if verify_only:
+        print("VERIFY OK")
+    elif dry_run:
+        print("DRY RUN - no changes committed")
+    elif result.get("changed"):
+        print("APPLIED")
+    else:
+        print("NO CHANGE")
+
+
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Seed RootED model_assets catalog rows on an explicit SQLite database."
+    )
+    parser.add_argument(
+        "--database",
+        required=True,
+        type=Path,
+        help="Explicit path to the SQLite database to seed.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report planned catalog inserts/updates without writing.",
+    )
+    parser.add_argument(
+        "--verify-only",
+        action="store_true",
+        help="Verify catalog rows are already present and current without writing.",
+    )
+    args = parser.parse_args(argv)
+    if args.dry_run and args.verify_only:
+        parser.error("--dry-run and --verify-only cannot be used together")
+    return args
+
+
+def main(argv=None) -> int:
+    args = parse_args(argv)
+    if not args.database.exists():
+        print(f"ERROR: database does not exist: {args.database}", file=sys.stderr)
+        return 2
+    if not args.database.is_file():
+        print(f"ERROR: database path is not a file: {args.database}", file=sys.stderr)
+        return 2
+    try:
+        result = seed_model_assets_catalog(
+            args.database,
+            dry_run=args.dry_run,
+            verify_only=args.verify_only,
+        )
+        print_result(result, dry_run=args.dry_run, verify_only=args.verify_only)
+        return 0
+    except Exception as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
