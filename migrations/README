@@ -12,7 +12,7 @@ consistently:
     python -m migrations.add_teacher_email_authorizations --database /exact/path/to/rooted.db
     python -m migrations.add_assignments --database /exact/path/to/rooted.db
     python -m migrations.add_account_lifecycle_and_objective_display
-    python -m migrations.add_model_assets_table
+    python -m migrations.add_model_assets_table --database "$NGSS_DB"
     python -m migrations.add_student_growth_progress
     python -m migrations.add_student_question_deliveries
     python -m migrations.add_routing_level_attempts "$NGSS_DB"
@@ -29,6 +29,89 @@ a readable production backup has been created.
 
 The assignments migration is idempotent and also adds/backfills `assign_at`
 from `created_at` for databases created before assignment scheduling existed.
+
+Model assets table migration
+============================
+
+The model assets table migration must never be run without an explicit
+database path. On Render, use the persistent SQLite database path from
+`NGSS_DB`, not the repository-local `data/ngss.db`.
+
+Before any production write:
+
+1. Confirm the configured target:
+
+       echo "$NGSS_DB"
+
+   Expected:
+
+       /var/data/ngss.db
+
+2. Create an online SQLite backup on the persistent disk:
+
+       mkdir -p /var/data/backups
+       python -c "import datetime,os,sqlite3; src=os.environ['NGSS_DB']; stamp=datetime.datetime.now(datetime.UTC).strftime('%Y%m%dT%H%M%SZ'); dst=f'/var/data/backups/ngss-before-model-assets-table-{stamp}.db'; source=sqlite3.connect(src); backup=sqlite3.connect(dst); source.backup(backup); backup.close(); source.close(); print(dst)"
+
+3. Verify the backup:
+
+       export BACKUP=/var/data/backups/ngss-before-model-assets-table-YYYYMMDDTHHMMSSZ.db
+       stat -c 'path=%n size=%s modified=%y' "$BACKUP"
+       python -c "import os,sqlite3; p=os.environ['BACKUP']; db=sqlite3.connect(f'file:{p}?mode=ro',uri=True); print(db.execute('PRAGMA integrity_check').fetchone()[0]); db.close()"
+
+   Expected:
+
+       ok
+
+4. Rehearse against a separate copy of the verified backup:
+
+       REHEARSAL=/var/data/backups/ngss-model-assets-table-rehearsal.db
+       cp --reflink=auto "$BACKUP" "$REHEARSAL"
+       python -m migrations.add_model_assets_table --database "$REHEARSAL" --dry-run
+       python -m migrations.add_model_assets_table --database "$REHEARSAL"
+       python -m migrations.add_model_assets_table --database "$REHEARSAL"
+       python -m migrations.add_model_assets_table --database "$REHEARSAL" --verify-only
+
+5. Run the production dry-run:
+
+       python -m migrations.add_model_assets_table \
+         --database "$NGSS_DB" \
+         --dry-run
+
+   Expected ending:
+
+       DRY RUN - no changes committed
+
+6. Apply the migration:
+
+       python -m migrations.add_model_assets_table \
+         --database "$NGSS_DB"
+
+   Expected ending on first run:
+
+       APPLIED
+
+   Expected ending if already applied:
+
+       NO CHANGE
+
+7. Verify without writing:
+
+       python -m migrations.add_model_assets_table \
+         --database "$NGSS_DB" \
+         --verify-only
+
+   Expected ending:
+
+       VERIFY OK
+
+8. Confirm integrity and migration log:
+
+       python -c "import os,sqlite3; db=sqlite3.connect(f\"file:{os.environ['NGSS_DB']}?mode=ro\",uri=True); print(db.execute('PRAGMA integrity_check').fetchone()[0]); print(db.execute(\"SELECT COUNT(*) FROM migration_log WHERE event='add_model_assets_table'\").fetchone()[0]); db.close()"
+
+   Expected:
+
+       ok
+       1
 
 Launch content production runbook
 =================================
