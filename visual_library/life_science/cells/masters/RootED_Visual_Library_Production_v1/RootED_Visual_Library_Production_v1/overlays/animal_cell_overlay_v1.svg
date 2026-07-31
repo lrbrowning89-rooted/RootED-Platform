@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 415 395"
+  role="img" aria-labelledby="animal-title animal-desc"
+  data-asset-id="MASTER_CELL_LIBRARY_ANIMAL"
+  data-overlay-version="1.0.0"
+  data-reference-version="1.0.0">
+  <title id="animal-title">Interactive overlay for the RootED master animal cell</title>
+  <desc id="animal-desc">Transparent interaction regions for the approved RootED animal cell reference image.</desc>
+  <style>
+  .hit-region { fill: transparent; stroke: transparent; pointer-events: all; cursor: pointer; }
+  .hit-region.is-highlighted { fill: rgba(255, 230, 80, 0.18); stroke: #f2b705; stroke-width: 4; }
+  .hit-region.is-selected { fill: rgba(25, 118, 210, 0.14); stroke: #1976d2; stroke-width: 4; }
+  .hit-region.debug { fill: rgba(255, 0, 0, 0.08); stroke: rgba(255, 0, 0, 0.55); stroke-width: 2; }
+  .anchor { fill: transparent; stroke: transparent; pointer-events: none; }
+  .anchor.debug { fill: #d32f2f; stroke: white; stroke-width: 1; }
+</style>
+
+  <g id="animal_cell" data-label="Animal cell">
+    <ellipse id="cell_membrane" class="hit-region" data-label="Cell membrane" cx="208" cy="190" rx="197" ry="184"/>
+    <ellipse id="cytoplasm" class="hit-region" data-label="Cytoplasm" cx="208" cy="190" rx="180" ry="166"/>
+    <circle id="nucleus" class="hit-region" data-label="Nucleus" cx="250" cy="108" r="60"/>
+    <circle id="nucleolus" class="hit-region" data-label="Nucleolus" cx="250" cy="108" r="18"/>
+    <path id="rough_er" class="hit-region" data-label="Rough endoplasmic reticulum"
+      d="M153,50 C122,73 124,125 149,153 C173,178 206,184 236,174 L230,149 C207,156 184,151 167,133 C151,115 148,83 168,66 Z"/>
+    <path id="smooth_er" class="hit-region" data-label="Smooth endoplasmic reticulum"
+      d="M135,155 C115,178 116,216 140,238 C160,257 192,261 215,246 L204,223 C187,232 169,229 157,217 C143,203 142,179 153,165 Z"/>
+    <path id="golgi_apparatus" class="hit-region" data-label="Golgi apparatus"
+      d="M234,211 C267,199 307,210 326,240 C307,270 271,284 236,277 C220,257 219,231 234,211 Z"/>
+    <ellipse id="mitochondrion_01" class="hit-region" data-label="Mitochondrion 1" cx="88" cy="92" rx="30" ry="18" transform="rotate(-36 88 92)"/>
+    <ellipse id="mitochondrion_02" class="hit-region" data-label="Mitochondrion 2" cx="67" cy="236" rx="32" ry="19" transform="rotate(-18 67 236)"/>
+    <ellipse id="mitochondrion_03" class="hit-region" data-label="Mitochondrion 3" cx="215" cy="320" rx="31" ry="17"/>
+    <g id="lysosomes" data-label="Lysosomes">
+      <circle id="lysosome_01" class="hit-region" data-label="Lysosome 1" cx="348" cy="203" r="15"/>
+      <circle id="lysosome_02" class="hit-region" data-label="Lysosome 2" cx="362" cy="254" r="13"/>
+      <circle id="lysosome_03" class="hit-region" data-label="Lysosome 3" cx="117" cy="49" r="12"/>
+    </g>
+    <g id="small_vacuoles" data-label="Small vacuoles">
+      <circle id="small_vacuole_01" class="hit-region" data-label="Small vacuole 1" cx="302" cy="316" r="13"/>
+      <circle id="small_vacuole_02" class="hit-region" data-label="Small vacuole 2" cx="116" cy="282" r="12"/>
+      <circle id="small_vacuole_03" class="hit-region" data-label="Small vacuole 3" cx="44" cy="159" r="10"/>
+    </g>
+    <g id="centrioles" data-label="Centrioles">
+      <rect id="centriole_01" class="hit-region" data-label="Centriole 1" x="111" y="269" width="19" height="36" rx="4"/>
+      <rect id="centriole_02" class="hit-region" data-label="Centriole 2" x="132" y="272" width="19" height="36" rx="4"/>
+    </g>
+    <g id="ribosomes" data-label="Ribosomes">
+      <circle id="ribosome_cluster_01" class="hit-region" data-label="Ribosome cluster 1" cx="180" cy="47" r="16"/>
+      <circle id="ribosome_cluster_02" class="hit-region" data-label="Ribosome cluster 2" cx="330" cy="140" r="14"/>
+    </g>
+    <path id="cytoskeleton" class="hit-region" data-label="Cytoskeleton"
+      d="M45,130 C90,160 112,188 128,231 M66,300 C116,278 166,272 212,286 M291,74 C326,107 341,138 348,178"
+      fill="none" stroke="transparent" stroke-width="18"/>
+  </g>
+
+  <g id="label_anchors" aria-hidden="true">
+    <circle id="anchor_cell_membrane" class="anchor" cx="390" cy="95" r="4"/>
+    <circle id="anchor_cytoplasm" class="anchor" cx="350" cy="125" r="4"/>
+    <circle id="anchor_nucleus" class="anchor" cx="250" cy="108" r="4"/>
+    <circle id="anchor_golgi_apparatus" class="anchor" cx="280" cy="245" r="4"/>
+    <circle id="anchor_mitochondrion" class="anchor" cx="88" cy="92" r="4"/>
+    <circle id="anchor_lysosome" class="anchor" cx="348" cy="203" r="4"/>
+    <circle id="anchor_centrioles" class="anchor" cx="131" cy="287" r="4"/>
+  </g>
+</svg>

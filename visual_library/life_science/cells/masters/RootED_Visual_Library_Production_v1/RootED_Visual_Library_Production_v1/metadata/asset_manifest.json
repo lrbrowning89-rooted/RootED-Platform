@@ -1,0 +1,51 @@
+{
+  "schema_version": "1.0.0",
+  "asset_family_id": "MASTER_CELL_LIBRARY",
+  "title": "RootED Master Cell Library",
+  "status": "production_candidate",
+  "approved_visual_reference_version": "1.0.0",
+  "overlay_version": "1.0.0",
+  "interaction_schema_version": "1.0.0",
+  "canonical_editable_master_status": "deferred_post_mvp",
+  "source_reference": {
+    "file": "approved_reference/RootED_Master_Cell_Library_v1.png",
+    "sha256": "9a5b6a19c53c3a3369113a8781a6102cce98ae0efb7225c866de881ef4077336"
+  },
+  "derived_reference_crops": {
+    "plant": {
+      "file": "approved_reference/plant_cell_reference_v1.png",
+      "crop_box_source_pixels": [
+        100,
+        190,
+        475,
+        585
+      ],
+      "dimensions": [
+        375,
+        395
+      ]
+    },
+    "animal": {
+      "file": "approved_reference/animal_cell_reference_v1.png",
+      "crop_box_source_pixels": [
+        585,
+        190,
+        1000,
+        585
+      ],
+      "dimensions": [
+        415,
+        395
+      ]
+    }
+  },
+  "overlays": {
+    "plant": "overlays/plant_cell_overlay_v1.svg",
+    "animal": "overlays/animal_cell_overlay_v1.svg"
+  },
+  "notes": [
+    "Approved PNG remains the MVP visual reference.",
+    "SVG overlays contain interaction geometry only and do not replace artwork.",
+    "Initial hit regions are production candidates and require visual alignment QA in the frontend."
+  ]
+}

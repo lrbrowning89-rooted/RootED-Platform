@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 375 395"
+  role="img" aria-labelledby="plant-title plant-desc"
+  data-asset-id="MASTER_CELL_LIBRARY_PLANT"
+  data-overlay-version="1.0.0"
+  data-reference-version="1.0.0">
+  <title id="plant-title">Interactive overlay for the RootED master plant cell</title>
+  <desc id="plant-desc">Transparent interaction regions for the approved RootED plant cell reference image.</desc>
+  <style>
+  .hit-region { fill: transparent; stroke: transparent; pointer-events: all; cursor: pointer; }
+  .hit-region.is-highlighted { fill: rgba(255, 230, 80, 0.18); stroke: #f2b705; stroke-width: 4; }
+  .hit-region.is-selected { fill: rgba(25, 118, 210, 0.14); stroke: #1976d2; stroke-width: 4; }
+  .hit-region.debug { fill: rgba(255, 0, 0, 0.08); stroke: rgba(255, 0, 0, 0.55); stroke-width: 2; }
+  .anchor { fill: transparent; stroke: transparent; pointer-events: none; }
+  .anchor.debug { fill: #d32f2f; stroke: white; stroke-width: 1; }
+</style>
+
+  <g id="plant_cell" data-label="Plant cell">
+    <polygon id="cell_wall" class="hit-region" data-label="Cell wall"
+      points="43,10 320,10 344,35 344,338 320,372 42,372 15,338 15,38"/>
+    <polygon id="cell_membrane" class="hit-region" data-label="Cell membrane"
+      points="55,25 307,25 326,46 326,325 306,350 54,350 32,325 32,48"/>
+    <path id="cytoplasm" class="hit-region" data-label="Cytoplasm"
+      d="M50,38 H310 Q322,38 322,52 V321 Q322,340 304,344 H57 Q37,340 37,320 V55 Q37,40 50,38 Z"/>
+    <ellipse id="central_vacuole" class="hit-region" data-label="Central vacuole"
+      cx="145" cy="190" rx="88" ry="135"/>
+    <circle id="nucleus" class="hit-region" data-label="Nucleus" cx="265" cy="103" r="58"/>
+    <circle id="nucleolus" class="hit-region" data-label="Nucleolus" cx="265" cy="103" r="17"/>
+    <path id="rough_er" class="hit-region" data-label="Rough endoplasmic reticulum"
+      d="M208,54 C180,62 169,80 172,111 C174,145 197,166 232,170 L244,148 C217,144 199,129 198,106 C197,82 211,68 229,62 Z"/>
+    <path id="smooth_er" class="hit-region" data-label="Smooth endoplasmic reticulum"
+      d="M201,113 C179,132 179,159 198,180 C211,194 228,199 244,198 L249,176 C229,175 216,168 207,155 C199,143 200,128 210,119 Z"/>
+    <path id="golgi_apparatus" class="hit-region" data-label="Golgi apparatus"
+      d="M227,184 C261,177 291,189 305,216 C290,238 261,253 227,253 C211,232 211,203 227,184 Z"/>
+    <ellipse id="chloroplast_01" class="hit-region" data-label="Chloroplast 1" cx="112" cy="63" rx="40" ry="24"/>
+    <ellipse id="chloroplast_02" class="hit-region" data-label="Chloroplast 2" cx="78" cy="282" rx="30" ry="43" transform="rotate(-20 78 282)"/>
+    <ellipse id="chloroplast_03" class="hit-region" data-label="Chloroplast 3" cx="280" cy="282" rx="38" ry="27" transform="rotate(-28 280 282)"/>
+    <ellipse id="mitochondrion_01" class="hit-region" data-label="Mitochondrion 1" cx="140" cy="320" rx="32" ry="18"/>
+    <ellipse id="mitochondrion_02" class="hit-region" data-label="Mitochondrion 2" cx="295" cy="307" rx="30" ry="16"/>
+    <g id="ribosomes" data-label="Ribosomes">
+      <circle id="ribosome_cluster_01" class="hit-region" data-label="Ribosome cluster 1" cx="222" cy="152" r="16"/>
+      <circle id="ribosome_cluster_02" class="hit-region" data-label="Ribosome cluster 2" cx="319" cy="170" r="14"/>
+    </g>
+    <path id="plasmodesmata" class="hit-region" data-label="Plasmodesmata"
+      d="M180,342 L198,342 L198,382 L180,382 Z"/>
+  </g>
+
+  <g id="label_anchors" aria-hidden="true">
+    <circle id="anchor_cell_wall" class="anchor" cx="18" cy="40" r="4"/>
+    <circle id="anchor_cell_membrane" class="anchor" cx="34" cy="60" r="4"/>
+    <circle id="anchor_cytoplasm" class="anchor" cx="60" cy="110" r="4"/>
+    <circle id="anchor_central_vacuole" class="anchor" cx="145" cy="190" r="4"/>
+    <circle id="anchor_nucleus" class="anchor" cx="265" cy="103" r="4"/>
+    <circle id="anchor_golgi_apparatus" class="anchor" cx="265" cy="218" r="4"/>
+    <circle id="anchor_chloroplast" class="anchor" cx="78" cy="282" r="4"/>
+    <circle id="anchor_mitochondrion" class="anchor" cx="140" cy="320" r="4"/>
+  </g>
+</svg>

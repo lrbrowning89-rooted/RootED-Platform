@@ -1,0 +1,37 @@
+{
+  "asset_id": "rooted_master_plant_cell",
+  "asset_version": "1.0.0",
+  "schema_version": "1.0.0",
+  "created": "2026-07-29",
+  "last_modified": "2026-07-29",
+  "production_status": "candidate",
+  "production_lock": false,
+  "canonical_source": "source/master_plant_cell.svg",
+  "approval_reference": "../masters/RootED_Master_Cell_Library_v1.png",
+  "source_and_licensing_status": "RootED-owned reconstruction of approved RootED artwork; internal canonical asset candidate.",
+  "derived_assets": [],
+  "approved_instructional_uses": ["structure identification", "structure comparison", "systems modeling", "organelle relationships", "instructional highlighting", "accessible labeling"],
+  "supported_derivatives": ["CELL_MODEL_01", "CELL_MODEL_02", "CELL_MODEL_03", "CELL_MODEL_04", "CELL_MODEL_06", "CELL_MODEL_07", "CELL_MODEL_08", "CELL_MODEL_09", "CELL_MODEL_10"],
+  "accessibility": {
+    "summary": "Layered plant cell with shape-, value-, and outline-based differentiation.",
+    "projection": "Strengthened structure outlines and high local contrast support classroom projection.",
+    "desaturation": "Structures remain differentiated through silhouette, value, and boundary treatment.",
+    "highlighting": "Color-independent outline and glow highlighting is supported.",
+    "labels": "Optional scalable labels use high-contrast text with a white halo."
+  },
+  "structures": [
+    {"id":"cell_wall","display_name":"Cell wall","category":"boundary","description":"Rigid outer layer that supports and protects the plant cell.","plant_only":true,"animal_only":false,"visible_by_default":true,"highlightable":true,"selectable":true,"parent_group":"instructional","instructional_roles":["support","protection","plant-cell identification"],"supported_derivatives":["CELL_MODEL_06","CELL_MODEL_09"]},
+    {"id":"cell_membrane","display_name":"Cell membrane","category":"boundary","description":"Selective boundary controlling movement into and out of the cell.","plant_only":false,"animal_only":false,"visible_by_default":true,"highlightable":true,"selectable":true,"parent_group":"instructional","instructional_roles":["boundary","transport","homeostasis"],"supported_derivatives":["CELL_MODEL_01","CELL_MODEL_06","CELL_MODEL_07","CELL_MODEL_09"]},
+    {"id":"cytoplasm","display_name":"Cytoplasm","category":"cell_material","description":"Material filling the cell interior and surrounding organelles.","plant_only":false,"animal_only":false,"visible_by_default":true,"highlightable":true,"selectable":true,"parent_group":"instructional","instructional_roles":["cell interior","organelle environment"],"supported_derivatives":["CELL_MODEL_03","CELL_MODEL_07"]},
+    {"id":"central_vacuole","display_name":"Central vacuole","category":"storage","description":"Large plant-cell compartment that stores water and materials and supports cell shape.","plant_only":true,"animal_only":false,"visible_by_default":true,"highlightable":true,"selectable":true,"parent_group":"instructional","instructional_roles":["storage","water balance","support"],"supported_derivatives":["CELL_MODEL_06","CELL_MODEL_07"]},
+    {"id":"nucleus","display_name":"Nucleus","category":"information_and_control","description":"Contains genetic information and coordinates cell activities.","plant_only":false,"animal_only":false,"visible_by_default":true,"highlightable":true,"selectable":true,"parent_group":"instructional","instructional_roles":["coordination","genetic information"],"supported_derivatives":["CELL_MODEL_02","CELL_MODEL_04","CELL_MODEL_07","CELL_MODEL_08"]},
+    {"id":"nucleolus","display_name":"Nucleolus","category":"information_and_control","description":"Region inside the nucleus associated with ribosome production.","plant_only":false,"animal_only":false,"visible_by_default":true,"highlightable":true,"selectable":true,"parent_group":"nucleus","instructional_roles":["nuclear substructure"],"supported_derivatives":["CELL_MODEL_02"]},
+    {"id":"rough_er","display_name":"Rough endoplasmic reticulum","category":"processing_and_transport","description":"Membrane network with ribosomes that helps make and process proteins.","plant_only":false,"animal_only":false,"visible_by_default":true,"highlightable":true,"selectable":true,"parent_group":"instructional","instructional_roles":["protein production","processing","transport"],"supported_derivatives":["CELL_MODEL_04","CELL_MODEL_07"]},
+    {"id":"smooth_er","display_name":"Smooth endoplasmic reticulum","category":"processing_and_transport","description":"Membrane network involved in lipid production and other cell processes.","plant_only":false,"animal_only":false,"visible_by_default":true,"highlightable":true,"selectable":true,"parent_group":"instructional","instructional_roles":["lipid production","processing"],"supported_derivatives":["CELL_MODEL_07"]},
+    {"id":"golgi_apparatus","display_name":"Golgi apparatus","category":"processing_and_transport","description":"Modifies, sorts, and packages cell materials.","plant_only":false,"animal_only":false,"visible_by_default":true,"highlightable":true,"selectable":true,"parent_group":"instructional","instructional_roles":["modification","sorting","packaging"],"supported_derivatives":["CELL_MODEL_04","CELL_MODEL_07"]},
+    {"id":"chloroplasts","display_name":"Chloroplasts","category":"energy","description":"Plant-cell organelles that use light energy to make sugars.","plant_only":true,"animal_only":false,"visible_by_default":true,"highlightable":true,"selectable":true,"parent_group":"instructional","instructional_roles":["light energy capture","sugar production","plant-cell identification"],"supported_derivatives":["CELL_MODEL_06","CELL_MODEL_07","CELL_MODEL_10"]},
+    {"id":"mitochondria","display_name":"Mitochondria","category":"energy","description":"Organelles that release usable energy from food molecules.","plant_only":false,"animal_only":false,"visible_by_default":true,"highlightable":true,"selectable":true,"parent_group":"instructional","instructional_roles":["usable energy release"],"supported_derivatives":["CELL_MODEL_07","CELL_MODEL_10"]},
+    {"id":"ribosomes","display_name":"Ribosomes","category":"production","description":"Small structures that build proteins.","plant_only":false,"animal_only":false,"visible_by_default":true,"highlightable":true,"selectable":true,"parent_group":"instructional","instructional_roles":["protein production"],"supported_derivatives":["CELL_MODEL_04","CELL_MODEL_07"]},
+    {"id":"vesicles","display_name":"Vesicles","category":"transport","description":"Small membrane-bound compartments that move or store materials.","plant_only":false,"animal_only":false,"visible_by_default":true,"highlightable":true,"selectable":true,"parent_group":"instructional","instructional_roles":["transport","storage"],"supported_derivatives":["CELL_MODEL_07"]}
+  ]
+}

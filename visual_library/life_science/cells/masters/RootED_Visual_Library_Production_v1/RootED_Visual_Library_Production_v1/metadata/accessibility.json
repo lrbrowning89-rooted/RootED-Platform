@@ -1,0 +1,48 @@
+{
+  "schema_version": "1.0.0",
+  "assets": {
+    "MASTER_CELL_LIBRARY_PLANT": {
+      "short_description": "A labeled scientific illustration of a plant cell with a cell wall, membrane, large central vacuole, nucleus, chloroplasts, mitochondria, endoplasmic reticulum, Golgi apparatus, ribosomes, and plasmodesmata.",
+      "instructional_alt_text": "Plant cell shown as a box-like cell with a thick cell wall and a large central vacuole. The nucleus sits toward the upper right. Green chloroplasts and orange mitochondria are distributed through the cytoplasm.",
+      "reading_order": [
+        "cell_wall",
+        "cell_membrane",
+        "cytoplasm",
+        "central_vacuole",
+        "nucleus",
+        "nucleolus",
+        "rough_er",
+        "smooth_er",
+        "golgi_apparatus",
+        "ribosomes",
+        "chloroplast_01",
+        "chloroplast_02",
+        "chloroplast_03",
+        "mitochondrion_01",
+        "mitochondrion_02",
+        "plasmodesmata"
+      ]
+    },
+    "MASTER_CELL_LIBRARY_ANIMAL": {
+      "short_description": "A labeled scientific illustration of an animal cell with a cell membrane, cytoplasm, nucleus, endoplasmic reticulum, Golgi apparatus, mitochondria, lysosomes, small vacuoles, centrioles, ribosomes, and cytoskeleton.",
+      "instructional_alt_text": "Animal cell shown as a rounded cell bounded by a flexible membrane. The nucleus sits above center, with endoplasmic reticulum around it, Golgi apparatus below and to the right, and mitochondria and small vesicles throughout the cytoplasm.",
+      "reading_order": [
+        "cell_membrane",
+        "cytoplasm",
+        "nucleus",
+        "nucleolus",
+        "rough_er",
+        "smooth_er",
+        "golgi_apparatus",
+        "ribosomes",
+        "mitochondrion_01",
+        "mitochondrion_02",
+        "mitochondrion_03",
+        "lysosomes",
+        "small_vacuoles",
+        "centrioles",
+        "cytoskeleton"
+      ]
+    }
+  }
+}

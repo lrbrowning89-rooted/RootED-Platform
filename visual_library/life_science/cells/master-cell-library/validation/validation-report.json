@@ -1,0 +1,178 @@
+﻿{
+    "schema_version":  "1.0.0",
+    "run_date":  "2026-07-29T15:21:30-05:00",
+    "summary":  {
+                    "passed":  28,
+                    "failed":  0
+                },
+    "results":  [
+                    {
+                        "asset":  "plant",
+                        "check":  "valid_xml",
+                        "passed":  true,
+                        "detail":  "SVG parses as XML."
+                    },
+                    {
+                        "asset":  "plant",
+                        "check":  "unique_ids",
+                        "passed":  true,
+                        "detail":  "All IDs are unique."
+                    },
+                    {
+                        "asset":  "plant",
+                        "check":  "group_instructional",
+                        "passed":  true,
+                        "detail":  "Required group \u0027instructional\u0027 exists."
+                    },
+                    {
+                        "asset":  "plant",
+                        "check":  "group_annotations",
+                        "passed":  true,
+                        "detail":  "Required group \u0027annotations\u0027 exists."
+                    },
+                    {
+                        "asset":  "plant",
+                        "check":  "group_presentation",
+                        "passed":  true,
+                        "detail":  "Required group \u0027presentation\u0027 exists."
+                    },
+                    {
+                        "asset":  "plant",
+                        "check":  "metadata_ids_resolve",
+                        "passed":  true,
+                        "detail":  "Every metadata structure ID resolves in the SVG."
+                    },
+                    {
+                        "asset":  "plant",
+                        "check":  "metadata_complete",
+                        "passed":  true,
+                        "detail":  "Required structure metadata fields are present."
+                    },
+                    {
+                        "asset":  "plant",
+                        "check":  "independent_highlight_targets",
+                        "passed":  true,
+                        "detail":  "Every declared highlight target has an independent ID and the scoped structure class."
+                    },
+                    {
+                        "asset":  "plant",
+                        "check":  "no_external_links",
+                        "passed":  true,
+                        "detail":  "No external image or resource links detected."
+                    },
+                    {
+                        "asset":  "plant",
+                        "check":  "version_alignment",
+                        "passed":  true,
+                        "detail":  "SVG and metadata versions align."
+                    },
+                    {
+                        "asset":  "plant",
+                        "check":  "accessibility",
+                        "passed":  true,
+                        "detail":  "SVG has img role, title, and description."
+                    },
+                    {
+                        "asset":  "animal",
+                        "check":  "valid_xml",
+                        "passed":  true,
+                        "detail":  "SVG parses as XML."
+                    },
+                    {
+                        "asset":  "animal",
+                        "check":  "unique_ids",
+                        "passed":  true,
+                        "detail":  "All IDs are unique."
+                    },
+                    {
+                        "asset":  "animal",
+                        "check":  "group_instructional",
+                        "passed":  true,
+                        "detail":  "Required group \u0027instructional\u0027 exists."
+                    },
+                    {
+                        "asset":  "animal",
+                        "check":  "group_annotations",
+                        "passed":  true,
+                        "detail":  "Required group \u0027annotations\u0027 exists."
+                    },
+                    {
+                        "asset":  "animal",
+                        "check":  "group_presentation",
+                        "passed":  true,
+                        "detail":  "Required group \u0027presentation\u0027 exists."
+                    },
+                    {
+                        "asset":  "animal",
+                        "check":  "metadata_ids_resolve",
+                        "passed":  true,
+                        "detail":  "Every metadata structure ID resolves in the SVG."
+                    },
+                    {
+                        "asset":  "animal",
+                        "check":  "metadata_complete",
+                        "passed":  true,
+                        "detail":  "Required structure metadata fields are present."
+                    },
+                    {
+                        "asset":  "animal",
+                        "check":  "independent_highlight_targets",
+                        "passed":  true,
+                        "detail":  "Every declared highlight target has an independent ID and the scoped structure class."
+                    },
+                    {
+                        "asset":  "animal",
+                        "check":  "no_external_links",
+                        "passed":  true,
+                        "detail":  "No external image or resource links detected."
+                    },
+                    {
+                        "asset":  "animal",
+                        "check":  "version_alignment",
+                        "passed":  true,
+                        "detail":  "SVG and metadata versions align."
+                    },
+                    {
+                        "asset":  "animal",
+                        "check":  "accessibility",
+                        "passed":  true,
+                        "detail":  "SVG has img role, title, and description."
+                    },
+                    {
+                        "asset":  "plant",
+                        "check":  "png_exports",
+                        "passed":  true,
+                        "detail":  "Plain and labeled PNG previews rendered."
+                    },
+                    {
+                        "asset":  "plant",
+                        "check":  "desaturation_preview",
+                        "passed":  true,
+                        "detail":  "Desaturated accessibility-review preview rendered; boundaries use value and outline separation."
+                    },
+                    {
+                        "asset":  "plant",
+                        "check":  "chromium_pixel_consistency",
+                        "passed":  true,
+                        "detail":  "Sampled-pixel hashes: Edge=FBBD6C31A1A65A81882388D27537878107C47A3342A2460515C4CE8FE2F11BD6 Chrome=FBBD6C31A1A65A81882388D27537878107C47A3342A2460515C4CE8FE2F11BD6"
+                    },
+                    {
+                        "asset":  "animal",
+                        "check":  "png_exports",
+                        "passed":  true,
+                        "detail":  "Plain and labeled PNG previews rendered."
+                    },
+                    {
+                        "asset":  "animal",
+                        "check":  "desaturation_preview",
+                        "passed":  true,
+                        "detail":  "Desaturated accessibility-review preview rendered; boundaries use value and outline separation."
+                    },
+                    {
+                        "asset":  "animal",
+                        "check":  "chromium_pixel_consistency",
+                        "passed":  true,
+                        "detail":  "Sampled-pixel hashes: Edge=73A5262FA2D9CE63B329A98DF476D121E101C05E40F1FA96024CDF1FB5E082BA Chrome=73A5262FA2D9CE63B329A98DF476D121E101C05E40F1FA96024CDF1FB5E082BA"
+                    }
+                ]
+}

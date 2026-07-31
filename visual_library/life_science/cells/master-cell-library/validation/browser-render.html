@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>RootED Master Cell Library browser validation</title>
+  <style>
+    body{margin:0;background:#edf3f2;color:#142441;font:16px/1.4 Arial,sans-serif}
+    header{padding:18px 24px;background:#fff;border-bottom:1px solid #cad9d7}
+    main{display:grid;grid-template-columns:1fr 1fr;gap:20px;padding:20px}
+    article{background:#fff;border:1px solid #cad9d7;border-radius:14px;padding:14px}
+    object{display:block;width:100%;aspect-ratio:1;background:#f8fbfa;border-radius:10px}
+    button{margin:8px 8px 0 0;padding:8px 12px;border:1px solid #1d6040;border-radius:8px;background:#fff;color:#164b33;cursor:pointer}
+    code{font-size:13px}
+  </style>
+</head>
+<body>
+  <header><strong>RootED canonical cell browser harness</strong> — SVG ID, annotation, mute, and highlight inspection</header>
+  <main>
+    <article>
+      <h2>Plant cell</h2>
+      <object id="plant" data="../source/master_plant_cell.svg" type="image/svg+xml" aria-label="Plant cell validation render"></object>
+      <button data-object="plant" data-target="cell_wall">Highlight wall</button>
+      <button data-object="plant" data-target="cell_membrane">Highlight membrane</button>
+      <button data-object="plant" data-target="cytoplasm">Highlight cytoplasm</button>
+      <button data-object="plant" data-action="labels">Toggle labels</button>
+      <button data-object="plant" data-action="reset">Reset</button>
+    </article>
+    <article>
+      <h2>Animal cell</h2>
+      <object id="animal" data="../source/master_animal_cell.svg" type="image/svg+xml" aria-label="Animal cell validation render"></object>
+      <button data-object="animal" data-target="cell_membrane">Highlight membrane</button>
+      <button data-object="animal" data-target="nucleus">Highlight nucleus</button>
+      <button data-object="animal" data-target="mitochondria">Highlight mitochondria</button>
+      <button data-object="animal" data-action="labels">Toggle labels</button>
+      <button data-object="animal" data-action="reset">Reset</button>
+    </article>
+  </main>
+  <script>
+    document.addEventListener("click", event => {
+      const button=event.target.closest("button"); if(!button)return;
+      const svg=document.getElementById(button.dataset.object).contentDocument.documentElement;
+      if(button.dataset.action==="labels"){svg.classList.toggle("show-annotations");return;}
+      svg.querySelectorAll(".structure").forEach(node=>node.classList.remove("rooted-highlight","rooted-muted"));
+      if(button.dataset.action==="reset")return;
+      const target=svg.getElementById(button.dataset.target);
+      svg.querySelectorAll("#instructional > .structure").forEach(node=>{if(node!==target)node.classList.add("rooted-muted")});
+      target.classList.add("rooted-highlight");
+    });
+  </script>
+</body>
+</html>

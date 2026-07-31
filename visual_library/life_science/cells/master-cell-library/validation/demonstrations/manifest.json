@@ -1,0 +1,40 @@
+﻿{
+    "schema_version":  "1.0.0",
+    "demonstrations":  [
+                           {
+                               "target":  "nucleus",
+                               "behavior":  "Only nucleus highlighted; other top-level instructional structures faded.",
+                               "id":  "nucleus_highlight",
+                               "file":  "01_nucleus_highlight_others_faded.png"
+                           },
+                           {
+                               "target":  "cell_wall",
+                               "behavior":  "Cell wall hidden; cell membrane remains visible and is highlighted.",
+                               "id":  "wall_hidden",
+                               "file":  "02_plant_wall_hidden_membrane_visible.png"
+                           },
+                           {
+                               "target":  "chloroplasts",
+                               "behavior":  "All chloroplast children highlighted through their stable parent group.",
+                               "id":  "chloroplast_group",
+                               "file":  "03_all_chloroplasts_highlighted.png"
+                           },
+                           {
+                               "target":  "chloroplast_01",
+                               "behavior":  "One chloroplast highlighted by permanent child ID; sibling chloroplasts faded.",
+                               "id":  "chloroplast_individual",
+                               "file":  "04_chloroplast_01_highlighted.png"
+                           },
+                           {
+                               "target":  "annotations",
+                               "behavior":  "Optional annotations enabled independently from instructional artwork.",
+                               "id":  "labeled_export",
+                               "file":  "05_labeled_instructional_export.png"
+                           }
+                       ],
+    "generated":  "2026-07-29T15:29:35-05:00",
+    "canonical_sources":  [
+                              "../source/master_animal_cell.svg",
+                              "../source/master_plant_cell.svg"
+                          ]
+}
