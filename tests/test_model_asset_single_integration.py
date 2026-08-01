@@ -33,6 +33,11 @@ MODEL_CAPTION = (
     "Supports questions about evidence for the idea that organisms are made of cells."
 )
 INSTRUCTIONAL_CAPTION = "Not to scale; colors show different cell parts."
+LEAF_MODEL_ID = "MS-LS1-1B_model_leaf_cells_01"
+LEAF_MODEL_FILENAME = "ms-ls1-1b-leaf-cells-01.png"
+LEAF_MODEL_SRC = f"model_assets/{LEAF_MODEL_FILENAME}"
+LEAF_MODEL_TITLE = "Leaf Cells Model"
+LEAF_MODEL_DISPLAY_TITLE = "Leaf Sample"
 QUESTION_STEM = (
     "In a cell model, what should the student focus on when deciding whether "
     "the model supports cell theory?"
@@ -422,6 +427,27 @@ class SingleModelAssetIntegrationTests(unittest.TestCase):
         self.assertEqual(render_asset["alt_text"], MODEL_ALT)
         self.assertEqual(render_asset["title"], MODEL_DISPLAY_TITLE)
         self.assertEqual(render_asset["caption"], "")
+
+    def test_leaf_cells_model_uses_student_facing_display_title(self):
+        resolved = {
+            "model_id": LEAF_MODEL_ID,
+            "missing_reason": None,
+            "asset": {
+                "model_id": LEAF_MODEL_ID,
+                "asset_type": "image",
+                "src": LEAF_MODEL_SRC,
+                "alt_text": "A leaf sample with repeated plant cells visible under magnification.",
+                "title": LEAF_MODEL_TITLE,
+                "caption": "",
+            },
+        }
+
+        render_asset = dash.static_image_asset_for_render(resolved)
+
+        self.assertIsNotNone(render_asset)
+        self.assertEqual(render_asset["filename"], LEAF_MODEL_SRC)
+        self.assertEqual(render_asset["title"], LEAF_MODEL_DISPLAY_TITLE)
+        self.assertNotEqual(render_asset["title"], LEAF_MODEL_TITLE)
 
     def test_teacher_question_preview_renders_asset_accessibly_and_responsively(self):
         self.login_as_teacher()

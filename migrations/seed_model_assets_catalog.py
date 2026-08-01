@@ -154,7 +154,7 @@ CATALOG = [
     },
     {
         "model_id": "MS-LS1-1B_model_leaf_cells_01",
-        "src": "model_assets/ms-ls1-1b-leaf-cells-01.svg",
+        "src": "model_assets/ms-ls1-1b-leaf-cells-01.png",
         "title": "Leaf Cells Model",
         "alt_text": "A model zooming from a leaf to many smaller cells that make up leaf tissue.",
         "caption": "Supports questions about plant structures being made of cells.",

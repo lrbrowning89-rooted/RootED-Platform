@@ -2277,6 +2277,7 @@ def resolve_model_asset_for_question(conn: sqlite3.Connection, question_id: str 
 MODEL_ASSET_DISPLAY_TITLE_OVERRIDES = {
     # Keep catalog metadata stable while showing the student-facing asset name.
     "MS-LS1-1B_model_cell_theory_basic_01": "Animal Cell",
+    "MS-LS1-1B_model_leaf_cells_01": "Leaf Sample",
 }
 
 GENERIC_MODEL_ASSET_CAPTION_PREFIXES = (
