@@ -5902,8 +5902,63 @@ def teacher_question_preview():
     conn = get_conn()
     objs = get_objectives(conn)
 
-    selected_objective_id = request.args.get("objective_id")
-    selected_question_id = request.args.get("question_id")
+    objective_ids = {row["objective_id"] for row in objs}
+    default_objective_id = objs[0]["objective_id"] if objs else None
+    objective_was_requested = "objective_id" in request.args
+    question_was_requested = "question_id" in request.args
+    requested_objective_id = request.args.get("objective_id")
+    requested_question_id = request.args.get("question_id")
+
+    if objective_was_requested:
+        # An explicit objective is authoritative. A submitted question may only
+        # survive when the server verifies that it belongs to that objective.
+        selected_objective_id = (
+            requested_objective_id
+            if requested_objective_id in objective_ids
+            else default_objective_id
+        )
+        requested_question = get_preview_question(conn, requested_question_id)
+        selected_question_id = (
+            requested_question["question_id"]
+            if requested_question
+            and requested_question["objective_id"] == selected_objective_id
+            else get_first_preview_question_id(conn, selected_objective_id)
+        )
+    elif question_was_requested:
+        requested_question = get_preview_question(conn, requested_question_id)
+        if requested_question:
+            selected_question_id = requested_question["question_id"]
+            selected_objective_id = requested_question["objective_id"]
+        else:
+            # An explicitly requested but invalid question is not replaced by
+            # unrelated session state or content.
+            selected_objective_id = None
+            selected_question_id = None
+    else:
+        fallback_objective_id = session.get("teacher_preview_objective_id")
+        selected_objective_id = (
+            fallback_objective_id
+            if fallback_objective_id in objective_ids
+            else default_objective_id
+        )
+        fallback_question = get_preview_question(
+            conn, session.get("teacher_preview_question_id")
+        )
+        selected_question_id = (
+            fallback_question["question_id"]
+            if fallback_question
+            and fallback_question["objective_id"] == selected_objective_id
+            else get_first_preview_question_id(conn, selected_objective_id)
+        )
+
+    current_question = get_preview_question(conn, selected_question_id)
+    if current_question:
+        session["teacher_preview_objective_id"] = selected_objective_id
+        session["teacher_preview_question_id"] = current_question["question_id"]
+    else:
+        session["teacher_preview_objective_id"] = selected_objective_id
+        session.pop("teacher_preview_question_id", None)
+
     return_to = request.args.get("return_to")
     flag_filter = normalize_question_flag_status_filter(request.args.get("filter"))
     flag_category = normalize_question_flag_category_filter(request.args.get("category"))
@@ -5913,16 +5968,6 @@ def teacher_question_preview():
         else url_for("index")
     )
     back_label = "Back to Question Flags" if return_to == "question_flags" else "Back to Dashboard"
-
-    if not selected_question_id:
-        selected_question_id = get_first_preview_question_id(
-            conn,
-            selected_objective_id,
-        )
-
-    current_question = get_preview_question(conn, selected_question_id)
-    if current_question:
-        selected_objective_id = current_question["objective_id"]
 
     qrows = (
         get_questions_for_objective(conn, selected_objective_id)
@@ -5986,7 +6031,7 @@ def teacher_question_preview():
 
   <form method="get" class="toolbar">
     <label>Objective
-      <select name="objective_id" onchange="this.form.submit()">
+      <select name="objective_id" onchange="this.form.elements.question_id.disabled=true;this.form.submit()">
         {% for o in objs %}
           <option value="{{ o['objective_id'] }}" {% if o['objective_id'] == selected_objective_id %}selected{% endif %}>
             {{ o['objective_id'] }}

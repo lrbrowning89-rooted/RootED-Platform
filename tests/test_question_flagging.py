@@ -600,6 +600,75 @@ class QuestionFlaggingTests(unittest.TestCase):
         self.assertNotIn(b"Q1B - Launch question 1B", page.data)
         self.assertIn(b"Read-only student rendering for teacher review.", page.data)
 
+    def test_teacher_preview_objective_is_authoritative_over_stale_question(self):
+        self.login_as(1, "teacher1", "teacher")
+        before = {
+            table: self.table_count(table)
+            for table in (
+                "attempts",
+                "responses",
+                "progress_state",
+                "student_objective_state",
+            )
+        }
+
+        matching = self.client.get(
+            "/teacher/question_preview",
+            query_string={"objective_id": "MS-LS1-1B", "question_id": "Q1B"},
+        )
+        self.assertEqual(matching.status_code, 200)
+        self.assertIn(b'<option value="MS-LS1-1B" selected>', matching.data)
+        self.assertIn(b'<option value="Q1B" selected>', matching.data)
+
+        switched = self.client.get(
+            "/teacher/question_preview",
+            query_string={"objective_id": "MS-LS1-1A", "question_id": "Q1B"},
+        )
+        self.assertEqual(switched.status_code, 200)
+        self.assertIn(b'<option value="MS-LS1-1A" selected>', switched.data)
+        self.assertIn(b'<option value="Q1A" selected>', switched.data)
+        self.assertNotIn(b'<option value="Q1B"', switched.data)
+        self.assertIn(
+            b"this.form.elements.question_id.disabled=true",
+            switched.data,
+        )
+
+        refreshed = self.client.get("/teacher/question_preview")
+        self.assertIn(b'<option value="MS-LS1-1A" selected>', refreshed.data)
+        self.assertIn(b'<option value="Q1A" selected>', refreshed.data)
+        self.assertNotIn(b'<option value="Q1B"', refreshed.data)
+        self.assertEqual(
+            {table: self.table_count(table) for table in before},
+            before,
+        )
+
+    def test_teacher_preview_invalid_ids_fall_back_safely(self):
+        self.login_as(1, "teacher1", "teacher")
+
+        invalid_objective = self.client.get(
+            "/teacher/question_preview",
+            query_string={"objective_id": "NOT-AN-OBJECTIVE", "question_id": "Q1B"},
+        )
+        self.assertEqual(invalid_objective.status_code, 200)
+        self.assertIn(b'<option value="MS-LS1-1A" selected>', invalid_objective.data)
+        self.assertIn(b'<option value="Q1A" selected>', invalid_objective.data)
+        self.assertNotIn(b'<option value="Q1B"', invalid_objective.data)
+
+        invalid_question = self.client.get(
+            "/teacher/question_preview",
+            query_string={"objective_id": "MS-LS1-1B", "question_id": "NOT-A-QUESTION"},
+        )
+        self.assertEqual(invalid_question.status_code, 200)
+        self.assertIn(b'<option value="MS-LS1-1B" selected>', invalid_question.data)
+        self.assertIn(b'<option value="Q1B" selected>', invalid_question.data)
+
+        question_only = self.client.get(
+            "/teacher/question_preview",
+            query_string={"question_id": "Q1A"},
+        )
+        self.assertIn(b'<option value="MS-LS1-1A" selected>', question_only.data)
+        self.assertIn(b'<option value="Q1A" selected>', question_only.data)
+
     def test_record_attempt_question_reference_falls_back_without_objective_title(self):
         self.conn.execute(
             "UPDATE objectives SET objective_text = '' WHERE objective_id = 'MS-LS1-1B'"
