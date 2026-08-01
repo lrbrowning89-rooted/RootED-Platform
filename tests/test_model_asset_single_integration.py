@@ -38,6 +38,38 @@ LEAF_MODEL_FILENAME = "ms-ls1-1b-leaf-cells-01.png"
 LEAF_MODEL_SRC = f"model_assets/{LEAF_MODEL_FILENAME}"
 LEAF_MODEL_TITLE = "Leaf Cells Model"
 LEAF_MODEL_DISPLAY_TITLE = "Leaf Sample"
+TISSUE_MODEL_ID = "MS-LS1-1B_model_cells_to_tissue_01"
+TISSUE_MODEL_FILENAME = "ms-ls1-1b-cells-to-tissue-01.png"
+TISSUE_MODEL_SRC = f"model_assets/{TISSUE_MODEL_FILENAME}"
+TISSUE_MODEL_TITLE = "Cells Form Tissue"
+TISSUE_MODEL_DISPLAY_TITLE = "Skin Sample"
+TISSUE_MODEL_CAPTION = "Supports questions connecting cell groups to tissues."
+PLANT_ANIMAL_MODEL_ID = "MS-LS1-1B_model_plant_animal_cells_01"
+PLANT_ANIMAL_MODEL_FILENAME = "ms-ls1-1b-plant-animal-cells-01.png"
+PLANT_ANIMAL_MODEL_SRC = f"model_assets/{PLANT_ANIMAL_MODEL_FILENAME}"
+PLANT_ANIMAL_MODEL_TITLE = "Plant and Animal Cells"
+PLANT_ANIMAL_MODEL_CAPTION = "Supports questions comparing cells from plants and animals."
+ORGANIZATION_MODEL_ID = "MS-LS1-1B_model_organization_levels_01"
+ORGANIZATION_MODEL_FILENAME = "ms-ls1-1b-organization-levels-01.png"
+ORGANIZATION_MODEL_SRC = f"model_assets/{ORGANIZATION_MODEL_FILENAME}"
+ORGANIZATION_MODEL_TITLE = "Levels of Biological Organization"
+ORGANIZATION_MODEL_CAPTION = (
+    "Supports questions about how cells contribute to larger body structures."
+)
+UNKNOWN_SAMPLES_MODEL_ID = "MS-LS1-1B_model_unknown_samples_01"
+UNKNOWN_SAMPLES_MODEL_FILENAME = "ms-ls1-1b-unknown-cell-samples-01.png"
+UNKNOWN_SAMPLES_MODEL_SRC = f"model_assets/{UNKNOWN_SAMPLES_MODEL_FILENAME}"
+UNKNOWN_SAMPLES_MODEL_TITLE = "Unknown Samples Under a Microscope"
+UNKNOWN_SAMPLES_MODEL_CAPTION = (
+    "Supports questions about using cell evidence to identify living or once-living material."
+)
+SEEDLING_MODEL_ID = "MS-LS1-1B_model_seedling_cell_division_01"
+SEEDLING_MODEL_FILENAME = "ms-ls1-1b-seedling-cell-division-01.png"
+SEEDLING_MODEL_SRC = f"model_assets/{SEEDLING_MODEL_FILENAME}"
+SEEDLING_MODEL_TITLE = "Seedling Growth and Cell Division"
+SEEDLING_MODEL_CAPTION = (
+    "Supports questions connecting growth to cells dividing and producing more cells."
+)
 QUESTION_STEM = (
     "In a cell model, what should the student focus on when deciding whether "
     "the model supports cell theory?"
@@ -448,6 +480,117 @@ class SingleModelAssetIntegrationTests(unittest.TestCase):
         self.assertEqual(render_asset["filename"], LEAF_MODEL_SRC)
         self.assertEqual(render_asset["title"], LEAF_MODEL_DISPLAY_TITLE)
         self.assertNotEqual(render_asset["title"], LEAF_MODEL_TITLE)
+
+    def test_cells_to_tissue_model_uses_student_facing_display_title(self):
+        resolved = {
+            "model_id": TISSUE_MODEL_ID,
+            "missing_reason": None,
+            "asset": {
+                "model_id": TISSUE_MODEL_ID,
+                "asset_type": "image",
+                "src": TISSUE_MODEL_SRC,
+                "alt_text": "A skin sample with many small cells grouped together as tissue.",
+                "title": TISSUE_MODEL_TITLE,
+                "caption": TISSUE_MODEL_CAPTION,
+            },
+        }
+
+        render_asset = dash.static_image_asset_for_render(resolved)
+
+        self.assertIsNotNone(render_asset)
+        self.assertEqual(render_asset["filename"], TISSUE_MODEL_SRC)
+        self.assertEqual(render_asset["title"], TISSUE_MODEL_DISPLAY_TITLE)
+        self.assertEqual(render_asset["caption"], "")
+        self.assertNotIn("figure_class", render_asset)
+        self.assertNotEqual(render_asset["title"], TISSUE_MODEL_TITLE)
+
+    def test_plant_animal_cells_model_adds_no_visible_text(self):
+        resolved = {
+            "model_id": PLANT_ANIMAL_MODEL_ID,
+            "missing_reason": None,
+            "asset": {
+                "model_id": PLANT_ANIMAL_MODEL_ID,
+                "asset_type": "image",
+                "src": PLANT_ANIMAL_MODEL_SRC,
+                "alt_text": "Root cells and skin cells shown side by side under magnification.",
+                "title": PLANT_ANIMAL_MODEL_TITLE,
+                "caption": PLANT_ANIMAL_MODEL_CAPTION,
+            },
+        }
+
+        render_asset = dash.static_image_asset_for_render(resolved)
+
+        self.assertIsNotNone(render_asset)
+        self.assertEqual(render_asset["filename"], PLANT_ANIMAL_MODEL_SRC)
+        self.assertEqual(render_asset["title"], "")
+        self.assertEqual(render_asset["caption"], "")
+        self.assertNotIn("figure_class", render_asset)
+
+    def test_organization_levels_model_uses_png_and_hides_generic_caption(self):
+        resolved = {
+            "model_id": ORGANIZATION_MODEL_ID,
+            "missing_reason": None,
+            "asset": {
+                "model_id": ORGANIZATION_MODEL_ID,
+                "asset_type": "image",
+                "src": ORGANIZATION_MODEL_SRC,
+                "alt_text": "An organism, skin, tissue, and cell shown as connected levels of organization.",
+                "title": ORGANIZATION_MODEL_TITLE,
+                "caption": ORGANIZATION_MODEL_CAPTION,
+            },
+        }
+
+        render_asset = dash.static_image_asset_for_render(resolved)
+
+        self.assertIsNotNone(render_asset)
+        self.assertEqual(render_asset["filename"], ORGANIZATION_MODEL_SRC)
+        self.assertEqual(render_asset["title"], ORGANIZATION_MODEL_TITLE)
+        self.assertEqual(render_asset["caption"], "")
+        self.assertNotIn(".svg", render_asset["filename"])
+
+    def test_unknown_samples_model_uses_png_and_hides_generic_caption(self):
+        resolved = {
+            "model_id": UNKNOWN_SAMPLES_MODEL_ID,
+            "missing_reason": None,
+            "asset": {
+                "model_id": UNKNOWN_SAMPLES_MODEL_ID,
+                "asset_type": "image",
+                "src": UNKNOWN_SAMPLES_MODEL_SRC,
+                "alt_text": "Three unknown microscope samples, including cell-like samples and crystals.",
+                "title": UNKNOWN_SAMPLES_MODEL_TITLE,
+                "caption": UNKNOWN_SAMPLES_MODEL_CAPTION,
+            },
+        }
+
+        render_asset = dash.static_image_asset_for_render(resolved)
+
+        self.assertIsNotNone(render_asset)
+        self.assertEqual(render_asset["filename"], UNKNOWN_SAMPLES_MODEL_SRC)
+        self.assertEqual(render_asset["title"], UNKNOWN_SAMPLES_MODEL_TITLE)
+        self.assertEqual(render_asset["caption"], "")
+        self.assertNotIn(".svg", render_asset["filename"])
+
+    def test_seedling_cell_division_model_uses_png_and_hides_caption(self):
+        resolved = {
+            "model_id": SEEDLING_MODEL_ID,
+            "missing_reason": None,
+            "asset": {
+                "model_id": SEEDLING_MODEL_ID,
+                "asset_type": "image",
+                "src": SEEDLING_MODEL_SRC,
+                "alt_text": "A seedling growing over time with dividing cells shown in a root tip.",
+                "title": SEEDLING_MODEL_TITLE,
+                "caption": SEEDLING_MODEL_CAPTION,
+            },
+        }
+
+        render_asset = dash.static_image_asset_for_render(resolved)
+
+        self.assertIsNotNone(render_asset)
+        self.assertEqual(render_asset["filename"], SEEDLING_MODEL_SRC)
+        self.assertEqual(render_asset["title"], SEEDLING_MODEL_TITLE)
+        self.assertEqual(render_asset["caption"], "")
+        self.assertNotIn(".svg", render_asset["filename"])
 
     def test_teacher_question_preview_renders_asset_accessibly_and_responsively(self):
         self.login_as_teacher()

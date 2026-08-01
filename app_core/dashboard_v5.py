@@ -2278,11 +2278,25 @@ MODEL_ASSET_DISPLAY_TITLE_OVERRIDES = {
     # Keep catalog metadata stable while showing the student-facing asset name.
     "MS-LS1-1B_model_cell_theory_basic_01": "Animal Cell",
     "MS-LS1-1B_model_leaf_cells_01": "Leaf Sample",
+    "MS-LS1-1B_model_cells_to_tissue_01": "Skin Sample",
+    "MS-LS1-1B_model_plant_animal_cells_01": "",
 }
 
 GENERIC_MODEL_ASSET_CAPTION_PREFIXES = (
     "supports questions about",
 )
+
+MODEL_ASSET_SUPPRESSED_CAPTIONS = {
+    "MS-LS1-1B_model_cells_to_tissue_01": {
+        "supports questions connecting cell groups to tissues.",
+    },
+    "MS-LS1-1B_model_plant_animal_cells_01": {
+        "supports questions comparing cells from plants and animals.",
+    },
+    "MS-LS1-1B_model_seedling_cell_division_01": {
+        "supports questions connecting growth to cells dividing and producing more cells.",
+    },
+}
 
 
 def model_asset_display_title(asset: dict) -> str:
@@ -2298,6 +2312,9 @@ def model_asset_display_caption(asset: dict) -> str:
         return ""
 
     caption_lower = caption.lower()
+    model_id = (asset.get("model_id") or "").strip()
+    if caption_lower in MODEL_ASSET_SUPPRESSED_CAPTIONS.get(model_id, set()):
+        return ""
     if any(
         caption_lower.startswith(prefix)
         for prefix in GENERIC_MODEL_ASSET_CAPTION_PREFIXES
