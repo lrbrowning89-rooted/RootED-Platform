@@ -686,6 +686,20 @@ def login_destination_for_active_session(user) -> str:
     return get_post_login_destination(user)
 
 
+def authenticated_root_destination(user) -> str:
+    """Route an authenticated homepage visit by its effective session role."""
+    if session.get("student_mode_preview") and can_access_teacher_tools(user):
+        return url_for("student_view")
+    if is_owner(user):
+        return url_for("owner_home")
+    effective_role = effective_session_role(user)
+    if effective_role == "teacher":
+        return url_for("teacher_home")
+    if effective_role == "student":
+        return url_for("student_view")
+    return url_for("restricted_onboarding")
+
+
 @app.before_request
 def enforce_authenticated_session_limits():
     if request.endpoint in {"static", "favicon", "robots_txt"}:
@@ -734,7 +748,7 @@ def authenticated_header_context(user=None) -> dict | None:
             "display_label": display_label,
             "home_url": url_for("student_view"),
             "home_label": "RootED",
-            "links": (),
+            "links": (("View Public Site", url_for("public_landing")),),
             "leave_student_mode": True,
         }
     owner_teacher_view = is_owner(user) and (
@@ -743,6 +757,7 @@ def authenticated_header_context(user=None) -> dict | None:
     if owner_teacher_view:
         teacher_view_links = [
             ("Return to Owner Workspace", url_for("owner_home")),
+            ("View Public Site", url_for("public_landing")),
         ]
         context = {
             "context_label": "Teacher View Preview",
@@ -770,6 +785,7 @@ def authenticated_header_context(user=None) -> dict | None:
     if is_owner(user):
         owner_links = [
             ("Teacher View", url_for("index")),
+            ("View Public Site", url_for("public_landing")),
         ]
         owner_links.extend(
             (
@@ -801,6 +817,7 @@ def authenticated_header_context(user=None) -> dict | None:
             "links": (
                 ("Student Mode", url_for("student_view")),
                 ("Question Flags", url_for("question_flags_review")),
+                ("View Public Site", url_for("public_landing")),
             ),
             "leave_student_mode": False,
             "teacher_flag_count": teacher_flag_count,
@@ -811,7 +828,7 @@ def authenticated_header_context(user=None) -> dict | None:
             "display_label": display_label,
             "home_url": url_for("student_view", home=1),
             "home_label": "RootED",
-            "links": (),
+            "links": (("View Public Site", url_for("public_landing")),),
             "leave_student_mode": False,
         }
     return {
@@ -819,7 +836,7 @@ def authenticated_header_context(user=None) -> dict | None:
         "display_label": display_label,
         "home_url": url_for("restricted_onboarding"),
         "home_label": "RootED",
-        "links": (),
+        "links": (("View Public Site", url_for("public_landing")),),
         "leave_student_mode": False,
     }
 
@@ -9463,7 +9480,6 @@ def not_authorized():
 
 
 # ---------- Public landing page ----------
-@app.get("/")
 @app.get("/landing")
 def public_landing():
     landing_html = """
@@ -10008,6 +10024,14 @@ def public_landing():
     </html>
     """
     return render_template_string(landing_html)
+
+
+@app.get("/")
+def root_home():
+    user = current_user()
+    if user:
+        return redirect(authenticated_root_destination(user))
+    return public_landing()
 
 
 # ---------- Teacher dashboard ----------

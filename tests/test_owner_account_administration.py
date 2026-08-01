@@ -403,6 +403,61 @@ class OwnerAccountAdministrationTests(unittest.TestCase):
         self.assertIn(b"Attempts Backup", self.client.get("/owner/data-maintenance").data)
         self.assertIn(b"Adaptive Assessment Simulator", self.client.get("/owner/developer-diagnostics").data)
 
+    def test_root_routes_anonymous_and_authenticated_effective_roles(self):
+        anonymous = self.client.get("/")
+        self.assertEqual(anonymous.status_code, 200)
+        self.assertIn(b"Science Learning. Built differently.", anonymous.data)
+
+        expected_by_user = {
+            1: "/owner",
+            2: "/teacher",
+            3: "/student",
+        }
+        for user_id, expected in expected_by_user.items():
+            self.login(user_id)
+            with self.subTest(user_id=user_id):
+                response = self.client.get("/")
+                self.assertEqual(response.status_code, 302)
+                self.assertEqual(response.headers["Location"], expected)
+
+        self.login(2)
+        with self.client.session_transaction() as teacher_session:
+            teacher_session["student_mode_preview"] = {
+                "teacher_user_id": 2,
+                "student_id": "TEST-STUDENT",
+                "objective_id": "MS-LS1-1A",
+            }
+        student_mode = self.client.get("/")
+        self.assertEqual(student_mode.status_code, 302)
+        self.assertEqual(student_mode.headers["Location"], "/student")
+
+    def test_root_routes_by_impersonated_role_and_public_site_stays_available(self):
+        token = self.owner_token()
+        self.client.post(
+            "/owner/impersonation/start/2",
+            data={"csrf_token": token},
+        )
+        teacher_root = self.client.get("/")
+        self.assertEqual(teacher_root.headers["Location"], "/teacher")
+        with self.client.session_transaction() as teacher_session:
+            stop_token = teacher_session["impersonation_stop_csrf_token"]
+        self.client.post(
+            "/owner/impersonation/stop",
+            data={"csrf_token": stop_token},
+        )
+
+        owner_token = self.owner_token()
+        self.client.post(
+            "/owner/impersonation/start/3",
+            data={"csrf_token": owner_token},
+        )
+        student_root = self.client.get("/")
+        self.assertEqual(student_root.headers["Location"], "/student")
+
+        public_site = self.client.get("/landing")
+        self.assertEqual(public_site.status_code, 200)
+        self.assertIn(b"Science Learning. Built differently.", public_site.data)
+
     def test_owner_impersonation_page_searches_teacher_and_student(self):
         self.login(1)
         page = self.client.get("/owner/impersonation")
