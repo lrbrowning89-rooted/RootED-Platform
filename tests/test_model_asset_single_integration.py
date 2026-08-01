@@ -357,6 +357,7 @@ class SingleModelAssetIntegrationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Teacher Preview", response.data)
         self.assertIn(b"Responses are disabled.", response.data)
+        self.assertIn(b".model-asset{max-width:680px;margin:14px auto", response.data)
         self.assertIn(b".model-asset img{display:block;max-width:100%;height:auto", response.data)
         self.assert_model_asset_rendered(response.data)
 

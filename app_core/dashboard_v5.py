@@ -5737,7 +5737,7 @@ def teacher_question_preview():
   .flag-form{display:grid;gap:8px;margin-top:10px}
   .btn-flag{background:#eef2f7;color:#374151;border:1px solid #cbd5e1}
   .flash-box{background:#e7f7ee;border:1px solid #a8e0bf;color:#0f6b3a;padding:10px 12px;border-radius:8px;margin:10px 0;font-size:14px}
-  .model-asset{margin:14px 0 16px 0;padding:12px;border:1px solid #d7dee8;border-radius:8px;background:#f8fafc}
+  .model-asset{max-width:680px;margin:14px auto 16px auto;padding:12px;border:1px solid #d7dee8;border-radius:8px;background:#f8fafc}
   .model-asset-title{margin:0 0 8px 0;font-weight:700;color:#1f2937}
   .model-asset-caption{margin:8px 0 0 0;font-size:13px;color:#555;line-height:1.4}
   .model-asset img{display:block;max-width:100%;height:auto;margin:0 auto;border-radius:6px}
@@ -8028,7 +8028,7 @@ def owner_question_preview():
   .header{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}.header h1{margin:0;color:#234b35}.muted{color:#5f6b64;font-size:13px}
   .btn{display:inline-block;background:#2f6f4e;color:#fff;text-decoration:none;padding:8px 12px;border-radius:8px;font-size:13px;font-weight:700}
   .banner{margin:16px 0;padding:12px;border-radius:8px;background:#eef7ed;border:1px solid #c8d9c4;color:#2f5138}.choice{margin:8px 0;padding:8px;border:1px solid #e5e7eb;border-radius:7px;background:#fafafa}
-  .model-asset{margin:14px 0;padding:12px;border:1px solid #d7dee8;border-radius:8px;background:#f8fafc}.model-asset img{display:block;max-width:100%;height:auto;margin:0 auto}.model-asset-title{font-weight:700}.model-asset-caption{font-size:13px;color:#555}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+  .model-asset{max-width:680px;margin:14px auto;padding:12px;border:1px solid #d7dee8;border-radius:8px;background:#f8fafc}.model-asset img{display:block;max-width:100%;height:auto;margin:0 auto}.model-asset-title{font-weight:700}.model-asset-caption{font-size:13px;color:#555}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 </style>
 <main class="card">
   <header class="header">
@@ -12712,7 +12712,7 @@ WHERE o.standard_id = ?
   .flag-panel{border:1px solid #e5e7eb;border-radius:8px;background:#f9fafb;padding:10px;margin-top:8px}
   .flag-form{display:grid;gap:8px;margin-top:10px}
   .btn-flag{background:#eef2f7;color:#374151;border:1px solid #cbd5e1}
-  .model-asset{margin:14px 0 16px 0;padding:12px;border:1px solid #d7dee8;border-radius:8px;background:#f8fafc}
+  .model-asset{max-width:680px;margin:14px auto 16px auto;padding:12px;border:1px solid #d7dee8;border-radius:8px;background:#f8fafc}
   .model-asset-title{margin:0 0 8px 0;font-weight:700;color:#1f2937}
   .model-asset-caption{margin:8px 0 0 0;font-size:13px;color:#555;line-height:1.4}
   .model-asset img{display:block;max-width:100%;height:auto;margin:0 auto;border-radius:6px}
