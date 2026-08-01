@@ -23,7 +23,7 @@ from logging.handlers import RotatingFileHandler
 import traceback
 import secrets
 import hmac
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 from urllib.parse import urlsplit
 
@@ -31,7 +31,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.exceptions import HTTPException
 from werkzeug.middleware.proxy_fix import ProxyFix
 from authlib.integrations.flask_client import OAuth
-from markupsafe import Markup
+from markupsafe import Markup, escape
 
 from app_core.config import (
     ALLOW_SSO_AUTO_CREATE,
@@ -217,6 +217,8 @@ app.config.update(
     # OAuth callbacks are top-level GET navigations, so Lax preserves the
     # session state while preventing cross-site subrequests from sending it.
     SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_PERMANENT=False,
+    PERMANENT_SESSION_LIFETIME=timedelta(hours=12),
 )
 if TRUST_PROXY_HEADERS:
     # Render terminates HTTPS before forwarding to Gunicorn. Trust exactly one
@@ -646,6 +648,69 @@ def get_post_login_destination(user=None) -> str:
     if can_access_student_instruction(user):
         return url_for("student_view")
     return url_for("restricted_onboarding")
+
+
+AUTH_SESSION_INACTIVITY_SECONDS = 2 * 60 * 60
+AUTH_SESSION_ABSOLUTE_SECONDS = 12 * 60 * 60
+
+
+def refresh_authenticated_session_metadata(user) -> None:
+    now = int(time.time())
+    session.permanent = False
+    session["user_id"] = user["id"]
+    session["username"] = user["username"]
+    session["role"] = effective_session_role(user)
+    session["authenticated_at"] = now
+    session["last_seen_at"] = now
+
+
+def start_authenticated_session(user) -> None:
+    session.clear()
+    refresh_authenticated_session_metadata(user)
+    session["current_mode"] = "home"
+    session["locked_payload"] = None
+
+
+def coerce_session_timestamp(name: str, now: int) -> int:
+    try:
+        value = int(session.get(name))
+    except (TypeError, ValueError):
+        value = now
+        session[name] = value
+    return value
+
+
+def login_destination_for_active_session(user) -> str:
+    if session.get("student_mode_preview") and can_access_teacher_tools(user):
+        return url_for("student_view")
+    return get_post_login_destination(user)
+
+
+@app.before_request
+def enforce_authenticated_session_limits():
+    if request.endpoint in {"static", "favicon", "robots_txt"}:
+        return None
+    if "user_id" not in session:
+        return None
+
+    now = int(time.time())
+    authenticated_at = coerce_session_timestamp("authenticated_at", now)
+    last_seen_at = coerce_session_timestamp("last_seen_at", now)
+    expired = (
+        now - authenticated_at > AUTH_SESSION_ABSOLUTE_SECONDS
+        or now - last_seen_at > AUTH_SESSION_INACTIVITY_SECONDS
+    )
+    if expired:
+        finish_impersonation("session_expired")
+        session.clear()
+        flash("Your RootED session expired. Please sign in again.")
+        if request.endpoint == "login":
+            return None
+        return redirect(url_for("login"))
+
+    session.permanent = False
+    session["last_seen_at"] = now
+    return None
 
 
 def authenticated_header_context(user=None) -> dict | None:
@@ -2209,6 +2274,37 @@ def resolve_model_asset_for_question(conn: sqlite3.Connection, question_id: str 
     return {"model_id": model_id, "asset": asset, "missing_reason": None}
 
 
+MODEL_ASSET_DISPLAY_TITLE_OVERRIDES = {
+    # Keep catalog metadata stable while showing the student-facing asset name.
+    "MS-LS1-1B_model_cell_theory_basic_01": "Animal Cell",
+}
+
+GENERIC_MODEL_ASSET_CAPTION_PREFIXES = (
+    "supports questions about",
+)
+
+
+def model_asset_display_title(asset: dict) -> str:
+    model_id = (asset.get("model_id") or "").strip()
+    if model_id in MODEL_ASSET_DISPLAY_TITLE_OVERRIDES:
+        return MODEL_ASSET_DISPLAY_TITLE_OVERRIDES[model_id]
+    return (asset.get("title") or "").strip()
+
+
+def model_asset_display_caption(asset: dict) -> str:
+    caption = (asset.get("caption") or "").strip()
+    if not caption:
+        return ""
+
+    caption_lower = caption.lower()
+    if any(
+        caption_lower.startswith(prefix)
+        for prefix in GENERIC_MODEL_ASSET_CAPTION_PREFIXES
+    ):
+        return ""
+    return caption
+
+
 def static_image_asset_for_render(resolved_asset: dict | None) -> dict | None:
     """
     Convert a resolved model asset into a static PNG/SVG payload for the student UI.
@@ -2252,11 +2348,106 @@ def static_image_asset_for_render(resolved_asset: dict | None) -> dict | None:
 
     alt_text = (asset.get("alt_text") or "").strip()
     return {
+        "model_id": (asset.get("model_id") or "").strip(),
         "filename": static_filename,
-        "title": (asset.get("title") or "").strip(),
-        "caption": (asset.get("caption") or "").strip(),
+        "title": model_asset_display_title(asset),
+        "caption": model_asset_display_caption(asset),
         "alt_text": alt_text,
     }
+
+
+ASSESSMENT_PRESENTATION_CSS = """
+  .assessment{width:100%;margin:0;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:18px 20px}
+  .assessment-label{margin:0 0 7px;color:#637067;font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase}
+  .assessment-question{max-width:85ch;margin:0 0 12px;color:#17261e;font-size:clamp(22px,3.4vw,30px);line-height:1.3;font-weight:800}
+  .assessment-body{width:100%}
+  .assessment-answers{min-width:0}
+  .answer-form{max-width:920px;margin:0 auto}
+  .choice{margin:8px 0;padding:8px;border:1px solid #e5e7eb;border-radius:8px}
+  .model-asset{box-sizing:border-box;width:100%;max-width:500px;margin:12px auto 14px auto;padding:12px;border:1px solid #d7dee8;border-radius:8px;background:#f8fafc}
+  .model-asset-title{margin:0 0 8px 0;font-weight:700;color:#1f2937;text-align:center}
+  .model-asset-caption{margin:6px 0 0 0;font-size:13px;color:#555;line-height:1.4}
+  .model-asset img{display:block;width:100%;max-width:500px;height:auto;margin:0 auto;border-radius:6px}
+  .assessment form p{margin:12px 0 0 0}
+  @media(min-width:901px){.assessment-body--with-model{display:grid;grid-template-columns:minmax(260px,42%) minmax(0,58%);gap:20px;align-items:start}.assessment-body--with-model .model-asset{margin:0 auto}.assessment-body--with-model .answer-form{max-width:none;margin:0}}
+  @media(max-width:900px){.assessment-body--with-model{display:block}.assessment-body--with-model .model-asset{margin:12px auto 14px auto}}
+  @media(max-width:600px){.assessment-question{max-width:none}.answer-form{max-width:none}.model-asset{max-width:500px}.model-asset img{width:100%;max-width:500px;height:auto}}
+"""
+
+
+def hidden_input_html(name: str, value) -> Markup:
+    return Markup(
+        '<input type="hidden" name="{}" value="{}">'.format(
+            escape(name),
+            escape("" if value is None else value),
+        )
+    )
+
+
+def render_assessment_question_content(
+    current_question,
+    current_model_asset=None,
+    *,
+    input_name: str = "response",
+    disabled: bool = False,
+    hidden_fields: Markup | str = "",
+    submit_label: str | None = "Submit Answer",
+) -> Markup:
+    """
+    Shared assessment presentation for student delivery, Student Mode, and previews.
+    Route-specific controls, state, and scoring remain outside this helper.
+    """
+    if not current_question:
+        return Markup("")
+    html = """
+    <p class="assessment-label">Assessment question</p>
+    <h2 class="assessment-question" id="question-prompt">{{ current_question['stem'] }}</h2>
+    <div class="assessment-body{% if current_model_asset %} assessment-body--with-model{% endif %}">
+      {% if current_model_asset %}
+        <figure class="model-asset">
+          {% if current_model_asset.title %}
+            <figcaption class="model-asset-title">{{ current_model_asset.title }}</figcaption>
+          {% endif %}
+          <img src="{{ url_for('static', filename=current_model_asset.filename) }}" alt="{{ current_model_asset.alt_text }}">
+          {% if current_model_asset.caption %}
+            <p class="model-asset-caption">{{ current_model_asset.caption }}</p>
+          {% endif %}
+          {% if current_model_asset.alt_text %}
+            <span class="sr-only">Image description: {{ current_model_asset.alt_text }}</span>
+          {% endif %}
+        </figure>
+      {% endif %}
+      <div class="assessment-answers">
+        <form method="post" class="answer-form" aria-labelledby="question-prompt">
+          {{ hidden_fields }}
+          {% for value, choice in choices %}
+            <div class="choice"><label><input type="radio" name="{{ input_name }}" value="{{ value }}" {% if disabled %}disabled{% elif loop.first %}required{% endif %}> {{ value }}. {{ choice }}</label></div>
+          {% endfor %}
+          {% if submit_label %}
+            <p><button class="btn" type="submit">{{ submit_label }}</button></p>
+          {% endif %}
+        </form>
+      </div>
+    </div>
+    """
+    choices = [
+        ("A", current_question["choice_a"]),
+        ("B", current_question["choice_b"]),
+        ("C", current_question["choice_c"]),
+        ("D", current_question["choice_d"]),
+    ]
+    return Markup(
+        render_template_string(
+            html,
+            current_question=current_question,
+            current_model_asset=current_model_asset,
+            hidden_fields=Markup(hidden_fields),
+            input_name=input_name,
+            disabled=disabled,
+            submit_label=submit_label,
+            choices=choices,
+        )
+    )
 
 
 def locked_student_id_for_session(conn):
@@ -5717,7 +5908,7 @@ def teacher_question_preview():
 <title>Teacher Question Preview</title>
 <style>
   body{font-family:Arial, Helvetica, sans-serif;margin:24px;background:#f3f4f6;color:#1f2937}
-  .card{max-width:760px;margin:0 auto 16px auto;background:#fff;border-radius:10px;padding:16px 20px;border:1px solid #e5e7eb}
+  .card{max-width:1120px;margin:0 auto 16px auto;background:#fff;border-radius:10px;padding:16px 20px;border:1px solid #e5e7eb}
   .header{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px}
   .btn{background:#2563eb;color:#fff;border:none;padding:8px 12px;border-radius:8px;cursor:pointer;text-decoration:none;display:inline-block}
   .btn-muted{background:#4b5563}
@@ -5725,8 +5916,6 @@ def teacher_question_preview():
   .banner{background:#fff7d6;border:1px solid #f2d27e;color:#6f4f00;border-radius:8px;padding:10px 12px;margin:12px 0}
   .banner strong,.banner span{display:block}
   .banner strong{margin-bottom:4px}
-  .choice{margin:4px 0}
-  .choice input{margin-right:8px}
   input,select,textarea{padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px}
   textarea{width:100%;min-height:58px;font:inherit}
   .muted{font-size:13px;color:#555}
@@ -5737,11 +5926,8 @@ def teacher_question_preview():
   .flag-form{display:grid;gap:8px;margin-top:10px}
   .btn-flag{background:#eef2f7;color:#374151;border:1px solid #cbd5e1}
   .flash-box{background:#e7f7ee;border:1px solid #a8e0bf;color:#0f6b3a;padding:10px 12px;border-radius:8px;margin:10px 0;font-size:14px}
-  .model-asset{max-width:680px;margin:14px auto 16px auto;padding:12px;border:1px solid #d7dee8;border-radius:8px;background:#f8fafc}
-  .model-asset-title{margin:0 0 8px 0;font-weight:700;color:#1f2937}
-  .model-asset-caption{margin:8px 0 0 0;font-size:13px;color:#555;line-height:1.4}
-  .model-asset img{display:block;max-width:100%;height:auto;margin:0 auto;border-radius:6px}
   .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+  {{ assessment_presentation_css|safe }}
 </style>
 
 <div class="card">
@@ -5793,37 +5979,14 @@ def teacher_question_preview():
   </div>
 
   {% if current_question %}
-    <h3>Question</h3>
-    <p>{{ current_question['stem'] }}</p>
-    <p class="muted">
-      {{ question_reference_meta_text(
-           current_question['objective_id'],
-           current_question['objective_text'],
-           current_question['question_id']
-         ) }}
-      <span>({{ current_question['standard_id'] }})</span>
-    </p>
-    {% if current_model_asset %}
-      <figure class="model-asset">
-        {% if current_model_asset.title %}
-          <figcaption class="model-asset-title">{{ current_model_asset.title }}</figcaption>
-        {% endif %}
-        <img src="{{ url_for('static', filename=current_model_asset.filename) }}" alt="{{ current_model_asset.alt_text }}">
-        {% if current_model_asset.caption %}
-          <p class="model-asset-caption">{{ current_model_asset.caption }}</p>
-        {% endif %}
-        {% if current_model_asset.alt_text %}
-          <span class="sr-only">Image description: {{ current_model_asset.alt_text }}</span>
-        {% endif %}
-      </figure>
-    {% endif %}
-
-    <div aria-label="Answer choices">
-      <div class="choice"><label><input type="radio" name="preview_response" value="A" disabled> A. {{ current_question['choice_a'] }}</label></div>
-      <div class="choice"><label><input type="radio" name="preview_response" value="B" disabled> B. {{ current_question['choice_b'] }}</label></div>
-      <div class="choice"><label><input type="radio" name="preview_response" value="C" disabled> C. {{ current_question['choice_c'] }}</label></div>
-      <div class="choice"><label><input type="radio" name="preview_response" value="D" disabled> D. {{ current_question['choice_d'] }}</label></div>
-    </div>
+    <section class="assessment" aria-labelledby="question-prompt">
+    {{ render_assessment_question_content(
+         current_question,
+         current_model_asset,
+         input_name='preview_response',
+         disabled=True,
+         submit_label=None
+       ) }}
     <button class="report-toggle" type="button" aria-expanded="false" aria-controls="teacher-report-panel" onclick="toggleReportPanel('teacher-report-panel', this)">Report a problem</button>
     <div class="flag-panel" id="teacher-report-panel" hidden>
       <form class="flag-form" method="post" action="{{ url_for('submit_question_flag') }}">
@@ -5853,6 +6016,7 @@ def teacher_question_preview():
         </div>
       </form>
     </div>
+    </section>
   {% else %}
     <p><em>No questions are available to preview yet.</em></p>
   {% endif %}
@@ -5896,6 +6060,8 @@ def teacher_question_preview():
         flag_category=flag_category,
         question_reference_meta_text=question_reference_meta_text,
         question_selector_label=question_selector_label,
+        assessment_presentation_css=ASSESSMENT_PRESENTATION_CSS,
+        render_assessment_question_content=render_assessment_question_content,
     )
 
 
@@ -6895,9 +7061,7 @@ def owner_start_impersonation(user_id):
         audit_id = int(cursor.lastrowid)
     finally:
         conn.close()
-    session.clear()
-    session["user_id"] = target["id"]
-    session["username"] = target["username"]
+    start_authenticated_session(target)
     session["role"] = target_role
     session["impersonation_audit_id"] = audit_id
     session["impersonation_correlation_id"] = correlation_id
@@ -6925,9 +7089,7 @@ def owner_stop_impersonation():
     session.clear()
     if not owner or not has_platform_role("owner", owner):
         return redirect(url_for("login"))
-    session["user_id"] = owner["id"]
-    session["username"] = owner["username"]
-    session["role"] = effective_session_role(owner)
+    start_authenticated_session(owner)
     return redirect(url_for("owner_home"))
 
 
@@ -8024,11 +8186,12 @@ def owner_question_preview():
 <title>Owner Question Preview</title>
 <style>
   body{font-family:Arial,Helvetica,sans-serif;margin:24px;background:#f3f4f6;color:#1f2937}
-  .card{max-width:780px;margin:0 auto;background:#fff;border-radius:12px;padding:20px;border:1px solid #e5e7eb}
+  .card{max-width:1120px;margin:0 auto;background:#fff;border-radius:12px;padding:20px;border:1px solid #e5e7eb}
   .header{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}.header h1{margin:0;color:#234b35}.muted{color:#5f6b64;font-size:13px}
   .btn{display:inline-block;background:#2f6f4e;color:#fff;text-decoration:none;padding:8px 12px;border-radius:8px;font-size:13px;font-weight:700}
-  .banner{margin:16px 0;padding:12px;border-radius:8px;background:#eef7ed;border:1px solid #c8d9c4;color:#2f5138}.choice{margin:8px 0;padding:8px;border:1px solid #e5e7eb;border-radius:7px;background:#fafafa}
-  .model-asset{max-width:680px;margin:14px auto;padding:12px;border:1px solid #d7dee8;border-radius:8px;background:#f8fafc}.model-asset img{display:block;max-width:100%;height:auto;margin:0 auto}.model-asset-title{font-weight:700}.model-asset-caption{font-size:13px;color:#555}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+  .banner{margin:16px 0;padding:12px;border-radius:8px;background:#eef7ed;border:1px solid #c8d9c4;color:#2f5138}
+  .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+  {{ assessment_presentation_css|safe }}
 </style>
 <main class="card">
   <header class="header">
@@ -8036,22 +8199,16 @@ def owner_question_preview():
     <a class="btn" href="{{ url_for('owner_question_flags', filter=return_filter) }}">Back to Question Flags</a>
   </header>
   <div class="banner">Responses are disabled. This preview cannot record attempts, change placement, or alter adaptive progress.</div>
-  <h2>{{ current_question['stem'] }}</h2>
+  <section class="assessment" aria-labelledby="question-prompt">
+  {{ render_assessment_question_content(
+       current_question,
+       current_model_asset,
+       input_name='owner_preview_response',
+       disabled=True,
+       submit_label=None
+     ) }}
   <p class="muted">{{ question_reference_meta_text(current_question['objective_id'], current_question['objective_text'], current_question['question_id']) }} · {{ current_question['standard_id'] }}</p>
-  {% if current_model_asset %}
-    <figure class="model-asset">
-      {% if current_model_asset.title %}<figcaption class="model-asset-title">{{ current_model_asset.title }}</figcaption>{% endif %}
-      <img src="{{ url_for('static', filename=current_model_asset.filename) }}" alt="{{ current_model_asset.alt_text }}">
-      {% if current_model_asset.caption %}<p class="model-asset-caption">{{ current_model_asset.caption }}</p>{% endif %}
-      {% if current_model_asset.alt_text %}<span class="sr-only">Image description: {{ current_model_asset.alt_text }}</span>{% endif %}
-    </figure>
-  {% endif %}
-  <div aria-label="Answer choices">
-    <div class="choice">A. {{ current_question['choice_a'] }}</div>
-    <div class="choice">B. {{ current_question['choice_b'] }}</div>
-    <div class="choice">C. {{ current_question['choice_c'] }}</div>
-    <div class="choice">D. {{ current_question['choice_d'] }}</div>
-  </div>
+  </section>
 </main>
     """
     return render_template_string(
@@ -8060,6 +8217,8 @@ def owner_question_preview():
         current_model_asset=current_model_asset,
         return_filter=return_filter,
         question_reference_meta_text=question_reference_meta_text,
+        assessment_presentation_css=ASSESSMENT_PRESENTATION_CSS,
+        render_assessment_question_content=render_assessment_question_content,
     )
 
 
@@ -8479,6 +8638,10 @@ def update_config():
 @app.route("/login", methods=["GET", "POST"])
 def login():
     conn = get_conn()
+    active_user = current_user()
+    if active_user:
+        return redirect(login_destination_for_active_session(active_user))
+
     if request.method == "POST":
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "").strip()
@@ -8499,15 +8662,11 @@ def login():
             )
             conn.commit()
 
-            session["user_id"] = user["id"]
-            session["username"] = user["username"]
-            session["role"] = effective_session_role(user)
+            next_destination = safe_local_redirect(request.form.get("next"))
+            start_authenticated_session(user)
             flash(f"Welcome, {user['username']}!")
-            session["current_mode"] = "home"
-            session["locked_payload"] = None
             return redirect(
-                safe_local_redirect(request.form.get("next"))
-                or get_post_login_destination(user)
+                next_destination or get_post_login_destination(user)
             )
         else:
             flash("Invalid username or password.")
@@ -8982,7 +9141,6 @@ def logout():
     require_logout_csrf()
     finish_impersonation("logout")
     session.clear()
-    flash("You have been logged out.")
     return redirect(url_for("login"))
 
 
@@ -9127,18 +9285,13 @@ def sso_callback(provider):
         flash("This account is not authorized for RootED access.")
         return redirect(url_for("not_authorized"))
 
-    # Write login info to session (same as local login)
-    session["user_id"] = user["id"]
-    session["username"] = user["username"]
-    session["role"] = effective_session_role(user)
-
+    post_login_destination = safe_local_redirect(
+        session.pop("post_login_destination", None)
+    )
+    start_authenticated_session(user)
     flash("Welcome to RootED.")
-
-    session["current_mode"] = "home"
-    session["locked_payload"] = None
     return redirect(
-        safe_local_redirect(session.pop("post_login_destination", None))
-        or get_post_login_destination(user)
+        post_login_destination or get_post_login_destination(user)
     )
 
 
@@ -12692,44 +12845,53 @@ WHERE o.standard_id = ?
                 )
                 current_model_asset = static_image_asset_for_render(resolved_asset)
 
+    answer_hidden_fields = Markup("")
+    if current_question:
+        hidden_parts = [hidden_input_html("action", "answer")]
+        if session.get("role") == "teacher":
+            hidden_parts.append(hidden_input_html("student_id", student_id))
+            hidden_parts.append(hidden_input_html("objective_id", objective_id))
+        hidden_parts.append(hidden_input_html("question_id", current_question["question_id"]))
+        if session.get("role") == "student" and current_delivery:
+            hidden_parts.append(
+                hidden_input_html("submission_token", current_delivery["submission_token"])
+            )
+        answer_hidden_fields = Markup("\n".join(str(part) for part in hidden_parts))
+
     student_html = """
 <!doctype html>
 <title>RootED Learning</title>
 <style>
-  body{font-family:Arial, Helvetica, sans-serif;margin:24px;background:#f3f4f6}
-  .card{max-width:700px;margin:0 auto 16px auto;background:#fff;
-        border-radius:10px;padding:16px 20px;border:1px solid #e5e7eb}
-  .header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+  *{box-sizing:border-box}
+  body{font-family:Arial, Helvetica, sans-serif;margin:24px;background:#f3f4f6;color:#17261e}
+  .learning-shell{max-width:1120px;margin:0 auto 24px auto}
+  .learning-header{display:flex;justify-content:space-between;align-items:flex-start;gap:18px;margin:0 0 14px 0}
+  .learning-title{margin:0;color:#234b35}
+  .learning-context{font-size:13px;color:#555;margin:2px 0 0 0}
   .btn{background:#2f6f4e;color:#fff;border:none;padding:9px 13px;border-radius:8px;cursor:pointer;text-decoration:none;display:inline-block}
-  .choice{margin:8px 0;padding:8px;border:1px solid #e5e7eb;border-radius:8px}
   .ok{color:#16a34a}
   .bad{color:#dc2626}
   input,select,textarea{padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px}
   textarea{width:100%;min-height:58px;font:inherit}
-  .toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
-  .report-toggle{margin-top:14px;background:transparent;color:#4b5563;border:1px solid #d1d5db;padding:5px 8px;border-radius:6px;font-size:12px;cursor:pointer}
+  .toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 12px 0}
+  .teacher-controls-card,.feedback-card,.review-card,.empty-state-card{width:100%;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;margin:0 0 14px 0}
+  .feedback-card{background:#f8fcf8;border-color:#cfe5d0}
+  .report-toggle{margin-top:10px;background:transparent;color:#4b5563;border:1px solid #d1d5db;padding:5px 8px;border-radius:6px;font-size:12px;cursor:pointer}
   .flag-panel[hidden]{display:none}
   .flag-panel{border:1px solid #e5e7eb;border-radius:8px;background:#f9fafb;padding:10px;margin-top:8px}
   .flag-form{display:grid;gap:8px;margin-top:10px}
   .btn-flag{background:#eef2f7;color:#374151;border:1px solid #cbd5e1}
-  .model-asset{max-width:680px;margin:14px auto 16px auto;padding:12px;border:1px solid #d7dee8;border-radius:8px;background:#f8fafc}
-  .model-asset-title{margin:0 0 8px 0;font-weight:700;color:#1f2937}
-  .model-asset-caption{margin:8px 0 0 0;font-size:13px;color:#555;line-height:1.4}
-  .model-asset img{display:block;max-width:100%;height:auto;margin:0 auto;border-radius:6px}
   .enrollment-box{border:1px solid #d7dee8;border-radius:8px;background:#f8fafc;padding:12px;margin:12px 0}
   .class-chip{display:inline-block;background:#e7f7ee;color:#0f6b3a;border:1px solid #a8e0bf;border-radius:999px;padding:4px 8px;margin:3px;font-size:12px}
   .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
   :focus-visible{outline:3px solid #c98f35;outline-offset:3px}
   .learning-meta{color:#55645b;font-size:14px;line-height:1.5}
-  .growth{margin:14px 0 18px;border:1px solid #d7e2d5;border-radius:10px;padding:14px;background:#fbfdf9}
+  .growth{width:100%;margin:0 0 14px 0;border:1px solid #d7e2d5;border-radius:10px;padding:16px 18px;background:#fbfdf9}
   .growth-head{display:flex;justify-content:space-between;align-items:center;gap:12px}
   .growth-title{font-weight:800;color:#234b35}.growth-status{font-weight:800;color:#8a611e}
   .growth-focus{margin:10px 0 0;color:#536259}
   .growth-focus-label{display:block;font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase}
   .growth-focus-text{display:block;margin-top:2px;font-size:13px;font-weight:500;line-height:1.4}
-  .assessment{margin-top:30px;padding-top:24px;border-top:1px solid #e2e8e3}
-  .assessment-label{margin:0 0 7px;color:#637067;font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase}
-  .assessment-question{margin:0 0 18px;color:#17261e;font-size:clamp(22px,3.4vw,30px);line-height:1.3;font-weight:800}
   .transition-note{margin:10px 0;padding:9px 11px;border-left:4px solid #2f6f4e;background:#eef6ea;color:#234b35;font-weight:700}
   .plant-summary{display:flex;align-items:center;gap:10px;margin:12px 0;padding:10px;border-radius:8px;background:#f3f8ee}
   .plant-visual{min-width:54px;font-size:24px;letter-spacing:-5px}.plant-visual span{display:none}
@@ -12746,14 +12908,16 @@ WHERE o.standard_id = ?
   .growth-seed{width:8%}.growth-root{width:18%}.growth-shoot{width:28%}.growth-leaf{width:38%}
   .growth-branch{width:48%}.growth-bud{width:58%}.growth-canopy{width:68%}.growth-ready{width:78%}
   .growth-nearly{width:88%}.growth-strong{width:94%}.growth-complete{width:100%}
-  @media(max-width:600px){body{margin:12px}.card{padding:14px}.header{align-items:flex-start;gap:12px}}
+  @media(max-width:800px){body{margin:16px}.learning-header{flex-direction:column}.assessment,.growth,.teacher-controls-card,.feedback-card,.review-card,.empty-state-card{padding:14px}}
+  @media(max-width:600px){body{margin:12px}.learning-shell{max-width:none}}
+  {{ assessment_presentation_css|safe }}
 </style>
 
-<div class="card">
-  <div class="header">
+<main class="learning-shell">
+  <header class="learning-header">
     <div>
-      <h2 style="margin:0;color:#234b35;">{{ 'Student Mode Preview' if session.get('role') == 'teacher' else 'RootED Learning' }}</h2>
-      <p style="font-size:13px;color:#555;margin:2px 0 0 0;">
+      <h2 class="learning-title">{{ 'Student Mode Preview' if session.get('role') == 'teacher' else 'RootED Learning' }}</h2>
+      <p class="learning-context">
         👩‍🎓 Logged in as <strong>{{ account_label }}</strong>
         {% if teacher_attribution %}<br>Assigned by {{ teacher_attribution }}{% endif %}
       </p>
@@ -12767,7 +12931,7 @@ WHERE o.standard_id = ?
     {% else %}
       <a class="btn" href="{{ url_for('student_view', home=1) }}">Back to Home</a>
     {% endif %}
-  </div>
+  </header>
 
   <section class="growth {{ growth_view.state }}" role="status" aria-live="polite" aria-label="Growing Understanding">
     <div class="growth-head">
@@ -12797,7 +12961,7 @@ WHERE o.standard_id = ?
 
   {% with msgs = get_flashed_messages() %}
     {% if msgs %}
-      <div style="background:#e7f7ee;border:1px solid #a8e0bf;color:#0f6b3a;padding:10px 12px;border-radius:8px;margin:10px 0;font-size:14px;">
+      <div class="feedback-card" style="color:#0f6b3a;font-size:14px;">
         {% for m in msgs %}
           <div>✅ {{ m }}</div>
         {% endfor %}
@@ -12825,8 +12989,8 @@ WHERE o.standard_id = ?
     </div>
   {% endif %}
 
-  <form method="get" class="toolbar">
-    {% if session.get('role') == 'teacher' %}
+  {% if session.get('role') == 'teacher' %}
+  <form method="get" class="toolbar teacher-controls-card">
       <label>Student
         <select name="student_id" onchange="this.form.submit()">
           {% for s in students %}
@@ -12845,11 +13009,12 @@ WHERE o.standard_id = ?
           {% endfor %}
         </select>
       </label>
-    {% endif %}
     <noscript><button class="btn" type="submit">Go</button></noscript>
   </form>
+  {% endif %}
 
   {% if feedback %}
+    <div class="feedback-card">
     {% if feedback.error %}
       <p class="bad"><strong>{{feedback.error}}</strong></p>
     {% else %}
@@ -12861,10 +13026,11 @@ WHERE o.standard_id = ?
 
       <hr>
     {% endif %}
+    </div>
   {% endif %}
 
   {% if locked_review %}
-    <div style="border: 1px solid #d9c27a; background: #fff8e1; padding: 16px; border-radius: 10px; margin-bottom: 20px;">
+    <div class="review-card" style="border-color:#d9c27a;background:#fff8e1;">
       <h3 style="margin-top: 0;">You need to review this concept before continuing.</h3>
       {% if locked_review.mini_lesson %}
         <h4>{{ locked_review.mini_lesson.title or "Quick Review" }}</h4>
@@ -12891,40 +13057,14 @@ WHERE o.standard_id = ?
 
   {% if current_question %}
     <section class="assessment" aria-labelledby="question-prompt">
-    <p class="assessment-label">Assessment question</p>
-    <h2 class="assessment-question" id="question-prompt">{{current_question['stem']}}</h2>
-    {% if current_model_asset %}
-      <figure class="model-asset">
-        {% if current_model_asset.title %}
-          <figcaption class="model-asset-title">{{ current_model_asset.title }}</figcaption>
-        {% endif %}
-        <img src="{{ url_for('static', filename=current_model_asset.filename) }}" alt="{{ current_model_asset.alt_text }}">
-        {% if current_model_asset.caption %}
-          <p class="model-asset-caption">{{ current_model_asset.caption }}</p>
-        {% endif %}
-        {% if current_model_asset.alt_text %}
-          <span class="sr-only">Image description: {{ current_model_asset.alt_text }}</span>
-        {% endif %}
-      </figure>
-    {% endif %}
-    <form method="post" aria-labelledby="question-prompt">
-      <input type="hidden" name="action" value="answer">
-      {% if session.get('role') == 'teacher' %}
-      <input type="hidden" name="student_id" value="{{student_id}}">
-      <input type="hidden" name="objective_id" value="{{objective_id}}">
-      {% endif %}
-      <input type="hidden" name="question_id" value="{{current_question['question_id']}}">
-      {% if session.get('role') == 'student' and current_delivery %}
-      <input type="hidden" name="submission_token" value="{{ current_delivery['submission_token'] }}">
-      {% endif %}
-
-      <div class="choice"><label><input type="radio" name="response" value="A" required> A. {{current_question['choice_a']}}</label></div>
-      <div class="choice"><label><input type="radio" name="response" value="B"> B. {{current_question['choice_b']}}</label></div>
-      <div class="choice"><label><input type="radio" name="response" value="C"> C. {{current_question['choice_c']}}</label></div>
-      <div class="choice"><label><input type="radio" name="response" value="D"> D. {{current_question['choice_d']}}</label></div>
-
-      <p><button class="btn" type="submit">Submit Answer</button></p>
-    </form>
+    {{ render_assessment_question_content(
+         current_question,
+         current_model_asset,
+         input_name='response',
+         disabled=False,
+         hidden_fields=answer_hidden_fields,
+         submit_label='Submit Answer'
+       ) }}
     <button class="report-toggle" type="button" aria-expanded="false" aria-controls="student-report-panel" onclick="toggleReportPanel('student-report-panel', this)">Report a problem</button>
     <div class="flag-panel" id="student-report-panel" hidden>
       <form class="flag-form" method="post" action="{{ url_for('submit_question_flag') }}">
@@ -12949,9 +13089,9 @@ WHERE o.standard_id = ?
     </div>
     </section>
   {% else %}
-    <p><em>No questions are available for this objective yet.</em></p>
+    <div class="empty-state-card"><em>No questions are available for this objective yet.</em></div>
   {% endif %}
-</div>
+</main>
 <script>
   function toggleReportPanel(panelId, button){
     const panel = document.getElementById(panelId);
@@ -12996,6 +13136,9 @@ WHERE o.standard_id = ?
         flag_categories=QUESTION_FLAG_CATEGORIES,
         flag_comment_max_length=QUESTION_FLAG_COMMENT_MAX_LENGTH,
         account_label=account_display_label(conn, current_user()),
+        assessment_presentation_css=ASSESSMENT_PRESENTATION_CSS,
+        render_assessment_question_content=render_assessment_question_content,
+        answer_hidden_fields=answer_hidden_fields,
     )
 
 # ---------- Adaptive Assessment Simulator (legacy /diagnostic routes) ----------

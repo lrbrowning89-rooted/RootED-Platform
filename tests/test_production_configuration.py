@@ -35,6 +35,9 @@ class ProductionConfigurationTests(unittest.TestCase):
                         "'secure': app.config['SESSION_COOKIE_SECURE'],"
                         "'httponly': app.config['SESSION_COOKIE_HTTPONLY'],"
                         "'samesite': app.config['SESSION_COOKIE_SAMESITE'],"
+                        "'session_permanent': app.config['SESSION_PERMANENT'],"
+                        "'permanent_lifetime_seconds': "
+                        "int(app.config['PERMANENT_SESSION_LIFETIME'].total_seconds()),"
                         "'proxy_fix': isinstance(app.wsgi_app, ProxyFix)"
                         "}))"
                     ),
@@ -56,6 +59,8 @@ class ProductionConfigurationTests(unittest.TestCase):
                 "secure": True,
                 "httponly": True,
                 "samesite": "Lax",
+                "session_permanent": False,
+                "permanent_lifetime_seconds": 43200,
                 "proxy_fix": True,
             },
         )

@@ -28,9 +28,11 @@ MODEL_FILENAME = "ms-ls1-1b-model-cell-theory-basic-01.png"
 MODEL_SRC = f"model_assets/{MODEL_FILENAME}"
 MODEL_ALT = "A model showing living things made of cells to support basic cell theory."
 MODEL_TITLE = "Basic Cell Theory Model"
+MODEL_DISPLAY_TITLE = "Animal Cell"
 MODEL_CAPTION = (
     "Supports questions about evidence for the idea that organisms are made of cells."
 )
+INSTRUCTIONAL_CAPTION = "Not to scale; colors show different cell parts."
 QUESTION_STEM = (
     "In a cell model, what should the student focus on when deciding whether "
     "the model supports cell theory?"
@@ -243,6 +245,14 @@ class SingleModelAssetIntegrationTests(unittest.TestCase):
         )
         self.conn.execute(
             """
+            INSERT INTO user_platform_roles
+              (user_id, platform_role, granted_at, grant_note)
+            VALUES (1, 'owner', ?, 'Test owner')
+            """,
+            (now,),
+        )
+        self.conn.execute(
+            """
             INSERT INTO class_sections
               (class_id, teacher_user_id, name, class_period, join_code,
                is_active, created_at, updated_at)
@@ -293,9 +303,12 @@ class SingleModelAssetIntegrationTests(unittest.TestCase):
             session["locked_payload"] = None
 
     def assert_model_asset_rendered(self, html: bytes):
+        self.assertIn(b'<div class="assessment-body assessment-body--with-model">', html)
         self.assertIn(b'<figure class="model-asset">', html)
-        self.assertIn(MODEL_TITLE.encode(), html)
-        self.assertIn(MODEL_CAPTION.encode(), html)
+        self.assertIn(MODEL_DISPLAY_TITLE.encode(), html)
+        self.assertNotIn(MODEL_TITLE.encode(), html)
+        self.assertNotIn(MODEL_CAPTION.encode(), html)
+        self.assertNotIn(b'<p class="model-asset-caption">', html)
         self.assertIn(MODEL_ALT.encode(), html)
         self.assertIn(f'src="/static/{MODEL_SRC}"'.encode(), html)
         self.assertIn(f'alt="{MODEL_ALT}"'.encode(), html)
@@ -303,12 +316,70 @@ class SingleModelAssetIntegrationTests(unittest.TestCase):
         figure_index = html.index(b'<figure class="model-asset">')
         choice_markers = [
             marker
-            for marker in (b'name="response"', b'name="preview_response"')
+            for marker in (
+                b'name="response"',
+                b'name="preview_response"',
+                b'name="owner_preview_response"',
+            )
             if marker in html
         ]
         self.assertTrue(choice_markers)
         self.assertLess(html.index(QUESTION_STEM.encode()), figure_index)
         self.assertLess(figure_index, min(html.index(marker) for marker in choice_markers))
+
+    def assert_shared_assessment_presentation(self, html: bytes):
+        self.assertIn(b"<section class=\"assessment\" aria-labelledby=\"question-prompt\">", html)
+        self.assertIn(
+            b".assessment{width:100%;margin:0;background:#fff;border:1px solid #e5e7eb",
+            html,
+        )
+        self.assertIn(b".assessment-question{max-width:85ch", html)
+        self.assertIn(b".assessment-body{width:100%}", html)
+        self.assertIn(
+            b".assessment-body--with-model{display:grid;grid-template-columns:minmax(260px,42%) minmax(0,58%)",
+            html,
+        )
+        self.assertIn(b".answer-form{max-width:920px;margin:0 auto}", html)
+        self.assertIn(b".assessment-body--with-model .answer-form{max-width:none;margin:0}", html)
+        self.assertIn(b".choice{margin:8px 0;padding:8px;border:1px solid #e5e7eb", html)
+        self.assertIn(
+            b".model-asset-title{margin:0 0 8px 0;font-weight:700;color:#1f2937;text-align:center}",
+            html,
+        )
+        self.assertIn(
+            b".model-asset{box-sizing:border-box;width:100%;max-width:500px;margin:12px auto",
+            html,
+        )
+        self.assertIn(
+            b".model-asset img{display:block;width:100%;max-width:500px;height:auto",
+            html,
+        )
+        self.assertIn(
+            b"@media(max-width:900px){.assessment-body--with-model{display:block}",
+            html,
+        )
+        self.assertIn(b".assessment-question{max-width:none}.answer-form{max-width:none}", html)
+
+    def assert_student_question_layout(self, html: bytes):
+        self.assertIn(b"<main class=\"learning-shell\">", html)
+        self.assertIn(b"<header class=\"learning-header\">", html)
+        self.assertIn(b"<section class=\"growth ", html)
+        self.assert_shared_assessment_presentation(html)
+        self.assertIn(
+            b".learning-shell{max-width:1120px;margin:0 auto 24px auto",
+            html,
+        )
+        self.assertIn(
+            b"@media(max-width:800px){body{margin:16px}.learning-header{flex-direction:column}",
+            html,
+        )
+        self.assertIn(
+            b"@media(max-width:600px){body{margin:12px}.learning-shell{max-width:none}",
+            html,
+        )
+        self.assertNotIn(b".card{max-width:700px", html)
+        self.assertNotIn(b"<div class=\"card\">", html)
+        self.assertNotIn(b".assessment{max-width:760px", html)
 
     def test_repository_runtime_and_metadata_mapping_for_single_asset(self):
         canonical = (
@@ -349,17 +420,46 @@ class SingleModelAssetIntegrationTests(unittest.TestCase):
         render_asset = dash.static_image_asset_for_render(resolved)
         self.assertEqual(render_asset["filename"], MODEL_SRC)
         self.assertEqual(render_asset["alt_text"], MODEL_ALT)
+        self.assertEqual(render_asset["title"], MODEL_DISPLAY_TITLE)
+        self.assertEqual(render_asset["caption"], "")
 
     def test_teacher_question_preview_renders_asset_accessibly_and_responsively(self):
         self.login_as_teacher()
+        before = self.conn.execute("SELECT COUNT(*) FROM attempts").fetchone()[0]
         response = self.client.get(f"/teacher/question_preview?question_id={QUESTION_ID}")
 
         self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Question Preview", response.data)
         self.assertIn(b"Teacher Preview", response.data)
         self.assertIn(b"Responses are disabled.", response.data)
-        self.assertIn(b".model-asset{max-width:680px;margin:14px auto", response.data)
-        self.assertIn(b".model-asset img{display:block;max-width:100%;height:auto", response.data)
+        self.assertIn(b'name="objective_id"', response.data)
+        self.assertIn(b'name="question_id"', response.data)
+        self.assertIn(b"Back to Dashboard", response.data)
+        self.assertIn(b".card{max-width:1120px", response.data)
+        self.assertNotIn(b".card{max-width:760px", response.data)
+        self.assert_shared_assessment_presentation(response.data)
+        self.assertIn(b'name="preview_response" value="A" disabled', response.data)
+        self.assertNotIn(b"Submit Answer", response.data)
         self.assert_model_asset_rendered(response.data)
+        after = self.conn.execute("SELECT COUNT(*) FROM attempts").fetchone()[0]
+        self.assertEqual(after, before)
+
+    def test_owner_question_preview_uses_shared_assessment_presentation(self):
+        self.login_as_teacher()
+        before = self.conn.execute("SELECT COUNT(*) FROM attempts").fetchone()[0]
+
+        response = self.client.get(f"/owner/question-preview?question_id={QUESTION_ID}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Owner Question Preview", response.data)
+        self.assertIn(b"Responses are disabled.", response.data)
+        self.assertIn(b".card{max-width:1120px", response.data)
+        self.assert_shared_assessment_presentation(response.data)
+        self.assertIn(b'name="owner_preview_response" value="A" disabled', response.data)
+        self.assertNotIn(b"Submit Answer", response.data)
+        self.assert_model_asset_rendered(response.data)
+        after = self.conn.execute("SELECT COUNT(*) FROM attempts").fetchone()[0]
+        self.assertEqual(after, before)
 
     def test_teacher_student_mode_renders_asset_without_recording_real_attempts(self):
         self.login_as_teacher()
@@ -369,6 +469,7 @@ class SingleModelAssetIntegrationTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Student Mode Preview", response.data)
+        self.assert_student_question_layout(response.data)
         self.assert_model_asset_rendered(response.data)
         after = self.conn.execute("SELECT COUNT(*) FROM attempts").fetchone()[0]
         self.assertEqual(after, before)
@@ -379,6 +480,7 @@ class SingleModelAssetIntegrationTests(unittest.TestCase):
 
         self.assertEqual(page.status_code, 200)
         self.assertIn(b"RootED Learning", page.data)
+        self.assert_student_question_layout(page.data)
         self.assert_model_asset_rendered(page.data)
 
         token_match = re.search(
@@ -411,6 +513,28 @@ class SingleModelAssetIntegrationTests(unittest.TestCase):
         ).fetchone()["n"]
         self.assertEqual(recorded, 1)
 
+    def test_authenticated_student_layout_without_model_asset(self):
+        self.conn.execute(
+            """
+            UPDATE student_objective_state
+            SET current_objective_id = 'MS-LS1-1A'
+            WHERE student_id = 'S1'
+              AND standard_id = 'MS-LS1-1'
+            """
+        )
+        self.conn.commit()
+        self.login_as_student()
+
+        page = self.client.get("/student")
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"Which statement best describes a cell?", page.data)
+        self.assert_student_question_layout(page.data)
+        self.assertNotIn(b'<figure class="model-asset">', page.data)
+        self.assertIn(b'<div class="assessment-body">', page.data)
+        self.assertNotIn(b'assessment-body assessment-body--with-model', page.data)
+        self.assertIn(b'name="response"', page.data)
+
     def test_missing_static_file_falls_back_to_plain_question_rendering(self):
         self.conn.execute(
             "UPDATE model_assets SET src = ? WHERE model_id = ?",
@@ -426,6 +550,36 @@ class SingleModelAssetIntegrationTests(unittest.TestCase):
         self.assertIn(b'name="preview_response"', response.data)
         self.assertNotIn(b'<figure class="model-asset">', response.data)
         self.assertNotIn(b"does-not-exist.png", response.data)
+
+    def test_empty_or_missing_caption_is_not_rendered(self):
+        self.login_as_teacher()
+        for caption in ("", None):
+            self.conn.execute(
+                "UPDATE model_assets SET caption = ? WHERE model_id = ?",
+                (caption, MODEL_ID),
+            )
+            self.conn.commit()
+
+            response = self.client.get(f"/teacher/question_preview?question_id={QUESTION_ID}")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn(MODEL_DISPLAY_TITLE.encode(), response.data)
+            self.assertNotIn(b'<p class="model-asset-caption">', response.data)
+
+    def test_instructionally_necessary_caption_is_rendered(self):
+        self.conn.execute(
+            "UPDATE model_assets SET caption = ? WHERE model_id = ?",
+            (INSTRUCTIONAL_CAPTION, MODEL_ID),
+        )
+        self.conn.commit()
+        self.login_as_teacher()
+
+        response = self.client.get(f"/teacher/question_preview?question_id={QUESTION_ID}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(MODEL_DISPLAY_TITLE.encode(), response.data)
+        self.assertIn(b'class="model-asset-caption"', response.data)
+        self.assertIn(INSTRUCTIONAL_CAPTION.encode(), response.data)
 
     def test_unrelated_question_does_not_reuse_the_single_asset(self):
         self.login_as_teacher()

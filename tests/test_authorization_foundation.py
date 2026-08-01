@@ -5,6 +5,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import uuid
 from pathlib import Path
@@ -33,6 +34,9 @@ class AuthorizationFoundationTests(unittest.TestCase):
         self.conn.row_factory = sqlite3.Row
         dash.ensure_schema(self.conn)
         self.conn.execute("DELETE FROM access_authorization_audit_log")
+        self.conn.execute("DELETE FROM class_enrollments")
+        self.conn.execute("DELETE FROM class_sections")
+        self.conn.execute("DELETE FROM students")
         self.conn.execute("DELETE FROM user_instructional_authorizations")
         self.conn.execute("DELETE FROM user_platform_roles")
         self.conn.execute("DELETE FROM users")
@@ -80,6 +84,44 @@ class AuthorizationFoundationTests(unittest.TestCase):
             "username": f"session-{user_id}",
             "role": role,
         }
+
+    def make_user_owner(self, user_id=4):
+        self.conn.execute(
+            """
+            INSERT INTO user_platform_roles
+              (user_id, platform_role, granted_at, grant_note)
+            VALUES (?, 'owner', 123456, 'Test owner grant')
+            """,
+            (user_id,),
+        )
+        self.conn.commit()
+
+    def make_student_instruction_ready(self):
+        self.conn.execute(
+            """
+            INSERT INTO students (student_id, first_name, last_name, grade, class_period)
+            VALUES ('S1', 'Ava', 'Student', 6, '1')
+            """
+        )
+        self.conn.execute(
+            "UPDATE users SET linked_student_id='S1' WHERE id=2"
+        )
+        self.conn.execute(
+            """
+            INSERT INTO class_sections
+              (class_id, teacher_user_id, name, class_period, join_code,
+               is_active, created_at, updated_at)
+            VALUES ('C1', 1, 'Period 1', '1', 'JOIN1', 1, 123456, 123456)
+            """
+        )
+        self.conn.execute(
+            """
+            INSERT INTO class_enrollments
+              (class_id, student_id, enrolled_at, enrolled_by, is_active)
+            VALUES ('C1', 'S1', 123456, 'teacher', 1)
+            """
+        )
+        self.conn.commit()
 
     def test_microsoft_common_validates_concrete_tenant_issuer(self):
         tenant_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -197,6 +239,122 @@ class AuthorizationFoundationTests(unittest.TestCase):
         finally:
             dash.ENABLE_GOOGLE_AUTH = old_google
             dash.ENABLE_MICROSOFT_AUTH = old_microsoft
+
+    def test_authenticated_login_redirects_owner_teacher_and_student(self):
+        self.make_user_owner(4)
+        self.make_student_instruction_ready()
+        cases = (
+            (4, "teacher", "/owner"),
+            (1, "teacher", "/teacher"),
+            (2, "student", "/student"),
+        )
+        for user_id, role, expected_path in cases:
+            with self.subTest(user_id=user_id):
+                client = dash.app.test_client()
+                with client.session_transaction() as sess:
+                    sess.update(self.session_for(user_id, role))
+
+                response = client.get("/login")
+
+                self.assertEqual(response.status_code, 302)
+                self.assertTrue(response.location.endswith(expected_path))
+
+    def test_authenticated_login_preserves_teacher_student_mode_context(self):
+        client = dash.app.test_client()
+        with client.session_transaction() as sess:
+            sess.update(self.session_for(1, "teacher"))
+            sess["student_mode_preview"] = {
+                "teacher_user_id": 1,
+                "student_id": "S1",
+                "objective_id": "MS-LS1-1B",
+            }
+
+        response = client.get("/login")
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response.location.endswith("/student"))
+
+    def test_authenticated_login_during_impersonation_uses_target_identity(self):
+        self.make_user_owner(4)
+        correlation_id = "test-correlation"
+        audit_id = self.conn.execute(
+            """
+            INSERT INTO impersonation_audit
+              (correlation_id, acting_owner_user_id, target_user_id, target_role,
+               start_timestamp, outcome)
+            VALUES (?, 4, 1, 'teacher', 123456, 'active')
+            """,
+            (correlation_id,),
+        ).lastrowid
+        self.conn.commit()
+        client = dash.app.test_client()
+        with client.session_transaction() as sess:
+            sess.update(self.session_for(1, "teacher"))
+            sess["impersonation_audit_id"] = audit_id
+            sess["impersonation_correlation_id"] = correlation_id
+
+        response = client.get("/login")
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response.location.endswith("/teacher"))
+
+    def test_unauthenticated_login_page_remains_available(self):
+        response = dash.app.test_client().get("/login")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Access RootED", response.data)
+        self.assertNotIn(b"data-authenticated-header", response.data)
+
+    def test_logout_clears_complete_session(self):
+        client = dash.app.test_client()
+        with client.session_transaction() as sess:
+            sess.update(self.session_for(1, "teacher"))
+            sess["authenticated_at"] = int(time.time())
+            sess["last_seen_at"] = int(time.time())
+            sess["logout_csrf_token"] = "logout-test-token"
+            sess["student_mode_preview"] = {"temporary": True}
+            sess["locked_payload"] = {"temporary": True}
+
+        response = client.post(
+            "/logout",
+            data={"csrf_token": "logout-test-token"},
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response.location.endswith("/login"))
+        with client.session_transaction() as sess:
+            self.assertEqual(dict(sess), {})
+
+    def test_inactive_session_requires_authentication_again(self):
+        client = dash.app.test_client()
+        now = int(time.time())
+        with client.session_transaction() as sess:
+            sess.update(self.session_for(1, "teacher"))
+            sess["authenticated_at"] = now
+            sess["last_seen_at"] = now - dash.AUTH_SESSION_INACTIVITY_SECONDS - 1
+
+        response = client.get("/teacher")
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response.location.endswith("/login"))
+        with client.session_transaction() as sess:
+            self.assertNotIn("user_id", sess)
+
+    def test_absolute_session_lifetime_requires_authentication_again(self):
+        client = dash.app.test_client()
+        now = int(time.time())
+        with client.session_transaction() as sess:
+            sess.update(self.session_for(1, "teacher"))
+            sess["authenticated_at"] = now - dash.AUTH_SESSION_ABSOLUTE_SECONDS - 1
+            sess["last_seen_at"] = now
+
+        response = client.get("/teacher")
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response.location.endswith("/login"))
+        with client.session_transaction() as sess:
+            self.assertNotIn("user_id", sess)
 
     def test_restricted_onboarding_uses_student_enrollment_wording(self):
         client = dash.app.test_client()
