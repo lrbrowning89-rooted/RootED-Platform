@@ -162,7 +162,7 @@
       "objective_id": "MS-LS1-2A",
       "difficulty": "Recall",
       "question_type": "model_interpretation",
-      "prompt": "In CELL_MODEL_01, a labeled structure surrounds the entire cell and forms the cell's outer boundary. Which structure is being shown?",
+      "prompt": "In the model, the yellow highlighted structure surrounds the entire cell and forms the cell's outer boundary. Which structure is being shown?",
       "answer_choices": {
         "A": "cell membrane",
         "B": "nucleus",
@@ -262,7 +262,7 @@
       "objective_id": "MS-LS1-2A",
       "difficulty": "Application",
       "question_type": "model_interpretation",
-      "prompt": "In CELL_MODEL_02, a student points to a large round structure inside the cell and says it stores genetic information. Which structure is the student identifying?",
+      "prompt": "In the model, the yellow highlighted structure is a large round structure inside the cell that stores genetic information. Which structure is being shown?",
       "answer_choices": {
         "A": "nucleus",
         "B": "cell membrane",
@@ -316,7 +316,7 @@
       "objective_id": "MS-LS1-2A",
       "difficulty": "Application",
       "question_type": "model_interpretation",
-      "prompt": "In CELL_MODEL_03, the shaded area fills the space between the nucleus and the cell membrane. Which structure or material does this shaded area most likely represent?",
+      "prompt": "In the model, the highlighted area fills the space between the nucleus and the cell membrane. Which structure or material is being shown?",
       "answer_choices": {
         "A": "cytoplasm",
         "B": "cell wall",
@@ -395,7 +395,7 @@
       "objective_id": "MS-LS1-2A",
       "difficulty": "Reasoning",
       "question_type": "model_interpretation",
-      "prompt": "CELL_MODEL_04 shows a plant cell with the nucleus, chloroplasts, cell wall, cell membrane, cytoplasm, and mitochondria labeled. Which statement best explains how two of these structures work together to help the cell function?",
+      "prompt": "The model shows a plant cell with several labeled structures. Which statement best explains how two of these structures work together to help the cell function?",
       "answer_choices": {
         "A": "Chloroplasts make sugar using light energy, and mitochondria release usable energy from sugar.",
         "B": "The cell wall controls genetic information, and the nucleus captures light energy.",
@@ -451,7 +451,7 @@
       "objective_id": "MS-LS1-2A",
       "difficulty": "Reasoning",
       "question_type": "model_interpretation",
-      "prompt": "In CELL_MODEL_05, an animal cell is shown without chloroplasts or a cell wall. Which explanation best supports why the model is still accurate?",
+      "prompt": "The model shows an animal cell with a cell membrane, cytoplasm, nucleus, and mitochondrion, but no chloroplasts or cell wall. Which explanation best supports why the model is accurate?",
       "answer_choices": {
         "A": "Animal cells have cell membranes, cytoplasm, nuclei, and mitochondria, but they do not have cell walls or chloroplasts.",
         "B": "Animal cells do not need any structure to control what enters and leaves them.",
@@ -505,7 +505,7 @@
       "objective_id": "MS-LS1-2A",
       "difficulty": "Reasoning",
       "question_type": "model_interpretation",
-      "prompt": "CELL_MODEL_06 shows a cell with many green oval structures and a rigid outer layer. Which evidence best supports the claim that the model shows a plant cell?",
+      "prompt": "The model shows a cell with many green oval structures and a rigid outer layer. Which evidence best supports the claim that the model shows a plant cell?",
       "answer_choices": {
         "A": "The model includes chloroplasts and a cell wall.",
         "B": "The model includes only mitochondria and cytoplasm.",
@@ -532,7 +532,7 @@
       "objective_id": "MS-LS1-2A",
       "difficulty": "Reasoning",
       "question_type": "model_interpretation",
-      "prompt": "CELL_MODEL_07 shows a cell as a system made of smaller parts. Which statement best explains why this model helps describe cell function?",
+      "prompt": "In the model, a cell is shown as many smaller structures working together. Which statement best explains why this model helps describe cell function?",
       "answer_choices": {
         "A": "It shows that different cell structures have different jobs that contribute to the cell working as a whole.",
         "B": "It shows that all cell structures have the exact same function.",

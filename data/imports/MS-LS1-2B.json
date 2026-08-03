@@ -182,7 +182,7 @@
       "objective_id": "MS-LS1-2B",
       "difficulty": "Application",
       "question_type": "multiple_choice",
-      "prompt": "A model shows arrows moving from the cell membrane into the cytoplasm. What interaction is the model most likely showing?",
+      "prompt": "In the model, blue arrows point through the cell membrane toward the cytoplasm. What interaction is the model most likely showing?",
       "answer_choices": {
         "A": "Materials entering the cell and moving through the cytoplasm",
         "B": "The nucleus turning into cytoplasm",
@@ -238,7 +238,7 @@
       "objective_id": "MS-LS1-2B",
       "difficulty": "Application",
       "question_type": "multiple_choice",
-      "prompt": "A model shows the nucleus connected by arrows to several other cell structures. What does this best represent?",
+      "prompt": "A model shows arrows extending from the nucleus to several other cell structures to represent the nucleus directing their activities. What does this model best represent?",
       "answer_choices": {
         "A": "The nucleus provides instructions that help direct cell activities.",
         "B": "The nucleus is the only structure needed for survival.",
@@ -369,7 +369,7 @@
       "objective_id": "MS-LS1-2B",
       "difficulty": "Reasoning",
       "question_type": "multiple_choice",
-      "prompt": "A model shows a plant cell with chloroplasts making food and mitochondria using food to release energy. Which conclusion is best supported by the model?",
+      "prompt": "In the model, green arrows point from chloroplasts toward mitochondria, and energy symbols appear near the mitochondria. Which conclusion is best supported by the model?",
       "answer_choices": {
         "A": "Cell structures work together to support the cell’s energy needs.",
         "B": "Chloroplasts and mitochondria have no relationship.",
@@ -479,7 +479,7 @@
       "objective_id": "MS-LS1-2B",
       "difficulty": "Reasoning",
       "question_type": "multiple_choice",
-      "prompt": "A model shows materials entering through the cell membrane, moving through the cytoplasm, and being used by mitochondria. What does this model best explain?",
+      "prompt": "In the model, blue arrows point toward several mitochondria inside the cell. What does this model best explain?",
       "answer_choices": {
         "A": "Several structures interact to help the cell get and use materials.",
         "B": "Only the cell membrane is involved in cell survival.",
@@ -502,7 +502,7 @@
         "structure/function relationships",
         "model interpretation"
       ],
-      "model_id": "CELL_MODEL_08"
+      "model_id": "MS-LS1-2B_model_mitochondria_materials_01"
     },
     {
       "question_id": "Q_MSLS1_2_B_020",
@@ -533,7 +533,7 @@
       "objective_id": "MS-LS1-2B",
       "difficulty": "Reasoning",
       "question_type": "multiple_choice",
-      "prompt": "A plant cell model shows the nucleus, chloroplasts, mitochondria, cytoplasm, cell membrane, and cell wall. Which explanation best describes how the model represents the cell as a system?",
+      "prompt": "In the model, the plant cell has several labeled structures, including the nucleus, chloroplast, mitochondrion, cytoplasm, cell membrane, and cell wall. Which explanation best describes how the model represents the cell as a system?",
       "answer_choices": {
         "A": "It shows several structures with different jobs working together to support cell survival.",
         "B": "It shows that plant cells only need chloroplasts to survive.",
@@ -562,7 +562,7 @@
         "structure/function relationships",
         "model interpretation"
       ],
-      "model_id": "CELL_MODEL_09"
+      "model_id": "MS-LS1-2B_model_plant_cell_system_01"
     }
   ]
 }
