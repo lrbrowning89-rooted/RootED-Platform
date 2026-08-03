@@ -403,6 +403,30 @@ class OwnerAccountAdministrationTests(unittest.TestCase):
         self.assertIn(b"Attempts Backup", self.client.get("/owner/data-maintenance").data)
         self.assertIn(b"Adaptive Assessment Simulator", self.client.get("/owner/developer-diagnostics").data)
 
+    def test_view_public_site_action_is_owner_only(self):
+        self.login(1)
+        owner = self.client.get("/owner")
+        self.assertIn(b"View Public Site", owner.data)
+        self.assertIn(b'href="/landing"', owner.data)
+
+        self.login(2)
+        teacher = self.client.get("/dashboard")
+        self.assertNotIn(b"View Public Site", teacher.data)
+        student_mode = self.client.get("/student")
+        self.assertNotIn(b"View Public Site", student_mode.data)
+
+        self.login(3)
+        student = self.client.get("/restricted")
+        self.assertNotIn(b"View Public Site", student.data)
+
+        token = self.owner_token()
+        impersonated = self.client.post(
+            "/owner/impersonation/start/2",
+            data={"csrf_token": token},
+            follow_redirects=True,
+        )
+        self.assertNotIn(b"View Public Site", impersonated.data)
+
     def test_root_routes_anonymous_and_authenticated_effective_roles(self):
         anonymous = self.client.get("/")
         self.assertEqual(anonymous.status_code, 200)
@@ -457,6 +481,50 @@ class OwnerAccountAdministrationTests(unittest.TestCase):
         public_site = self.client.get("/landing")
         self.assertEqual(public_site.status_code, 200)
         self.assertIn(b"Science Learning. Built differently.", public_site.data)
+        self.assertIn(b"Return to Student Learning", public_site.data)
+        self.assertIn(b'href="/student"', public_site.data)
+
+    def test_public_landing_navigation_returns_each_authenticated_role(self):
+        anonymous = self.client.get("/landing")
+        self.assertIn(b'href="/login">Login</a>', anonymous.data)
+
+        expected = {
+            1: (b"Return to Owner Workspace", b'href="/owner"'),
+            2: (b"Return to Teacher Dashboard", b'href="/teacher"'),
+            3: (b"Return to Student Learning", b'href="/student"'),
+        }
+        for user_id, (label, href) in expected.items():
+            self.login(user_id)
+            with self.subTest(user_id=user_id):
+                page = self.client.get("/landing")
+                self.assertEqual(page.status_code, 200)
+                self.assertIn(label, page.data)
+                self.assertIn(href, page.data)
+                self.assertNotIn(b"View Public Site", page.data)
+                self.assertNotIn(b'href="/login">Login</a>', page.data)
+
+        self.login(2)
+        with self.client.session_transaction() as teacher_session:
+            teacher_session["student_mode_preview"] = {
+                "teacher_user_id": 2,
+                "student_id": "TEST-STUDENT",
+                "objective_id": "MS-LS1-1A",
+            }
+        student_mode = self.client.get("/landing")
+        self.assertIn(b"Return to Student Mode", student_mode.data)
+        self.assertIn(b'href="/student"', student_mode.data)
+        self.assertNotIn(b"View Public Site", student_mode.data)
+
+    def test_login_and_root_share_authenticated_workspace_destination(self):
+        for user_id, expected in ((1, "/owner"), (2, "/teacher"), (3, "/student")):
+            self.login(user_id)
+            with self.subTest(user_id=user_id):
+                root = self.client.get("/")
+                login = self.client.get("/login")
+                self.assertEqual(root.status_code, 302)
+                self.assertEqual(login.status_code, 302)
+                self.assertEqual(root.headers["Location"], expected)
+                self.assertEqual(login.headers["Location"], expected)
 
     def test_owner_impersonation_page_searches_teacher_and_student(self):
         self.login(1)
@@ -633,6 +701,10 @@ class OwnerAccountAdministrationTests(unittest.TestCase):
         self.assertIn("Owner <strong>owner</strong>", text)
         self.assertEqual(self.client.get("/owner").status_code, 403)
         self.assertEqual(self.client.get("/dashboard").status_code, 200)
+        public_site = self.client.get("/landing")
+        self.assertIn(b"Return to Teacher Dashboard", public_site.data)
+        self.assertIn(b'href="/teacher"', public_site.data)
+        self.assertNotIn(b"View Public Site", public_site.data)
         with self.client.session_transaction() as session:
             self.assertEqual(session["user_id"], 2)
             stop_token = session["impersonation_stop_csrf_token"]

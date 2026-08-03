@@ -681,9 +681,7 @@ def coerce_session_timestamp(name: str, now: int) -> int:
 
 
 def login_destination_for_active_session(user) -> str:
-    if session.get("student_mode_preview") and can_access_teacher_tools(user):
-        return url_for("student_view")
-    return get_post_login_destination(user)
+    return authenticated_root_destination(user)
 
 
 def authenticated_root_destination(user) -> str:
@@ -698,6 +696,22 @@ def authenticated_root_destination(user) -> str:
     if effective_role == "student":
         return url_for("student_view")
     return url_for("restricted_onboarding")
+
+
+def authenticated_workspace_action(user, *, verb="Return to") -> tuple[str, str]:
+    """Describe the effective workspace using the canonical destination resolver."""
+    destination = authenticated_root_destination(user)
+    if session.get("student_mode_preview") and can_access_teacher_tools(user):
+        workspace = "Student Mode"
+    elif is_owner(user):
+        workspace = "Owner Workspace"
+    elif effective_session_role(user) == "teacher":
+        workspace = "Teacher Dashboard"
+    elif effective_session_role(user) == "student":
+        workspace = "Student Learning"
+    else:
+        workspace = "RootED Account"
+    return f"{verb} {workspace}", destination
 
 
 @app.before_request
@@ -739,6 +753,18 @@ def authenticated_header_context(user=None) -> dict | None:
     finally:
         conn.close()
 
+    if request.path == "/landing":
+        primary_label, primary_href = authenticated_workspace_action(user)
+        return {
+            "context_label": "Public Site",
+            "display_label": display_label,
+            "home_url": primary_href,
+            "home_label": "RootED",
+            "links": (),
+            "primary_action": (primary_label, primary_href),
+            "leave_student_mode": False,
+        }
+
     student_mode = effective_session_role(user) == "teacher" and request.path.startswith(
         "/student"
     )
@@ -748,7 +774,7 @@ def authenticated_header_context(user=None) -> dict | None:
             "display_label": display_label,
             "home_url": url_for("student_view"),
             "home_label": "RootED",
-            "links": (("View Public Site", url_for("public_landing")),),
+            "links": (),
             "leave_student_mode": True,
         }
     owner_teacher_view = is_owner(user) and (
@@ -817,7 +843,6 @@ def authenticated_header_context(user=None) -> dict | None:
             "links": (
                 ("Student Mode", url_for("student_view")),
                 ("Question Flags", url_for("question_flags_review")),
-                ("View Public Site", url_for("public_landing")),
             ),
             "leave_student_mode": False,
             "teacher_flag_count": teacher_flag_count,
@@ -828,7 +853,7 @@ def authenticated_header_context(user=None) -> dict | None:
             "display_label": display_label,
             "home_url": url_for("student_view", home=1),
             "home_label": "RootED",
-            "links": (("View Public Site", url_for("public_landing")),),
+            "links": (),
             "leave_student_mode": False,
         }
     return {
@@ -836,7 +861,7 @@ def authenticated_header_context(user=None) -> dict | None:
         "display_label": display_label,
         "home_url": url_for("restricted_onboarding"),
         "home_label": "RootED",
-        "links": (("View Public Site", url_for("public_landing")),),
+        "links": (),
         "leave_student_mode": False,
     }
 
@@ -6516,6 +6541,8 @@ def render_authenticated_header(response):
   .rooted-auth-header__nav{margin-left:auto;display:flex;align-items:center;justify-content:flex-end;gap:6px;flex-wrap:wrap}
   .rooted-auth-header__link,.rooted-auth-header__button{appearance:none;display:inline-flex;align-items:center;min-height:36px;padding:8px 10px;border:1px solid transparent;border-radius:7px;background:transparent;color:#2f5138;text-decoration:none;font:700 13px/1 Arial,Helvetica,sans-serif;cursor:pointer}
   .rooted-auth-header__link:hover,.rooted-auth-header__button:hover{background:#eef4ec;border-color:#c8d9c4}
+  .rooted-auth-header__primary{background:#2f6f4e;color:#fff;border-color:#2f6f4e}
+  .rooted-auth-header__primary:hover{background:#24583e;border-color:#24583e}
   .rooted-auth-header__identity{max-width:220px;color:#56675d;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .rooted-auth-header .action-badge{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;margin-left:5px;padding:0 6px;border-radius:999px;background:#b42318;color:#fff;font-size:11px}
   .rooted-auth-header__logout{border-color:#d7cabc;color:#694a34}
@@ -6533,6 +6560,9 @@ def render_authenticated_header(response):
     <span class="rooted-auth-header__context">{{ context.context_label }}</span>
     <nav class="rooted-auth-header__nav" aria-label="Account and workspace">
       <span class="rooted-auth-header__identity" title="{{ context.display_label }}">Signed in as <strong>{{ context.display_label }}</strong></span>
+      {% if context.get('primary_action') %}
+        <a class="rooted-auth-header__link rooted-auth-header__primary" href="{{ context.primary_action[1] }}">{{ context.primary_action[0] }}</a>
+      {% endif %}
       {% for label, href in context.links %}
         <a class="rooted-auth-header__link" href="{{ href }}">
           {{ label }}
@@ -9527,6 +9557,12 @@ def not_authorized():
 # ---------- Public landing page ----------
 @app.get("/landing")
 def public_landing():
+    landing_user = current_user()
+    landing_action = (
+        authenticated_workspace_action(landing_user, verb="Open")
+        if landing_user
+        else None
+    )
     landing_html = """
     <!doctype html>
     <html lang="en">
@@ -9958,7 +9994,11 @@ def public_landing():
             <a href="#what-rooted-is">What it is</a>
             <a href="#building-public">Building</a>
             <a href="#follow-along">Follow</a>
-            <a href="{{ url_for('login') }}">Login</a>
+            {% if landing_action %}
+              <a href="{{ landing_action[1] }}">{{ landing_action[0] }}</a>
+            {% else %}
+              <a href="{{ url_for('login') }}">Login</a>
+            {% endif %}
           </nav>
         </header>
 
@@ -10068,7 +10108,7 @@ def public_landing():
     </body>
     </html>
     """
-    return render_template_string(landing_html)
+    return render_template_string(landing_html, landing_action=landing_action)
 
 
 @app.get("/")
