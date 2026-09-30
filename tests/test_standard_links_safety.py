@@ -25,7 +25,7 @@ class StandardLinksSafetyTests(unittest.TestCase):
         self.connection.close()
         self.temporary_directory.cleanup()
 
-    def test_import_has_no_database_side_effect_and_schema_is_explicit(self):
+    def test_schema_is_explicit_without_legacy_progress_columns(self):
         ensure_standard_links_schema(self.connection)
         columns = {
             row[1]
@@ -33,7 +33,7 @@ class StandardLinksSafetyTests(unittest.TestCase):
         }
         self.assertTrue(
             {"current_standard_id", "origin_standard_id", "active_route_type"}
-            <= columns
+            .isdisjoint(columns)
         )
 
     def test_seed_preserves_four_links_and_is_idempotent(self):
