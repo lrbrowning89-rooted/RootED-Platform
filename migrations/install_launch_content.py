@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PACKAGE_DIR = ROOT / "data" / "imports"
 PACKAGE_NAME = "rooted-launch-content"
 DEFAULT_PACKAGE_VERSION = "2026-07-27"
+CONTENT_RELEASE = f"{PACKAGE_NAME}@{DEFAULT_PACKAGE_VERSION}"
 PACKAGE_FILES = (
     "MS-LS1-1A.json",
     "MS-LS1-1B.json",
@@ -656,6 +657,161 @@ def verify_content(conn: sqlite3.Connection, package: LaunchPackage) -> dict:
     }
 
 
+def _launch_id_count(
+    conn: sqlite3.Connection, table: str, id_column: str, identifiers: tuple[str, ...]
+) -> int:
+    placeholders = ",".join("?" for _ in identifiers)
+    return conn.execute(
+        f"SELECT COUNT(*) FROM {table} WHERE {id_column} IN ({placeholders})",
+        identifiers,
+    ).fetchone()[0]
+
+
+def verify_launch_content_release(
+    conn: sqlite3.Connection,
+    package: LaunchPackage,
+    *,
+    package_version: str = DEFAULT_PACKAGE_VERSION,
+) -> dict:
+    """Verify launch content and its one matching release record."""
+    original_row_factory = conn.row_factory
+    conn.row_factory = sqlite3.Row
+    try:
+        verification = verify_content(conn, package)
+        release = conn.execute(
+            """SELECT source_checksum, verification_result
+               FROM content_release_log
+               WHERE package_name=? AND package_version=?""",
+            (PACKAGE_NAME, package_version),
+        ).fetchone()
+        if release is None:
+            raise LaunchContentError("Launch content release record is missing")
+        if release["source_checksum"] != package.checksum:
+            raise LaunchContentError("Launch content release checksum does not match")
+        if release["verification_result"] != "ok":
+            raise LaunchContentError("Launch content release is not verified")
+        return verification
+    finally:
+        conn.row_factory = original_row_factory
+
+
+def install_launch_content(
+    conn: sqlite3.Connection,
+    *,
+    package: LaunchPackage | None = None,
+    package_dir: str | Path = DEFAULT_PACKAGE_DIR,
+    package_version: str = DEFAULT_PACKAGE_VERSION,
+    database_identifier: str,
+    imported_at: int | None = None,
+    force_failure_after: int | None = None,
+) -> dict:
+    """Install the approved package on a caller-owned open connection.
+
+    Exact reinstall is a no-op. Partial or conflicting launch identifiers fail
+    closed. This function never opens a path, starts or commits a transaction,
+    or mutates operational/student tables.
+    """
+    package = load_package(package_dir) if package is None else package
+    timestamp = int(time.time()) if imported_at is None else imported_at
+    original_row_factory = conn.row_factory
+    conn.row_factory = sqlite3.Row
+    try:
+        require_schema(conn)
+        missing_support = [
+            name for name in ("question_metadata", "content_release_log")
+            if not table_exists(conn, name)
+        ]
+        if missing_support:
+            raise LaunchContentError(
+                "Canonical support table(s) missing: " + ", ".join(missing_support)
+            )
+        expected_counts = {
+            "standards": len(package.standards),
+            "objectives": len(package.objectives),
+            "questions": len(package.questions),
+            "question_metadata": len(package.metadata),
+        }
+        actual_counts = {
+            "standards": _launch_id_count(
+                conn, "standards", "standard_id", tuple(package.standards)
+            ),
+            "objectives": _launch_id_count(
+                conn, "objectives", "objective_id", tuple(package.objectives)
+            ),
+            "questions": _launch_id_count(
+                conn, "questions", "question_id", tuple(package.questions)
+            ),
+            "question_metadata": _launch_id_count(
+                conn, "question_metadata", "question_id", tuple(package.metadata)
+            ),
+        }
+        present = sum(actual_counts.values())
+        expected_total = sum(expected_counts.values())
+        if present not in (0, expected_total):
+            raise LaunchContentError(
+                f"Partial launch content exists: {actual_counts}"
+            )
+
+        release = conn.execute(
+            """SELECT source_checksum FROM content_release_log
+               WHERE package_name=? AND package_version=?""",
+            (PACKAGE_NAME, package_version),
+        ).fetchone()
+        if release is not None and release["source_checksum"] != package.checksum:
+            raise LaunchContentError(
+                "Package version already exists with a different checksum"
+            )
+        if release is not None and present == 0:
+            raise LaunchContentError("Release record exists without launch content")
+
+        if present == expected_total:
+            verify_content(conn, package)
+            counts = {
+                "inserted": 0, "updated": 0,
+                "unchanged": expected_total, "rejected": 0,
+            }
+        else:
+            counts = upsert_package(
+                conn,
+                package,
+                imported_at=timestamp,
+                force_failure_after=force_failure_after,
+            )
+            if counts["updated"] or counts["rejected"]:
+                raise LaunchContentError("Launch installation attempted to replace content")
+            verify_content(conn, package)
+
+        release_state = "unchanged"
+        if release is None:
+            conn.execute(
+                """INSERT INTO content_release_log
+                  (package_name,package_version,source_checksum,applied_at,
+                   database_identifier,inserted_count,updated_count,
+                   unchanged_count,verification_result)
+                  VALUES (?,?,?,?,?,?,?,?,?)""",
+                (
+                    PACKAGE_NAME, package_version, package.checksum, timestamp,
+                    database_identifier, counts["inserted"], counts["updated"],
+                    counts["unchanged"], "ok",
+                ),
+            )
+            release_state = "inserted"
+        verification = verify_launch_content_release(
+            conn, package, package_version=package_version
+        )
+        return {
+            "package_name": PACKAGE_NAME,
+            "package_version": package_version,
+            "content_release": f"{PACKAGE_NAME}@{package_version}",
+            "checksum": package.checksum,
+            "counts": counts,
+            "verification": verification,
+            "release_log": release_state,
+        }
+    finally:
+        conn.row_factory = original_row_factory
+
+
 def protected_counts(conn: sqlite3.Connection) -> dict[str, int]:
     return {
         table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
@@ -683,7 +839,9 @@ def run(
         require_schema(conn)
         before_protected = protected_counts(conn)
         if verify_only:
-            verification = verify_content(conn, package)
+            verification = verify_launch_content_release(
+                conn, package, package_version=package_version
+            )
             return {
                 "mode": "verify-only",
                 "database": str(db_path),
@@ -696,47 +854,15 @@ def run(
         conn.execute("BEGIN IMMEDIATE")
         try:
             ensure_support_tables(conn)
-            existing_release = conn.execute(
-                """
-                SELECT source_checksum FROM content_release_log
-                WHERE package_name=? AND package_version=?
-                """,
-                (PACKAGE_NAME, package_version),
-            ).fetchone()
-            if existing_release and existing_release["source_checksum"] != package.checksum:
-                raise LaunchContentError(
-                    "Package version already exists with a different checksum"
-                )
-            counts = upsert_package(
+            result = install_launch_content(
                 conn,
-                package,
-                imported_at=int(time.time()),
+                package=package,
+                package_version=package_version,
+                database_identifier=str(db_path),
                 force_failure_after=force_failure_after,
             )
-            verification = verify_content(conn, package)
             if protected_counts(conn) != before_protected:
                 raise LaunchContentError("Protected table counts changed")
-            if not existing_release:
-                conn.execute(
-                    """
-                    INSERT INTO content_release_log
-                      (package_name,package_version,source_checksum,applied_at,
-                       database_identifier,inserted_count,updated_count,
-                       unchanged_count,verification_result)
-                    VALUES (?,?,?,?,?,?,?,?,?)
-                    """,
-                    (
-                        PACKAGE_NAME,
-                        package_version,
-                        package.checksum,
-                        int(time.time()),
-                        str(db_path),
-                        counts["inserted"],
-                        counts["updated"],
-                        counts["unchanged"],
-                        "ok",
-                    ),
-                )
             if dry_run:
                 conn.rollback()
                 mode = "dry-run"
@@ -747,10 +873,10 @@ def run(
                 "mode": mode,
                 "database": str(db_path),
                 "package_version": package_version,
-                "checksum": package.checksum,
-                "counts": counts,
-                "verification": verification,
-                "release_log": "unchanged" if existing_release else "inserted",
+                "checksum": result["checksum"],
+                "counts": result["counts"],
+                "verification": result["verification"],
+                "release_log": result["release_log"],
             }
         except Exception:
             conn.rollback()

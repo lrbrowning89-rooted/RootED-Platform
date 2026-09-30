@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SCHEMA_SQL = ROOT / "app_core" / "schema.sql"
+SCHEMA_SQL = ROOT / "app_core" / "database" / "canonical_schema.sql"
 STUDENT_ID = "TST_ENGINE"
 STANDARD_ID = "MS-LS1-1"
 OBJECTIVE_ID = "MS-LS1-1A"

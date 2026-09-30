@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SCHEMA_SQL = ROOT / "app_core" / "schema.sql"
+SCHEMA_SQL = ROOT / "app_core" / "database" / "canonical_schema.sql"
 IMPORT_DIR = ROOT / "data" / "imports"
 MIGRATION_PATH = ROOT / "migrations" / "add_ms_ls1_1a_question_metadata.py"
 

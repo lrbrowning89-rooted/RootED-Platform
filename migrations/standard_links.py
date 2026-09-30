@@ -20,7 +20,7 @@ def _table_exists(connection: sqlite3.Connection, table_name: str) -> bool:
 
 
 def ensure_standard_links_schema(connection: sqlite3.Connection) -> None:
-    """Create graph infrastructure on an explicitly supplied connection."""
+    """Create or validate canonical graph infrastructure on an open connection."""
     connection.execute(
         """
         CREATE TABLE IF NOT EXISTS standard_links (
@@ -31,23 +31,27 @@ def ensure_standard_links_schema(connection: sqlite3.Connection) -> None:
             source TEXT,
             priority INTEGER DEFAULT 1,
             notes TEXT,
-            created_at INTEGER
+            created_at INTEGER,
+            UNIQUE(from_standard_id, to_standard_id, link_type)
         )
         """
     )
-    if _table_exists(connection, "progress_state"):
-        columns = {
-            row[1] for row in connection.execute("PRAGMA table_info(progress_state)")
-        }
-        for name, definition in (
-            ("current_standard_id", "TEXT"),
-            ("origin_standard_id", "TEXT"),
-            ("active_route_type", "TEXT DEFAULT 'normal'"),
-        ):
-            if name not in columns:
-                connection.execute(
-                    f"ALTER TABLE progress_state ADD COLUMN {name} {definition}"
-                )
+    required_columns = {
+        "id", "from_standard_id", "to_standard_id", "link_type", "source",
+        "priority", "notes", "created_at",
+    }
+    columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(standard_links)")
+    }
+    if not required_columns <= columns:
+        raise ValueError("standard_links does not match the canonical column contract")
+    unique_sets = {
+        tuple(item[2] for item in connection.execute(f"PRAGMA index_info({row[1]!r})"))
+        for row in connection.execute("PRAGMA index_list('standard_links')")
+        if row[2]
+    }
+    if ("from_standard_id", "to_standard_id", "link_type") not in unique_sets:
+        raise ValueError("standard_links canonical uniqueness is missing")
 
 
 def seed_mvp_standard_links(
@@ -59,11 +63,16 @@ def seed_mvp_standard_links(
     inserted = 0
     for from_id, to_id, link_type, source, priority, notes in MVP_STANDARD_LINKS:
         existing = connection.execute(
-            """SELECT id FROM standard_links
+            """SELECT source, priority, notes FROM standard_links
                WHERE from_standard_id=? AND to_standard_id=? AND link_type=?""",
             (from_id, to_id, link_type),
         ).fetchone()
-        if existing is None:
+        if existing is not None:
+            if tuple(existing) != (source, priority, notes):
+                raise ValueError(
+                    f"conflicting standard link: {from_id} -> {to_id} ({link_type})"
+                )
+        else:
             connection.execute(
                 """INSERT INTO standard_links
                      (from_standard_id, to_standard_id, link_type, source,
@@ -73,3 +82,17 @@ def seed_mvp_standard_links(
             )
             inserted += 1
     return inserted
+
+
+def verify_mvp_standard_links(connection: sqlite3.Connection) -> None:
+    """Require exactly the four approved graph rows and canonical uniqueness."""
+    ensure_standard_links_schema(connection)
+    rows = connection.execute(
+        """SELECT from_standard_id, to_standard_id, link_type, source,
+                  priority, notes
+           FROM standard_links"""
+    ).fetchall()
+    expected = set(MVP_STANDARD_LINKS)
+    actual = {tuple(row) for row in rows}
+    if len(rows) != len(expected) or actual != expected:
+        raise ValueError("standard_links does not contain exactly the approved MVP graph")
