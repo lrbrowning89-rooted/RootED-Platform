@@ -1,10 +1,24 @@
 __pycache__/
 *.pyc
-# Local DB + logs
-data/*.db
-app_core/*.db
+# Local databases and SQLite sidecars
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.sqlite-*
+*.sqlite3-*
+*.db-journal
+*.db-wal
+*.db-shm
 .test_placement_*.db
-data/ngss_errors.log
+
+# Logs and student-data exports
+*.log
+data/exports/
+data/backups/
+exports/*.csv
+*_student_export.csv
+*_responses_export.csv
 
 # Local venvs
 venv/
@@ -17,5 +31,7 @@ __pycache__/
 .env.*
 !.env.example
 
-# Local backups
-data/backups/*.db
+# Local backups and database dumps
+*.bak
+*.backup
+*.dump

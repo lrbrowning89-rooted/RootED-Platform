@@ -13,6 +13,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 TEST_DIR = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
 TEST_DB = Path(TEST_DIR.name) / f"teacher_email_{uuid.uuid4().hex}.db"
+os.environ["ROOTED_ENV"] = "test"
 os.environ["NGSS_DB"] = str(TEST_DB)
 os.environ["SECRET_KEY"] = "test-secret"
 if str(ROOT) not in sys.path:

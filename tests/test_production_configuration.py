@@ -12,14 +12,15 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class ProductionConfigurationTests(unittest.TestCase):
     def test_render_enables_https_session_cookie_and_one_proxy_hop(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(
+            prefix="production-config-", dir=ROOT
+        ) as temp_dir:
             env = os.environ.copy()
             env.pop("SESSION_COOKIE_SECURE", None)
             env.update(
                 {
-                    "APP_ENV": "production",
-                    "NGSS_DB": str(Path(temp_dir) / "production-config.db"),
-                    "RENDER": "true",
+                    "ROOTED_ENV": "production",
+                    "NGSS_DB": str(Path(temp_dir) / "rooted.db"),
                     "SECRET_KEY": "production-config-test-secret",
                 }
             )

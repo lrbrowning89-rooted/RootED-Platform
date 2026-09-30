@@ -1,6 +1,7 @@
 import os
 
-from .dashboard_v5 import app
+from .config import ROOTED_ENV
+from .dashboard_v5 import app, initialize_database
 
 
 def enabled(name: str) -> bool:
@@ -8,9 +9,8 @@ def enabled(name: str) -> bool:
 
 
 if __name__ == "__main__":
-    production = enabled("RENDER") or (
-        os.environ.get("APP_ENV", "").strip().lower() == "production"
-    )
+    initialize_database()
+    production = ROOTED_ENV == "production"
     app.run(
         host=os.environ.get("HOST", "0.0.0.0" if production else "127.0.0.1"),
         port=int(os.environ.get("PORT", "5000")),

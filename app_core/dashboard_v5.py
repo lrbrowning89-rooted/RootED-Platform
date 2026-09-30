@@ -23,6 +23,7 @@ from logging.handlers import RotatingFileHandler
 import traceback
 import secrets
 import hmac
+import threading
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from urllib.parse import urlsplit
@@ -40,6 +41,7 @@ from app_core.config import (
     ENABLE_GOOGLE_AUTH,
     ENABLE_MICROSOFT_AUTH,
     FERPA_ENFORCED,
+    ROOTED_ENV,
     SESSION_COOKIE_SECURE,
     SECRET_KEY,
     TRUST_PROXY_HEADERS,
@@ -231,14 +233,17 @@ if TRUST_PROXY_HEADERS:
     )
 
 # ---------- Logging setup ----------
-LOG_DIR = os.path.join(BASE_DIR, "data")
-os.makedirs(LOG_DIR, exist_ok=True)
-LOG_FILE = os.path.join(LOG_DIR, "ngss_errors.log")
-
 logger = logging.getLogger("ngss_app")
 logger.setLevel(logging.INFO)
 
-if not logger.handlers:
+def configure_file_logging() -> None:
+    if ROOTED_ENV != "production" or any(
+        isinstance(handler, RotatingFileHandler) for handler in logger.handlers
+    ):
+        return
+    LOG_DIR = os.path.join(BASE_DIR, "data")
+    os.makedirs(LOG_DIR, exist_ok=True)
+    LOG_FILE = os.path.join(LOG_DIR, "ngss_errors.log")
     file_handler = RotatingFileHandler(LOG_FILE, maxBytes=1_000_000, backupCount=3)
     formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
     file_handler.setFormatter(formatter)
@@ -2181,10 +2186,30 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         pass
 
 
-# One-time schema boot
-with sqlite3.connect(DB) as _conn_boot:
-    _conn_boot.row_factory = sqlite3.Row
-    ensure_schema(_conn_boot)
+# Database initialization is intentionally a startup action, not an import side
+# effect. The request hook preserves WSGI deployments that import ``app``
+# directly; the module entry point initializes eagerly before serving.
+_database_init_lock = threading.Lock()
+_initialized_database_path = None
+
+
+def initialize_database() -> None:
+    global _initialized_database_path
+    if _initialized_database_path == DB:
+        return
+    with _database_init_lock:
+        if _initialized_database_path == DB:
+            return
+        configure_file_logging()
+        with sqlite3.connect(DB) as connection:
+            connection.row_factory = sqlite3.Row
+            ensure_schema(connection)
+        _initialized_database_path = DB
+
+
+@app.before_request
+def initialize_database_before_first_request():
+    initialize_database()
 
 
 # ---------- Helpers ----------
@@ -15112,4 +15137,5 @@ def robots_txt():
 print(app.url_map)
 
 if __name__ == "__main__":
+    initialize_database()
     app.run(debug=True)

@@ -17,6 +17,7 @@ from werkzeug.exceptions import Forbidden
 ROOT = Path(__file__).resolve().parents[1]
 TEST_DIR = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
 TEST_DB = Path(TEST_DIR.name) / f"test_authorization_{uuid.uuid4().hex}.db"
+os.environ["ROOTED_ENV"] = "test"
 os.environ["NGSS_DB"] = str(TEST_DB)
 os.environ["SECRET_KEY"] = "test-secret"
 

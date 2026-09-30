@@ -1,31 +1,29 @@
+"""CLI wrapper for standard-links schema creation on one explicit database."""
+
+import argparse
 import sqlite3
 from pathlib import Path
 
-DB = Path(__file__).resolve().parents[1] / "data" / "ngss.db"
+try:
+    from migrations.standard_links import ensure_standard_links_schema
+except ModuleNotFoundError as exc:
+    if exc.name != "migrations":
+        raise
+    from standard_links import ensure_standard_links_schema
 
-def add_column(conn, table, column, definition):
-    cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
-    if column not in cols:
-        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
-with sqlite3.connect(DB) as conn:
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS standard_links (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            from_standard_id TEXT NOT NULL,
-            to_standard_id TEXT NOT NULL,
-            link_type TEXT NOT NULL,
-            source TEXT,
-            priority INTEGER DEFAULT 1,
-            notes TEXT,
-            created_at INTEGER
-        )
-    """)
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--database", required=True, type=Path)
+    args = parser.parse_args(argv)
+    database = args.database.expanduser().resolve(strict=True)
+    if not database.is_file():
+        parser.error("--database must identify an existing file")
+    with sqlite3.connect(database) as connection:
+        ensure_standard_links_schema(connection)
+    print(f"standard_links graph infrastructure ready: {database}")
+    return 0
 
-    add_column(conn, "progress_state", "current_standard_id", "TEXT")
-    add_column(conn, "progress_state", "origin_standard_id", "TEXT")
-    add_column(conn, "progress_state", "active_route_type", "TEXT DEFAULT 'normal'")
 
-    conn.commit()
-
-print("standard_links graph infrastructure migration complete")
+if __name__ == "__main__":
+    raise SystemExit(main())

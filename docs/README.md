@@ -28,6 +28,11 @@ Copy code
 ---
 
 ## ⚙️ Quick Start
+Database safety and required `ROOTED_ENV`/`NGSS_DB` configuration are documented
+in [`database_safety.md`](database_safety.md). Do not use `data/ngss.db` for
+development and do not start the application until an explicit synthetic target
+has been configured.
+
 ```bash
 cd app_core
 python dashboard_v5.py

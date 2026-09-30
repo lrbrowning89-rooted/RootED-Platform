@@ -11,7 +11,6 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PRODUCTION_DB = ROOT / "data" / "ngss.db"
 SCHEMA_SQL = ROOT / "app_core" / "schema.sql"
 STUDENT_ID = "TST_ENGINE"
 STANDARD_ID = "MS-LS1-1"
@@ -19,29 +18,20 @@ OBJECTIVE_ID = "MS-LS1-1A"
 QUESTION_IDS = tuple(f"Q_ENGINE_{i}" for i in range(7))
 
 
-def production_db_fingerprint() -> dict:
-    stat = PRODUCTION_DB.stat()
-    digest = hashlib.sha256(PRODUCTION_DB.read_bytes()).hexdigest()
-    with sqlite3.connect(f"file:{PRODUCTION_DB.as_posix()}?mode=ro", uri=True) as conn:
+def synthetic_sentinel_fingerprint(database: Path) -> dict:
+    stat = database.stat()
+    digest = hashlib.sha256(database.read_bytes()).hexdigest()
+    with sqlite3.connect(f"file:{database.as_posix()}?mode=ro", uri=True) as conn:
         return {
             "size": stat.st_size,
             "mtime_ns": stat.st_mtime_ns,
             "sha256": digest,
-            "q0_q6_responses": conn.execute(
-                """
-                SELECT COUNT(*)
-                FROM responses
-                WHERE question_id IN ('Q0', 'Q1', 'Q2', 'Q3', 'Q4', 'Q5', 'Q6')
-                """
-            ).fetchone()[0],
-            "engine_test_student_responses": conn.execute(
-                "SELECT COUNT(*) FROM responses WHERE student_id = ?",
-                (STUDENT_ID,),
-            ).fetchone()[0],
+            "sentinel": conn.execute("SELECT value FROM sentinel").fetchone()[0],
         }
 
 
 def import_engine_for_database(db_path: Path):
+    os.environ["ROOTED_ENV"] = "test"
     os.environ["NGSS_DB"] = str(db_path)
     if str(ROOT) not in sys.path:
         sys.path.insert(0, str(ROOT))
@@ -55,8 +45,12 @@ class AdaptiveEngineIsolationTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.db_path = Path(self.temp_dir.name) / "engine_test.db"
+        self.sentinel_db = Path(self.temp_dir.name) / "unrelated_synthetic_test.db"
         self.engine = import_engine_for_database(self.db_path)
         self.seed_database()
+        with sqlite3.connect(self.sentinel_db) as connection:
+            connection.execute("CREATE TABLE sentinel (value TEXT NOT NULL)")
+            connection.execute("INSERT INTO sentinel VALUES ('untouched')")
 
     def tearDown(self):
         sys.modules.pop("adaptive_engine", None)
@@ -136,8 +130,8 @@ class AdaptiveEngineIsolationTests(unittest.TestCase):
             count = conn.execute("SELECT COUNT(*) FROM responses").fetchone()[0]
         self.assertEqual(count, 7)
 
-    def test_engine_behavior_does_not_modify_production_database(self):
-        before = production_db_fingerprint()
+    def test_engine_behavior_does_not_modify_unrelated_synthetic_database(self):
+        before = synthetic_sentinel_fingerprint(self.sentinel_db)
 
         for index, question_id in enumerate(QUESTION_IDS):
             self.engine.log_response(
@@ -148,7 +142,7 @@ class AdaptiveEngineIsolationTests(unittest.TestCase):
                 correct=(index % 2 == 0),
             )
 
-        after = production_db_fingerprint()
+        after = synthetic_sentinel_fingerprint(self.sentinel_db)
 
         self.assertEqual(after, before)
 

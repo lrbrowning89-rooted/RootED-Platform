@@ -13,6 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 IMPORT_DB_DIR = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
 IMPORT_DB = Path(IMPORT_DB_DIR.name) / f"test_model_asset_import_{uuid.uuid4().hex}.db"
+os.environ["ROOTED_ENV"] = "test"
 os.environ["NGSS_DB"] = str(IMPORT_DB)
 os.environ["SECRET_KEY"] = "test-secret"
 
